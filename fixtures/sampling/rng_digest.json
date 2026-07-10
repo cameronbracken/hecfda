@@ -1,0 +1,16 @@
+{
+  "target": "rng_digest",
+  "kind": "rng",
+  "source_test": "cross-language digest: sum(RandomProvider(seed).next_random_sequence(n)) must be byte-identical across C++/R/Python",
+  "cases": [
+    {
+      "name": "seed_12345_n_100000",
+      "construct": { "seed": 12345 },
+      "assertions": [
+        { "method": "sum_random_sequence", "args": [100000],
+          "expected": 50124.341288393982,
+          "tol": 1e-12, "mode": "rel" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "target": "uncertain_paired_data",
+  "kind": "mc_paired_data",
+  "source_test": "HEC.FDA.Model/paireddata/UncertainPairedData.cs SamplePairedDataRaw(double) driven by one Random(seed).NextDouble()",
+  "cases": [
+    {
+      "name": "seeded_sample_integrate",
+      "construct": {
+        "xs": [1, 2, 3, 4, 5],
+        "ys": [ {"mean": 2, "sd": 0.5}, {"mean": 4, "sd": 0.5}, {"mean": 6, "sd": 0.5},
+                {"mean": 8, "sd": 0.5}, {"mean": 10, "sd": 0.5} ]
+      },
+      "seed": 1234,
+      "assertions": [
+        { "method": "sample_and_integrate", "args": [],
+          "expected": 24.425549382855987, "tol": 1e-12, "mode": "rel" }
+      ]
+    }
+  ]
+}

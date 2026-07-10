@@ -1,0 +1,98 @@
+// ported from: HEC.FDA.Statistics/Distributions/Normal.cs @ f63682a86a30dc306a105689714a92bfd95956c5
+#ifndef HECFDA_STATISTICS_DISTRIBUTIONS_NORMAL_HPP
+#define HECFDA_STATISTICS_DISTRIBUTIONS_NORMAL_HPP
+#include <cmath>
+#include <cstddef>
+#include <vector>
+#include "hecfda/constants.hpp"
+#include "hecfda/statistics/distributions/continuous_distribution.hpp"
+#include "hecfda/statistics/special_functions.hpp"
+namespace hecfda {
+namespace statistics {
+namespace distributions {
+class Normal : public ContinuousDistribution {
+   public:
+    Normal(double mean, double sd, long sample_size = 1) : mean_(mean), sd_(sd) {
+        this->sample_size_ = sample_size;
+    }
+
+    DistributionType type() const override { return DistributionType::Normal; }
+    double mean() const { return mean_; }
+    double standard_deviation() const { return sd_; }
+
+    // ported from: Normal.cs PDF(double x)
+    double pdf(double x) const override {
+        if (sd_ == 0) {
+            return x == mean_ ? 1.0 : 0.0;
+        }
+        return std::exp(-(x - mean_) * (x - mean_) / (2.0 * sd_ * sd_)) /
+               (std::sqrt(2.0 * hecfda::kPi) * sd_);
+    }
+
+    // ported from: Normal.cs CDF(double x)
+    double cdf(double x) const override {
+        if (sd_ == 0) {
+            return x >= mean_ ? 1.0 : 0.0;
+        }
+        if (std::isinf(x)) {
+            return x > 0 ? 1.0 : 0.0;
+        }
+        double g = SpecialFunctions::reg_incomplete_gamma(
+            0.5, (x - mean_) * (x - mean_) / (2.0 * sd_ * sd_));
+        return x >= mean_ ? 0.5 * (1.0 + g) : 0.5 * (1.0 - g);
+    }
+
+    // ported from: Normal.cs InverseCDF(double p); Abramowitz-Stegun rational approximation,
+    // constants c0..d3 transcribed verbatim.
+    double inverse_cdf(double p) const override {
+        const double c0 = 2.515517, c1 = .802853, c2 = .010328;
+        const double d1 = 1.432788, d2 = .189269, d3 = .001308;
+        double q = p;
+        if (q == .5) {
+            return mean_;
+        }
+        if (q <= 0) {
+            q = .000000000000001;
+        }
+        if (q >= 1) {
+            q = .999999999999999;
+        }
+        int i;
+        if (q < .5) {
+            i = -1;
+        } else {
+            i = 1;
+            q = 1 - q;
+        }
+        double t = std::sqrt(std::log(1 / (q * q)));
+        double t2 = t * t, t3 = t2 * t;
+        double x = t - (c0 + c1 * t + c2 * t2) / (1 + d1 * t + d2 * t2 + d3 * t3);
+        x = i * x;
+        return (x * sd_) + mean_;
+    }
+
+    // ported from: Normal.cs Fit(double[] sample) -> `new Normal(stats.Mean, stats.StandardDeviation,
+    // stats.SampleSize)`. Phase 0 uses a thin population mean/sd inline (full SampleStatistics with
+    // its Welford-style running variance and skew lands in Phase 1); this matches SampleStatistics'
+    // final Variance getter, which is the population (divide-by-n) variance.
+    Normal fit(const std::vector<double>& sample) const {
+        long n = static_cast<long>(sample.size());
+        double sum = 0.0;
+        for (double v : sample) sum += v;
+        double fitted_mean = sum / static_cast<double>(n);
+        double sum_sq_dev = 0.0;
+        for (double v : sample) {
+            double d = v - fitted_mean;
+            sum_sq_dev += d * d;
+        }
+        double fitted_sd = std::sqrt(sum_sq_dev / static_cast<double>(n));
+        return Normal(fitted_mean, fitted_sd, n);
+    }
+
+   private:
+    double mean_, sd_;
+};
+}  // namespace distributions
+}  // namespace statistics
+}  // namespace hecfda
+#endif  // HECFDA_STATISTICS_DISTRIBUTIONS_NORMAL_HPP

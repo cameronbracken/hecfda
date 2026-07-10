@@ -1,0 +1,93 @@
+name: ci
+
+on:
+  push:
+    branches: [main, phase0]
+  pull_request:
+
+jobs:
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Configure
+        run: cmake -S core -B core/build
+
+      - name: Build
+        run: cmake --build core/build --config Release
+
+      - name: Test
+        run: ctest --test-dir core/build --output-on-failure -C Release
+
+  r-cmd-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Materialize core + fixtures (symlinks may not survive checkout)
+        run: python tools/materialize_core.py
+
+      - uses: r-lib/actions/setup-r@v2
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::cpp11
+            any::testthat
+            any::jsonlite
+          working-directory: hecfdar
+
+      # No cpp11::cpp_register here: the generated cpp11.cpp / cpp11.R are committed
+      # (regenerated at dev time after editing src/*.cpp), matching how CRAN builds.
+      # Running cpp_register in CI would need its codegen deps (decor/tibble/vctrs).
+      # shell: bash so `R CMD INSTALL` parses on Windows runners (default pwsh
+      # treats `CMD` as a stray positional arg); git-bash has R on PATH.
+      - name: R CMD INSTALL
+        shell: bash
+        run: R CMD INSTALL --preclean hecfdar
+
+      - name: testthat
+        shell: bash
+        run: Rscript -e 'testthat::test_local("hecfdar")'
+
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Materialize core + fixtures (symlinks may not survive checkout)
+        run: python tools/materialize_core.py
+
+      - name: Install hecfdapy with test dependencies
+        run: pip install "./hecfdapy[test]"
+
+      - name: pytest
+        run: pytest hecfdapy/tests -q

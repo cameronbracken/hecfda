@@ -1,0 +1,19 @@
+{
+  "target": "dotnet_random",
+  "kind": "rng",
+  "source_test": "planning-captured: new Random(1234).NextDouble()",
+  "cases": [
+    {
+      "name": "seed_1234_first_10",
+      "construct": { "seed": 1234 },
+      "assertions": [
+        { "method": "next_random_sequence", "args": [10],
+          "expected": [0.39908097935797693, 0.8958994657247791, 0.3192029387313886,
+                       0.9467375338760845, 0.33943602458547617, 0.9487782409176129,
+                       0.8079918901473246, 0.5207309469211525, 0.643958064096029,
+                       0.31255894820790686],
+          "tol": 0.0, "mode": "vector" }
+      ]
+    }
+  ]
+}
