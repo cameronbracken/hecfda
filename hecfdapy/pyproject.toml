@@ -1,0 +1,16 @@
+[build-system]
+requires = ["scikit-build-core>=0.9", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "hecfdapy"
+version = "0.0.0"
+description = "HEC-FDA flood damage analysis compute engine (C++ port)"
+requires-python = ">=3.10"
+authors = [{ name = "Cameron Bracken", email = "cameron.bracken@pm.me" }]
+
+[tool.scikit-build]
+wheel.packages = ["src/hecfdapy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
