@@ -18,6 +18,8 @@ static std::string fixtures_dir() {
 static std::vector<double> run_rng(const json& c, const std::string& method, const json& args) {
     hecfda::model::compute::RandomProvider rp(c["construct"]["seed"].get<int>());
     if (method == "next_random_sequence") return rp.next_random_sequence(args[0].get<long>());
+    auto msg = std::string("unknown rng method: ") + method;
+    FAIL(msg.c_str());
     return {};
 }
 
@@ -30,7 +32,12 @@ TEST_CASE("dotnet_random fixture") {
         for (const auto& a : c["assertions"]) {
             auto got = run_rng(c, a["method"], a["args"]);
             std::vector<double> exp = a["expected"].get<std::vector<double>>();
-            CHECK(hecfda_test::close_vec(got, exp, a["tol"].get<double>()));
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for mode: ") + mode;
+                FAIL(msg.c_str());
+            }
         }
     }
 }
