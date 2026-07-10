@@ -1,0 +1,3 @@
+[submodule "upstream/HEC-FDA"]
+	path = upstream/HEC-FDA
+	url = https://github.com/HydrologicEngineeringCenter/HEC-FDA.git
