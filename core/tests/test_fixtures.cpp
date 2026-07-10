@@ -7,6 +7,7 @@
 #include "check.hpp"
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
+#include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 
 using json = nlohmann::json;
@@ -99,6 +100,39 @@ TEST_CASE("paired_data fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_paired_data(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for mode: ") + mode;
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+static double run_uncertain_paired_data(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    std::vector<double> xs = ctor["xs"].get<std::vector<double>>();
+    std::vector<hecfda::statistics::distributions::Normal> ys;
+    for (const auto& y : ctor["ys"]) {
+        ys.emplace_back(y["mean"].get<double>(), y["sd"].get<double>(), 1);
+    }
+    hecfda::model::paired_data::UncertainPairedData upd(xs, ys);
+    if (method == "sample_and_integrate") return upd.sample_and_integrate(args[0].get<int>());
+    auto msg = std::string("unknown uncertain_paired_data method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("uncertain_paired_data fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/uncertain_paired_data.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "uncertain_paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_uncertain_paired_data(c, a["method"], a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
