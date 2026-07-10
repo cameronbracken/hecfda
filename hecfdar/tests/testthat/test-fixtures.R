@@ -17,6 +17,15 @@ test_that("dotnet_random fixture", {
   }
 })
 
+test_that("rng_digest fixture", {
+  fx <- read_fx("sampling/rng_digest.json")
+  for (c in fx$cases) for (a in c$assertions) {
+    n <- as.integer(a$args[[1]])
+    got <- sum(ns$hecfda_rng_sequence(as.integer(c$construct$seed), n))
+    cmp(got, a$expected, a$tol, a$mode)
+  }
+})
+
 test_that("normal fixture", {
   fx <- read_fx("distributions/normal.json")
   for (c in fx$cases) for (a in c$assertions) {

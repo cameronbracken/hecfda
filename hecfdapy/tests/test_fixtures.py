@@ -22,6 +22,14 @@ def test_dotnet_random():
             got = bf.rng_sequence(c["construct"]["seed"], a["args"][0])
             _close(got, a["expected"], a["tol"], a["mode"])
 
+def test_rng_digest():
+    fx = _read("sampling/rng_digest.json")
+    for c in fx["cases"]:
+        for a in c["assertions"]:
+            n = int(a["args"][0])
+            got = sum(bf.rng_sequence(int(c["construct"]["seed"]), n))
+            _close(got, a["expected"], a["tol"], a["mode"])
+
 def test_normal():
     fx = _read("distributions/normal.json")
     for c in fx["cases"]:

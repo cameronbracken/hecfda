@@ -26,6 +26,19 @@ static std::vector<double> run_rng(const json& c, const std::string& method, con
     return {};
 }
 
+static double run_rng_digest(const json& c, const std::string& method, const json& args) {
+    hecfda::model::compute::RandomProvider rp(c["construct"]["seed"].get<int>());
+    if (method == "sum_random_sequence") {
+        auto seq = rp.next_random_sequence(args[0].get<long>());
+        double sum = 0.0;
+        for (double v : seq) sum += v;
+        return sum;
+    }
+    auto msg = std::string("unknown rng digest method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
 TEST_CASE("dotnet_random fixture") {
     std::ifstream f(fixtures_dir() + "/sampling/dotnet_random.json");
     REQUIRE(f.good());
@@ -38,6 +51,25 @@ TEST_CASE("dotnet_random fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for mode: ") + mode;
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+TEST_CASE("rng_digest fixture") {
+    std::ifstream f(fixtures_dir() + "/sampling/rng_digest.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "rng_digest");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_rng_digest(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for mode: ") + mode;
                 FAIL(msg.c_str());
             }
