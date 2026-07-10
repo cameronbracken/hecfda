@@ -43,13 +43,14 @@ namespace oracle_emitter {
         "integrate" => pd.Integrate(),
         _ => throw new Exception("unknown paired_data method: " + method) };
     }
-    static object EvalUpd(JsonElement c, string method, JsonElement args) {
+    static object EvalUpd(JsonElement caseEl, string method, JsonElement args) {
+      var c = caseEl.GetProperty("construct");
       double[] xs = DA(c.GetProperty("xs"));
       var ys = c.GetProperty("ys").EnumerateArray()
         .Select(y => (IDistribution)new Normal(D(y.GetProperty("mean")), D(y.GetProperty("sd")))).ToArray();
       var upd = new UncertainPairedData(xs, ys, new CurveMetaData("x","y","oracle"));
       if (method == "sample_and_integrate") {
-        int seed = (int)D(args[0]);
+        int seed = caseEl.GetProperty("seed").GetInt32();
         double p = new RandomProvider(seed).NextRandom();
         return upd.SamplePairedDataRaw(p).Integrate();
       }
@@ -86,7 +87,7 @@ namespace oracle_emitter {
                 val = EvalRng(method, c.GetProperty("construct").GetProperty("seed").GetInt32(), argsEl); break;
               case "normal": val = EvalNormal(c.GetProperty("construct"), method, argsEl); break;
               case "paired_data": val = EvalPaired(c.GetProperty("construct"), method, argsEl); break;
-              case "uncertain_paired_data": val = EvalUpd(c.GetProperty("construct"), method, argsEl); break;
+              case "uncertain_paired_data": val = EvalUpd(c, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{
