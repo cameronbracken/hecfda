@@ -43,6 +43,27 @@ namespace oracle_emitter {
         "integrate" => pd.Integrate(),
         _ => throw new Exception("unknown paired_data method: " + method) };
     }
+    static object EvalSpecial(string method, JsonElement args) {
+      // Static SpecialFunctions surface; args is a flat array of scalars.
+      return method switch {
+        "log_gamma" => SpecialFunctions.logGamma(D(args[0])),
+        "log_factorial" => SpecialFunctions.logFactorial((int)D(args[0])),
+        "gamma" => SpecialFunctions.gamma(D(args[0])),
+        "factorial" => SpecialFunctions.factorial((int)D(args[0])),
+        "incomplete_gamma" => SpecialFunctions.incompleteGamma(D(args[0]), D(args[1])),
+        "incomplete_gamma_range" => SpecialFunctions.incompleteGamma(D(args[0]), D(args[1]), D(args[2])),
+        "reg_incomplete_gamma" => SpecialFunctions.regIncompleteGamma(D(args[0]), D(args[1])),
+        "log_incomplete_gamma" => SpecialFunctions.logIncompleteGamma(D(args[0]), D(args[1])),
+        "digamma" => SpecialFunctions.digamma(D(args[0])),
+        "log_beta" => SpecialFunctions.logBeta(D(args[0]), D(args[1])),
+        "beta" => SpecialFunctions.beta(D(args[0]), D(args[1])),
+        "incomplete_beta" => SpecialFunctions.incompleteBeta(D(args[0]), D(args[1]), D(args[2])),
+        "reg_incomplete_beta" => SpecialFunctions.regIncompleteBeta(D(args[0]), D(args[1]), D(args[2])),
+        "trigamma" => SpecialFunctions.trigamma(D(args[0])),
+        "single_par_gamma_pdf" => SpecialFunctions.singleParGammaPDF(D(args[0]), D(args[1])),
+        "gamma_derivative" => SpecialFunctions.gammaDerivative(D(args[0]), D(args[1])),
+        _ => throw new Exception("unknown special_functions method: " + method) };
+    }
     static object EvalUpd(JsonElement caseEl, string method, JsonElement args) {
       var c = caseEl.GetProperty("construct");
       double[] xs = DA(c.GetProperty("xs"));
@@ -87,6 +108,7 @@ namespace oracle_emitter {
                 val = EvalRng(method, c.GetProperty("construct").GetProperty("seed").GetInt32(), argsEl); break;
               case "normal": val = EvalNormal(c.GetProperty("construct"), method, argsEl); break;
               case "paired_data": val = EvalPaired(c.GetProperty("construct"), method, argsEl); break;
+              case "special_functions": val = EvalSpecial(method, argsEl); break;
               case "uncertain_paired_data": val = EvalUpd(c, method, argsEl); break;
               default: continue;
             }

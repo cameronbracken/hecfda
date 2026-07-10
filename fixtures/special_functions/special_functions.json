@@ -1,0 +1,52 @@
+{
+  "target": "special_functions",
+  "kind": "special_functions",
+  "source_test": "HEC.FDA.Statistics/Distributions/SpecialFunctions.cs",
+  "note": "Expected values are pinned from the real C# SpecialFunctions surface via tools/oracle_emitter (verified by tools/verify_oracles.py). MathematicsTests.cs covers Mathematics integration, not SpecialFunctions, so no upstream test values exist to transcribe.",
+  "cases": [
+    {
+      "name": "gamma_family",
+      "construct": {},
+      "assertions": [
+        { "method": "log_gamma", "args": [5.0], "expected": 3.1780538303479444, "tol": 1e-12, "mode": "rel" },
+        { "method": "log_gamma", "args": [0.3], "expected": 1.0957979948180752, "tol": 1e-12, "mode": "rel" },
+        { "method": "log_factorial", "args": [5], "expected": 4.7874917427820485, "tol": 1e-12, "mode": "rel" },
+        { "method": "gamma", "args": [5.0], "expected": 23.99999999999997, "tol": 1e-12, "mode": "rel" },
+        { "method": "gamma", "args": [0.5], "expected": 1.7724538509055165, "tol": 1e-12, "mode": "rel" },
+        { "method": "factorial", "args": [5], "expected": 120.0, "tol": 1e-12, "mode": "rel" },
+        { "method": "incomplete_gamma", "args": [3.0, 2.0], "expected": 0.6466471676338729, "tol": 1e-12, "mode": "rel" },
+        { "method": "incomplete_gamma_range", "args": [3.0, 1.0, 2.0], "expected": 0.48604437349108454, "tol": 1e-12, "mode": "rel" },
+        { "method": "reg_incomplete_gamma", "args": [3.0, 2.0], "expected": 0.32332358381693616, "tol": 1e-12, "mode": "rel" },
+        { "method": "log_incomplete_gamma", "args": [3.0, 2.0], "expected": -0.4359544691909836, "tol": 1e-12, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "digamma_trigamma",
+      "construct": {},
+      "assertions": [
+        { "method": "digamma", "args": [5.0], "expected": 1.5061176655412647, "tol": 1e-11, "mode": "rel" },
+        { "method": "digamma", "args": [0.5], "expected": -1.963510028796937, "tol": 1e-11, "mode": "rel" },
+        { "method": "trigamma", "args": [1.0], "expected": 1.6449340668486565, "tol": 1e-11, "mode": "rel" },
+        { "method": "trigamma", "args": [5.0], "expected": 0.22132295573754537, "tol": 1e-11, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "beta_family",
+      "construct": {},
+      "assertions": [
+        { "method": "log_beta", "args": [2.0, 3.0], "expected": -2.4849066497879977, "tol": 1e-12, "mode": "rel" },
+        { "method": "beta", "args": [2.0, 3.0], "expected": 0.08333333333333355, "tol": 1e-12, "mode": "rel" },
+        { "method": "incomplete_beta", "args": [2.0, 3.0, 0.5], "expected": 0.05729166666666689, "tol": 1e-11, "mode": "rel" },
+        { "method": "reg_incomplete_beta", "args": [2.0, 3.0, 0.5], "expected": 0.6875000000000009, "tol": 1e-11, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "gamma_utilities",
+      "construct": {},
+      "assertions": [
+        { "method": "single_par_gamma_pdf", "args": [2.0, 1.0], "expected": 0.36787944117144217, "tol": 1e-12, "mode": "rel" },
+        { "method": "gamma_derivative", "args": [2.0, 1.0], "expected": -0.2761960449397077, "tol": 1e-10, "mode": "rel" }
+      ]
+    }
+  ]
+}

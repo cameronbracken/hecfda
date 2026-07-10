@@ -9,6 +9,7 @@
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
+#include "hecfda/statistics/special_functions.hpp"
 
 using json = nlohmann::json;
 
@@ -137,6 +138,52 @@ TEST_CASE("paired_data fixture") {
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for mode: ") + mode;
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+static double run_special_functions(const std::string& method, const json& args) {
+    using SF = hecfda::statistics::SpecialFunctions;
+    if (method == "log_gamma") return SF::log_gamma(args[0].get<double>());
+    if (method == "log_factorial") return SF::log_factorial(args[0].get<int>());
+    if (method == "gamma") return SF::gamma(args[0].get<double>());
+    if (method == "factorial") return SF::factorial(args[0].get<int>());
+    if (method == "incomplete_gamma") return SF::incomplete_gamma(args[0].get<double>(), args[1].get<double>());
+    if (method == "incomplete_gamma_range")
+        return SF::incomplete_gamma(args[0].get<double>(), args[1].get<double>(), args[2].get<double>());
+    if (method == "reg_incomplete_gamma") return SF::reg_incomplete_gamma(args[0].get<double>(), args[1].get<double>());
+    if (method == "log_incomplete_gamma") return SF::log_incomplete_gamma(args[0].get<double>(), args[1].get<double>());
+    if (method == "digamma") return SF::digamma(args[0].get<double>());
+    if (method == "log_beta") return SF::log_beta(args[0].get<double>(), args[1].get<double>());
+    if (method == "beta") return SF::beta(args[0].get<double>(), args[1].get<double>());
+    if (method == "incomplete_beta")
+        return SF::incomplete_beta(args[0].get<double>(), args[1].get<double>(), args[2].get<double>());
+    if (method == "reg_incomplete_beta")
+        return SF::reg_incomplete_beta(args[0].get<double>(), args[1].get<double>(), args[2].get<double>());
+    if (method == "trigamma") return SF::trigamma(args[0].get<double>());
+    if (method == "single_par_gamma_pdf")
+        return SF::single_par_gamma_pdf(args[0].get<double>(), args[1].get<double>());
+    if (method == "gamma_derivative") return SF::gamma_derivative(args[0].get<double>(), args[1].get<double>());
+    auto msg = std::string("unknown special_functions method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("special_functions fixture") {
+    std::ifstream f(fixtures_dir() + "/special_functions/special_functions.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "special_functions");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_special_functions(a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for method: ") + a["method"].get<std::string>();
                 FAIL(msg.c_str());
             }
         }
