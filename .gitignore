@@ -35,3 +35,5 @@ tools/oracle_emitter/obj/
 !.claude/PLAN.md
 .superpowers/
 compile_commands.json
+core/.cache/
+.cache/
