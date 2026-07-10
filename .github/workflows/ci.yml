@@ -57,10 +57,14 @@ jobs:
       # No cpp11::cpp_register here: the generated cpp11.cpp / cpp11.R are committed
       # (regenerated at dev time after editing src/*.cpp), matching how CRAN builds.
       # Running cpp_register in CI would need its codegen deps (decor/tibble/vctrs).
+      # shell: bash so `R CMD INSTALL` parses on Windows runners (default pwsh
+      # treats `CMD` as a stray positional arg); git-bash has R on PATH.
       - name: R CMD INSTALL
+        shell: bash
         run: R CMD INSTALL --preclean hecfdar
 
       - name: testthat
+        shell: bash
         run: Rscript -e 'testthat::test_local("hecfdar")'
 
   python:
