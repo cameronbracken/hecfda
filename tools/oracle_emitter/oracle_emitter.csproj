@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RollForward>Major</RollForward>
+    <AssemblyName>oracle_emitter</AssemblyName>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../upstream/HEC-FDA/HEC.FDA.Statistics/HEC.FDA.Statistics.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- minimal HEC.FDA.Model paired-data closure (avoids the RAS NuGet in HEC.FDA.Model.csproj) -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/compute/RandomProvider.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/interfaces/IProvideRandomNumbers.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/PairedData.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/UncertainPairedData.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/IPairedData.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/IPairedDataProducer.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/IIntegrate.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/ISample.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/IComposable.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/IMultiply.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/ICategory.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/IMetaData.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/interfaces/ICanBeNull.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/interfaces/IDescribed.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/interfaces/INamed.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/StoredPropertyAttribute.cs" />
+  </ItemGroup>
+</Project>
