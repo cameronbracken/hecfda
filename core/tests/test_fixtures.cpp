@@ -6,6 +6,7 @@
 #include "json.hpp"
 #include "check.hpp"
 #include "hecfda/model/compute/random_provider.hpp"
+#include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 
 using json = nlohmann::json;
@@ -64,6 +65,40 @@ TEST_CASE("normal fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_normal(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for mode: ") + mode;
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+static double run_paired_data(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    hecfda::model::paired_data::PairedData pd(ctor["xs"].get<std::vector<double>>(),
+                                               ctor["ys"].get<std::vector<double>>());
+    if (method == "f") return pd.f(args[0].get<double>());
+    if (method == "f_inverse") return pd.f_inverse(args[0].get<double>());
+    if (method == "integrate") {
+        bool with_padding = args.empty() ? true : (args[0].get<double>() != 0.0);
+        return pd.integrate(with_padding);
+    }
+    auto msg = std::string("unknown paired_data method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("paired_data fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/paired_data.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_paired_data(c, a["method"], a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
