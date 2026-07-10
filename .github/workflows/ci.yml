@@ -82,8 +82,8 @@ jobs:
       - name: Materialize core + fixtures (symlinks may not survive checkout)
         run: python tools/materialize_core.py
 
-      - name: Install hecfdapy
-        run: pip install ./hecfdapy
+      - name: Install hecfdapy with test dependencies
+        run: pip install "./hecfdapy[test]"
 
       - name: pytest
         run: pytest hecfdapy/tests -q

@@ -15,7 +15,7 @@ test-py:
 	$(PYTHON) -m pytest hecfdapy/tests -q
 
 materialize:
-	python3 tools/materialize_core.py
+	$(PYTHON) tools/materialize_core.py
 
 oracles:
-	python3 tools/verify_oracles.py
+	$(PYTHON) tools/verify_oracles.py
