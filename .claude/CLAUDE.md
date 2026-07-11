@@ -150,6 +150,17 @@ validated transitively through R/Python and explicitly in C++ (`test_fixtures.cp
 `fixtures/distributions/*.json`) and against real C# via the `verify_oracles.py` gate -- this is not
 full four-way per-distribution parity in R/Python, by design.
 
+**R/Python structures coverage scope (Phase 3):** the R (`hecfda_value_uncertainty`/
+`hecfda_structure`) and Python (`value_uncertainty`/`structure`) bindings cover a representative
+subset of the new `hecfda::model::structures` targets: `value_uncertainty` (a leaf sampler
+exercising the distribution factory through the new namespace) and `structure` (the end-to-end
+depth-damage compute exercising occ-type sampling + `PairedData::f(x, ref)`). The remaining
+structures targets -- `value_ratio_with_uncertainty`, `first_floor_elevation_uncertainty`,
+`occupancy_type`, `inventory` -- traverse the identical binding and compiled core, so they stay
+validated in C++ (`test_fixtures.cpp` loads every `fixtures/structures/*.json`) and against real
+C# via the `verify_oracles.py` gate, matching the distribution-coverage convention above rather
+than duplicating it with bespoke R/Python glue for every target.
+
 ## Conventions & gotchas
 
 - **Structural mirroring:** C++ mirrors the C# file/class/method layout so upstream diffs map
@@ -220,6 +231,41 @@ full four-way per-distribution parity in R/Python, by design.
     input range, reproduced rather than fixed.
   - `GraphicalFrequencyUncertaintyCalculators` takes a `curveMetaData` constructor parameter that
     is dead -- never read by any method -- reproduced verbatim rather than dropped.
+  - `OccupancyType::get_errors_from_properties()`'s `ComputeOtherDamage` block checks
+    `use_content_to_structure_value_ratio_` (not `use_other_to_structure_value_ratio_`) to decide
+    whether to query `_OtherToStructureValueRatio` vs. `_OtherValueError` for error messages -- a
+    real C# copy-paste bug (`validate()`'s equivalent block correctly checks
+    `use_other_to_structure_value_ratio_`); transcribed verbatim.
+  - `Structure::compute_damage`'s "other" damage branch scales by
+    `other_to_structure_value_ratio() / 100` twice when `use_osvr()` is true: once when the ratio
+    is sampled in `OccupancyType::sample` (`.../ 100`) and again in `compute_damage`'s
+    `(other_to_structure_value_ratio() / 100)` factor -- the CSVR path applies only one `/100`.
+    Transcribed exactly as upstream wrote it, not reconciled.
+  - `ValueUncertainty`'s rule message "The percent of inventory value must be greaeter than or
+    equal to zero." misspells "greater" as "greaeter" in the real C# string; kept verbatim.
+  - `FirstFloorElevationUncertainty`'s distribution-allow-list rule message says "...can be used
+    for value ratio uncertainty" -- a copy-paste wording quirk inherited verbatim from
+    `ValueRatioWithUncertainty::add_rules()` (this class is `FirstFloorElevationUncertainty`, not
+    a value-ratio type); transcribed as-is.
+  - `ValueUncertainty::add_rules()` validates `distribution_type` against {Normal, Uniform,
+    Deterministic, Triangular} -- `LogNormal` is NOT in that allow-list even though `sample()`'s
+    switch has a live `LogNormal` case, so a LogNormal `ValueUncertainty` is "invalid" per
+    `validate()` but still functionally sampleable; transcribed exactly as upstream wrote it, not
+    reconciled.
+- **By-value capture in Validation-rule predicates (standing invariant, Phase 3):**
+  `ValueUncertainty`, `ValueRatioWithUncertainty`, `FirstFloorElevationUncertainty`, and
+  `Structure` are all held **by value** inside containers that relocate them after construction
+  (move-only `OccupancyType`, move-assigned by `OccupancyTypeBuilder`; `std::vector<Structure>`
+  inside `Inventory`, which move-constructs elements on `push_back`/growth). Any
+  `add_single_property_rule` predicate that captures `[this]` would dangle after such a
+  relocation -- confirmed via ASan (stack-use-after-scope) while building `Inventory` in Task 6.
+  All four classes' `add_rules()` capture checked fields **by value**
+  (`[value = field_]`/`[dist = distribution_type_]`) instead; safe because every captured field is
+  set once in the ctor and never mutated after. Apply the same by-value-capture pattern to any
+  future `Validation`-derived class held by value inside a relocating container. **Open follow-up:**
+  `ConvergenceCriteria` (Phase 1) has the same `[this]`-capture shape but is not currently
+  reachable through a relocating container (only ever used by const-reference parameter), so it
+  was deliberately left unfixed -- revisit if a future phase stores it by value in a container.
 
 ## Git & CI
 
@@ -238,7 +284,7 @@ full four-way per-distribution parity in R/Python, by design.
 
 ## Status
 
-**Phase 0, Phase 1, and Phase 2 are complete.** The Phase 0 vertical slice (.NET `Random` ->
+**Phase 0, Phase 1, Phase 2, and Phase 3 are complete.** The Phase 0 vertical slice (.NET `Random` ->
 `Normal` -> `PairedData` -> `UncertainPairedData.sample_and_integrate`) passes identically in
 C++, R, and Python; the seeded RNG stream is byte-identical across all three and matches a real
 .NET capture. Phase 1 (Statistics foundation) ported the validation subsystem, full
@@ -256,11 +302,28 @@ also found and closed a cross-language FMA divergence: `-ffp-contract=off` is no
 `core/CMakeLists.txt`, `hecfdar/src/Makevars`/`Makevars.win`, and `hecfdapy/CMakeLists.txt` (see
 "FP-contraction (FMA) parity" above) -- a standing invariant alongside RNG parity.
 
-The exit gate is green on all four legs: `make test-core` (ctest, C++, all passing), `make test-r`
-(testthat, 62 passed / 0 failed), `make test-py` (pytest, 8 passed / 0 failed), and `make oracles`
-(dotnet gate, 492 reproduced / 0 failed -- up from Phase 1's 366). The Makefile targets and
-3-platform CI are green. The `24.425549382855987` cross-language value and the RNG digest
-(FMA-insensitive) reproduce unchanged after adding `-ffp-contract=off` to R and Python.
+Phase 3 (structures & inventory) ported `hecfda::model::structures`: the three per-structure
+uncertainty samplers (`ValueUncertainty`, `ValueRatioWithUncertainty`,
+`FirstFloorElevationUncertainty`), `OccupancyType` + `DeterministicOccupancyType` + the move-only
+`OccupancyTypeBuilder` (binding the three samplers to the Phase-2 `UncertainPairedData`
+depth-percent-damage curves via per-category seeded RNG), `Structure`'s numeric
+`ComputeDamage`/`FindOccType`, and `Inventory`'s numeric subset (in-memory construction,
+damage-category enumeration, impact-area trim, per-occ-type RNG generation + sampling, ground
+elevations, `Validate` aggregation). RAS-Mapper/GIS/CSV/persistence/LifeSim surfaces on these
+classes stay severed per the project's numerical-core scope. Phase 3 also fixed a C++-port-only
+memory-safety defect (ASan-confirmed use-after-scope): `ValueUncertainty`, `ValueRatioWithUncertainty`,
+`FirstFloorElevationUncertainty`, and `Structure` all switched their `Validation`-rule predicates
+from `[this]` to by-value field capture -- see "By-value capture in Validation-rule predicates"
+above for the full invariant and the still-open `ConvergenceCriteria` follow-up.
+
+The exit gate is green on all four legs: `make test-core` (ctest, C++, 36 test cases / 31140
+assertions, all passing), `make test-r` (testthat, 75 passed / 0 failed), `make test-py` (pytest,
+10 passed / 0 failed), and `make oracles` (dotnet gate, 537 reproduced / 0 failed -- up from
+Phase 2's 492). The Makefile targets and 3-platform CI are green. The `24.425549382855987`
+cross-language value and the RNG digest (FMA-insensitive) reproduce unchanged in all four legs.
+R and Python bind a representative structures subset (`value_uncertainty`, `structure`) per the
+"R/Python structures coverage scope" convention above; the remaining structures targets are
+validated in C++ + the gate only.
 
 Severed/deferred from Phase 2: `CurveMetaData`/`GraphicalDistribution`/
 `GraphicalUncertainPairedData` XML + `ValidationErrorLogger`/GUI wiring;
@@ -269,8 +332,13 @@ Severed/deferred from Phase 2: `CurveMetaData`/`GraphicalDistribution`/
 oracle gate but not yet bound in R/Python (the `-ffp-contract=off` flag is already in place for
 when it lands).
 
-See `PLAN.md` for the conventions established in Phase 1 and Phase 2 (port-internal factory keys,
-bespoke fixture targets, the faithful-bug list), the Phase 3-6 plan, and the FMA parity detail.
-**Next: Phase 3 -- structures & inventory** (`HEC.FDA.Model/structures`: `Structure`, `Inventory`,
-`OccupancyType`, depth-percent-damage + first-floor-elevation + value uncertainty), which builds
-structure depth-damage sampling on the paired-data + distribution layer Phase 2 delivered.
+Deferred from Phase 3: `Inventory::get_inventory_and_water_trimmed_to_damage_category` has no
+fixture coverage (not exercised by any Task 6 case); `OccupancyType::error_messages_for()` formats
+`ErrorLevel` as a raw int rather than the C# `[Flags]` enum name (e.g. "2" instead of "Minor") --
+a pre-existing gap in `hecfda::statistics::Validation`, not new to Phase 3, and not exercised by
+any fixture.
+
+See `PLAN.md` for the conventions established in Phase 1, 2, and 3 (port-internal factory keys,
+bespoke fixture targets, the faithful-bug list, the by-value-capture invariant), the Phase 4-6
+plan, and the FMA parity detail. **Next: Phase 4 -- stage-damage**, which builds on the
+structures layer Phase 3 delivered.

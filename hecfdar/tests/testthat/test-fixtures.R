@@ -80,3 +80,57 @@ test_that("uncertain_paired_data fixture", {
     cmp(got, a$expected, a$tol, a$mode)
   }
 })
+
+# Phase 3 Task 7: representative structures subset (value_uncertainty, structure). The remaining
+# structures targets (value_ratio_with_uncertainty, first_floor_elevation_uncertainty,
+# occupancy_type, inventory) traverse the identical binding + compiled core and are validated in
+# C++ (core/tests/test_fixtures.cpp) + the dotnet oracle gate only -- see .claude/CLAUDE.md's
+# "R/Python distribution coverage scope" convention.
+test_that("value_uncertainty fixture", {
+  fx <- read_fx("structures/value_uncertainty.json")
+  for (c in fx$cases) for (a in c$assertions) {
+    got <- ns$hecfda_value_uncertainty(c$construct$dist, c$construct$std_or_min, c$construct$max,
+                                        a$method, as.double(unlist(a$args)))
+    cmp(got, a$expected, a$tol, a$mode)
+  }
+})
+
+test_that("structure fixture", {
+  fx <- read_fx("structures/structure.json")
+  for (c in fx$cases) for (a in c$assertions) {
+    oc <- c$construct$occupancy_type
+    st <- c$construct$structure
+    struct_params <- lapply(oc$struct_damages, function(d) as.double(unlist(d$params)))
+    content_params <- lapply(oc$content_damages, function(d) as.double(unlist(d$params)))
+    # C# defaults: ValueUncertainty max = 100; FirstFloorElevationUncertainty/
+    # ValueRatioWithUncertainty max = double.MaxValue -- used when the fixture's "max" is absent.
+    ffe_max <- if (is.null(oc$ffe$max)) .Machine$double.xmax else oc$ffe$max
+    sv_max <- if (is.null(oc$structure_value$max)) 100 else oc$structure_value$max
+    csvr_max <- if (is.null(oc$csvr$max)) .Machine$double.xmax else oc$csvr$max
+    val_cont <- if (is.null(st$val_cont)) 0 else st$val_cont
+    val_vehic <- if (is.null(st$val_vehic)) 0 else st$val_vehic
+    val_other <- if (is.null(st$val_other)) 0 else st$val_other
+    ground_elevation <- if (is.null(st$ground_elevation)) -999 else st$ground_elevation
+    got <- ns$hecfda_structure(
+      oc$name, oc$damage_category,
+      as.double(unlist(oc$struct_depths)), sapply(oc$struct_damages, function(d) d$type), struct_params,
+      as.double(unlist(oc$content_depths)), sapply(oc$content_damages, function(d) d$type), content_params,
+      oc$ffe$dist, oc$ffe$std_or_min, ffe_max,
+      oc$structure_value$dist, oc$structure_value$std_or_min, sv_max,
+      oc$csvr$dist, oc$csvr$std_or_min, oc$csvr$central, csvr_max,
+      as.integer(c$construct$sample[[1]]), c$construct$sample[[2]] != 0,
+      st$fid, st$first_floor_elevation, st$val_struct, st$st_damcat, st$occtype,
+      as.integer(st$impact_area_id), val_cont, val_vehic, val_other, ground_elevation,
+      a$method, as.double(a$args[[1]])
+    )
+    # Matches test_fixtures.cpp's run_structure comparison exactly (not the generic cmp() helper):
+    # rel divides by abs(expected) unless it is 0, in which case it divides by 1.0.
+    rel_divisor <- if (abs(a$expected) > 0) abs(a$expected) else 1.0
+    ok <- if (a$mode == "rel") {
+      abs(got - a$expected) / rel_divisor <= a$tol
+    } else {
+      abs(got - a$expected) <= a$tol
+    }
+    expect_true(ok, info = paste("case:", c$name, "method:", a$method))
+  }
+})
