@@ -6,6 +6,7 @@
 #include <vector>
 #include "hecfda/statistics/distributions/i_distribution.hpp"
 #include "hecfda/statistics/distributions/i_distribution_enum.hpp"
+#include "hecfda/statistics/distributions/deterministic.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 #include "hecfda/statistics/distributions/triangular.hpp"
 #include "hecfda/statistics/distributions/uniform.hpp"
@@ -23,8 +24,10 @@ namespace distributions {
 //                                    params = [min, max, sampleSize]
 //   DistributionType::Triangular -> FactoryTriangular(min, mostLikely, max, sampleSize)
 //                                    params = [min, mostLikely, max, sampleSize]
+//   DistributionType::Deterministic -> FactoryDeterministic(value)
+//                                       params = [value]
 //
-// Later distribution tasks add one `case` each (LogPearsonIII, LogNormal, Deterministic,
+// Later distribution tasks add one `case` each (LogPearsonIII, LogNormal,
 // IHistogram, Empirical, TruncatedNormal), documenting their own params order here in the same
 // style.
 class IDistributionFactory {
@@ -38,10 +41,11 @@ class IDistributionFactory {
             case DistributionType::Triangular:
                 return std::make_unique<Triangular>(params.at(0), params.at(1), params.at(2),
                                                       static_cast<long>(params.at(3)));
+            case DistributionType::Deterministic:
+                return std::make_unique<Deterministic>(params.at(0));
             case DistributionType::NotSupported:
             case DistributionType::LogPearsonIII:
             case DistributionType::LogNormal:
-            case DistributionType::Deterministic:
             case DistributionType::IHistogram:
             case DistributionType::Empirical:
             case DistributionType::TruncatedNormal:

@@ -1,0 +1,91 @@
+{
+  "target": "distribution",
+  "kind": "distribution",
+  "source_test": "HEC.FDA.StatisticsTests/Distributions/DeterministicTests.cs",
+  "cases": [
+    {
+      "name": "deterministic_1_inverse_cdf_025",
+      "construct": { "type": "Deterministic", "params": [1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.25], "expected": 1, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "deterministic_12_inverse_cdf_05",
+      "construct": { "type": "Deterministic", "params": [1.2] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 1.2, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "deterministic_neg1_inverse_cdf_075",
+      "construct": { "type": "Deterministic", "params": [-1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.75], "expected": -1, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "deterministic_05_cdf_1",
+      "construct": { "type": "Deterministic", "params": [0.5] },
+      "assertions": [
+        { "method": "cdf", "args": [1], "expected": 1, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "deterministic_05_cdf_12",
+      "construct": { "type": "Deterministic", "params": [0.5] },
+      "assertions": [
+        { "method": "cdf", "args": [1.2], "expected": 1, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "deterministic_075_cdf_05",
+      "construct": { "type": "Deterministic", "params": [0.75] },
+      "assertions": [
+        { "method": "cdf", "args": [0.5], "expected": 0, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "deterministic_1_pdf_1",
+      "construct": { "type": "Deterministic", "params": [1] },
+      "assertions": [
+        { "method": "pdf", "args": [1], "expected": 1, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "deterministic_05_pdf_12",
+      "construct": { "type": "Deterministic", "params": [0.5] },
+      "assertions": [
+        { "method": "pdf", "args": [1.2], "expected": 0, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "deterministic_075_pdf_05",
+      "construct": { "type": "Deterministic", "params": [0.75] },
+      "assertions": [
+        { "method": "pdf", "args": [0.5], "expected": 0, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "deterministic_good_0",
+      "construct": { "type": "Deterministic", "params": [0] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "deterministic_good_5",
+      "construct": { "type": "Deterministic", "params": [5.5] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "deterministic_fit",
+      "construct": { "type": "Deterministic", "params": [0] },
+      "assertions": [
+        { "method": "fit_value", "args": [2, 5, 3, 8, 1, 9, 4], "expected": 4.57142857142857, "tol": 1e-5, "mode": "rel" }
+      ]
+    }
+  ]
+}
