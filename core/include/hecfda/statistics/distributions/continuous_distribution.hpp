@@ -1,4 +1,4 @@
-// ported from: HEC.FDA.Statistics/ContinuousDistribution.cs @ f63682a86a30dc306a105689714a92bfd95956c5
+// ported from: HEC.FDA.Statistics/Distributions/ContinuousDistribution.cs @ f63682a86a30dc306a105689714a92bfd95956c5
 #ifndef HECFDA_STATISTICS_DISTRIBUTIONS_CONTINUOUS_DISTRIBUTION_HPP
 #define HECFDA_STATISTICS_DISTRIBUTIONS_CONTINUOUS_DISTRIBUTION_HPP
 #include <cstddef>

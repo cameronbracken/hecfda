@@ -87,15 +87,9 @@ TEST_CASE("rng_digest fixture") {
 // pdf|cdf|inverse_cdf|has_errors|error_level|fit_<param>. This is the "enabling" dispatch every
 // later distribution task's fixture reuses -- adding a distribution is "add a factory case + a
 // fixture", not a new dispatch function.
-static hecfda::statistics::distributions::DistributionType distribution_type_from_name(
-    const std::string& name) {
-    using DT = hecfda::statistics::distributions::DistributionType;
-    if (name == "Normal") return DT::Normal;
-    if (name == "Uniform") return DT::Uniform;
-    auto msg = std::string("unknown distribution type: ") + name;
-    FAIL(msg.c_str());
-    return DT::NotSupported;
-}
+// Uses the shared distribution_type_from_name() from i_distribution_enum.hpp;
+// removed local duplicate triplication. For fixtures, the exception is converted to a test
+// failure via TEST_EXCEPTION or caught separately as needed.
 
 // `error_level` is returned as the raw ErrorLevel byte value (e.g. Minor == 2), not a string --
 // see fixtures/distributions/uniform.json / README.md for the numeric convention. `fit_<param>`
@@ -107,7 +101,7 @@ static double run_distribution(const json& c, const std::string& method, const j
     std::string type_name = ctor["type"].get<std::string>();
     std::vector<double> params = ctor["params"].get<std::vector<double>>();
     auto dist = hecfda::statistics::distributions::IDistributionFactory::create(
-        distribution_type_from_name(type_name), params);
+        hecfda::statistics::distributions::distribution_type_from_name(type_name), params);
 
     if (method == "pdf") return dist->pdf(args[0].get<double>());
     if (method == "cdf") return dist->cdf(args[0].get<double>());

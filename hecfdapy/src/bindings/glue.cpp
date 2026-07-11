@@ -17,11 +17,8 @@ static std::vector<double> rng_sequence(int seed, int n) {
     hecfda::model::compute::RandomProvider rp(seed);
     return rp.next_random_sequence(n);
 }
-static nd::DistributionType dist_type_from_name(const std::string& type) {
-    if (type == "Normal") return nd::DistributionType::Normal;
-    if (type == "Uniform") return nd::DistributionType::Uniform;
-    throw std::invalid_argument("dist_type_from_name: unknown distribution type: " + type);
-}
+// Uses the shared distribution_type_from_name() from i_distribution_enum.hpp;
+// removed local duplicate triplication.
 // Generic factory-based distribution dispatch (Task A4): pdf/cdf/inverse_cdf evaluate directly;
 // has_errors/error_level validate() first via a dynamic_cast to hecfda::statistics::Validation.
 // `error_level` returns the raw ErrorLevel byte value (e.g. Minor == 2), matching the fixture
@@ -29,7 +26,7 @@ static nd::DistributionType dist_type_from_name(const std::string& type) {
 // has_errors/error_level.
 static double dist_eval(const std::string& type, std::vector<double> params, const std::string& method,
                         double x) {
-    auto dist = nd::IDistributionFactory::create(dist_type_from_name(type), params);
+    auto dist = nd::IDistributionFactory::create(nd::distribution_type_from_name(type), params);
     if (method == "pdf") return dist->pdf(x);
     if (method == "cdf") return dist->cdf(x);
     if (method == "inverse_cdf") return dist->inverse_cdf(x);

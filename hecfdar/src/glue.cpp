@@ -16,18 +16,15 @@ namespace pd = hecfda::model::paired_data;
     auto v = rp.next_random_sequence(n);
     return cpp11::doubles(cpp11::writable::doubles(v.begin(), v.end()));
 }
-static nd::DistributionType hecfda_dist_type_from_name(const std::string& type) {
-    if (type == "Normal") return nd::DistributionType::Normal;
-    if (type == "Uniform") return nd::DistributionType::Uniform;
-    throw std::invalid_argument("hecfda_dist_type_from_name: unknown distribution type: " + type);
-}
+// Uses the shared distribution_type_from_name() from i_distribution_enum.hpp;
+// removed local duplicate triplication.
 // Generic factory-based distribution dispatch (Task A4): pdf/cdf/inverse_cdf evaluate directly;
 // has_errors/error_level validate() first via a dynamic_cast to hecfda::statistics::Validation
 // (every ContinuousDistribution derives from it). `error_level` returns the raw ErrorLevel byte
 // value (e.g. Minor == 2), matching the fixture convention documented in
 // fixtures/distributions/uniform.json. `x` is unused for has_errors/error_level.
 [[cpp11::register]] double hecfda_dist_eval(std::string type, cpp11::doubles params, std::string method, double x) {
-    auto dist = nd::IDistributionFactory::create(hecfda_dist_type_from_name(type),
+    auto dist = nd::IDistributionFactory::create(nd::distribution_type_from_name(type),
                                                   std::vector<double>(params.begin(), params.end()));
     if (method == "pdf") return dist->pdf(x);
     if (method == "cdf") return dist->cdf(x);

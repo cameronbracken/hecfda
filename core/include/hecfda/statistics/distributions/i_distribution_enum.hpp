@@ -1,6 +1,8 @@
 // ported from: HEC.FDA.Statistics/Distributions/IDistributionEnum.cs @ f63682a86a30dc306a105689714a92bfd95956c5
 #ifndef HECFDA_STATISTICS_DISTRIBUTIONS_I_DISTRIBUTION_ENUM_HPP
 #define HECFDA_STATISTICS_DISTRIBUTIONS_I_DISTRIBUTION_ENUM_HPP
+#include <stdexcept>
+#include <string>
 namespace hecfda {
 namespace statistics {
 namespace distributions {
@@ -27,6 +29,15 @@ enum class DistributionType {
     Empirical = 8,
     TruncatedNormal = 101,
 };
+
+// Centralized string -> DistributionType mapping. Maps name (e.g. "Normal", "Uniform") to the
+// corresponding enum value. Throws std::invalid_argument if name is unknown. Used by all
+// distribution test/glue/binding layers to avoid triplication of the same string-matching logic.
+inline DistributionType distribution_type_from_name(const std::string& name) {
+    if (name == "Normal") return DistributionType::Normal;
+    if (name == "Uniform") return DistributionType::Uniform;
+    throw std::invalid_argument("distribution_type_from_name: unknown distribution type: " + name);
+}
 
 }  // namespace distributions
 }  // namespace statistics
