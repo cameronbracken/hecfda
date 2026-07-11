@@ -12,6 +12,7 @@
 #include "hecfda/statistics/distributions/logpearson3.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 #include "hecfda/statistics/distributions/triangular.hpp"
+#include "hecfda/statistics/histograms/dynamic_histogram.hpp"
 namespace hecfda {
 namespace statistics {
 namespace distributions {
@@ -26,18 +27,19 @@ namespace distributions {
 //     Fit() logs data with log10 (see lognormal.hpp's class comment for that separate, pre-existing
 //     quirk). Reproduced as-is.
 //
-// SCOPE (Task D1, Phase 1 = Statistics layer): handles the 7 IDistribution cases reachable through
-// `const IDistribution&` in this port -- Normal, Uniform, Triangular, LogPearsonIII, LogNormal,
-// Empirical, Deterministic/NotSupported. Two upstream cases are DEFERRED to Phase 2, not
-// implemented here:
-//   - `IDistributionEnum.IHistogram`: DynamicHistogram (Task C2) does NOT derive from IDistribution
-//     in this port (i_histogram.hpp is a separate interface) -- so this case is unreachable through
-//     `const IDistribution&` and is not bridgeable without a Model-layer change. If ever reached
-//     (it should not be, in Phase 1), throws rather than silently returning an incorrect value.
-//   - UncertainPairedData's deterministic-sample-path wiring (the Model-layer caller that would
-//     invoke this converter against a paired-data uncertainty distribution): requires generalizing
-//     UncertainPairedData from concrete Normal to IDistribution, a Phase-2 concern. This header is
-//     the converter only.
+// SCOPE (Task D1, Phase 1 = Statistics layer; IHistogram case added Phase 4 Task 4): handles all 8
+// IDistribution cases reachable through `const IDistribution&` in this port -- Normal, Uniform,
+// Triangular, LogPearsonIII, LogNormal, Empirical, Deterministic/NotSupported, and IHistogram.
+// IHistogram was originally DEFERRED to "Phase 2" here (DynamicHistogram (Task C2) composes
+// IDistribution via ContinuousDistribution rather than deriving IHistogram from it -- see
+// i_histogram.hpp's class comment -- so this case IS reachable through `const IDistribution&`
+// whenever the concrete instance is a DynamicHistogram, contrary to this comment's original
+// claim). Phase 4 Task 4 (StudyAreaConsequencesBinned::to_uncertain_paired_data) is the first
+// caller that actually builds an UncertainPairedData whose Yvals are DynamicHistogram instances
+// and then samples it deterministically (PairedData::sample_paired_data_raw_deterministic /
+// sample_paired_data(iteration, true)), so the case below is now implemented rather than throwing.
+// No existing fixture exercised this branch before Task 4 (every prior UncertainPairedData fixture
+// used Normal/Uniform/etc. ys), so implementing it cannot change any previously-pinned value.
 //
 // Any DistributionType not matched by a case (TruncatedNormal, and the port-internal
 // TruncatedLogNormal/TruncatedLogPearson3 factory keys -- none of which appear in the upstream
@@ -150,14 +152,21 @@ inline Deterministic convert_distribution_to_deterministic(const IDistribution& 
 
         // ported from: `case IDistributionEnum.IHistogram: double mean =
         // ((Histograms.IHistogram)iDistribution).SampleMean; returnedDistribution = new
-        // Deterministic(mean);`. DEFERRED to Phase 2 -- see the class-level comment above. Not
-        // reachable through `const IDistribution&` in this port; throws rather than silently
-        // falling through to the wrong (default-0.0) branch below if it is ever reached.
-        case DistributionType::IHistogram:
-            throw std::logic_error(
-                "convert_distribution_to_deterministic: IHistogram case is deferred to Phase 2 "
-                "(DynamicHistogram does not derive from IDistribution in this port) and is not "
-                "implemented");
+        // Deterministic(mean);`. Implemented Phase 4 Task 4 -- see the class-level comment above.
+        // DynamicHistogram is the only concrete IHistogram in this port (see
+        // dynamic_histogram.hpp), so the downcast target is DynamicHistogram, not an IHistogram
+        // interface pointer (which doesn't exist as an IDistribution-compatible type here).
+        case DistributionType::IHistogram: {
+            const auto* histogram =
+                dynamic_cast<const hecfda::statistics::histograms::DynamicHistogram*>(&dist);
+            if (histogram == nullptr) {
+                throw std::runtime_error(
+                    "convert_distribution_to_deterministic: type() is IHistogram but the instance "
+                    "is not a DynamicHistogram (mirrors C#'s InvalidCastException on "
+                    "`(Histograms.IHistogram)iDistribution`)");
+            }
+            return Deterministic(histogram->sample_mean());
+        }
 
         // ported from: the C# switch's implicit fall-through for any unmatched Type -- the
         // pre-switch `Deterministic returnedDistribution = new Deterministic();` (Value ==

@@ -768,6 +768,57 @@ namespace oracle_emitter {
       throw new Exception("unknown aggregated_consequences_binned method: " + method);
     }
 
+    // StudyAreaConsequencesBinned (Phase 4 Task 4) is the collection wrapper over
+    // per-asset-category AggregatedConsequencesBinned results -- built from
+    // patched/StudyAreaConsequencesBinned.cs + patched/ConsequenceExtensions.cs (see those files'
+    // headers for the patch rationale: XML/quantile-result methods dropped as genuine compile
+    // blockers, GetAggregateEmpiricalDistribution/SampleMeanDamage/ConsequenceExceededWithProbabilityQ
+    // dropped to match the C++ port's scope). `construct` is {damage_category, impact_area_id,
+    // convergence: {min_iterations, max_iterations}, asset_categories: [...]}; one
+    // AggregatedConsequencesBinned is built per asset_category (ConsequenceType.Damage/
+    // RiskType.Fail, matching GetConsequenceResult's own defaults), collected into a
+    // StudyAreaConsequencesBinned via its (List<AggregatedConsequencesBinned>) ctor.
+    // `consequence_results` is a list of {iteration, increments: [[structureDamage, contentDamage,
+    // vehicleDamage, otherDamage], ...]}; each entry builds a fresh ConsequenceResult(damageCategory),
+    // replays every increment tuple via IncrementConsequence (same convention as
+    // EvalConsequenceResult), then feeds it through the stage-damage AddConsequenceRealization(
+    // ConsequenceResult, damageCategory, impactAreaID, iteration) overload. PutDataIntoHistograms()
+    // runs once after every consequence_results entry is applied, then ToUncertainPairedData(xs,
+    // [study], impactAreaID) is called once per assertion (fresh per assertion, matching
+    // run_study_area_consequences_binned in test_fixtures.cpp). `args[0]` indexes into the
+    // construct's asset_categories list (GetDamageCategories/GetAssetCategories walk
+    // ConsequenceResultList in construction order, so this indexing is deterministic). `method`
+    // dispatches to_uncertain_paired_data_damage_yvals or to_uncertain_paired_data_quantity_yvals,
+    // each returning SamplePairedData(0, true)'s (deterministic, monotonicity-forced) Yvals.
+    static object EvalStudyAreaConsequencesBinned(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+      string damageCategory = c.GetProperty("damage_category").GetString();
+      int impactAreaID = c.GetProperty("impact_area_id").GetInt32();
+      var assetCategories = c.GetProperty("asset_categories").EnumerateArray().Select(x => x.GetString()).ToList();
+      var results = assetCategories.Select(assetCategory =>
+        new AggregatedConsequencesBinned(damageCategory, assetCategory, cc, impactAreaID, ConsequenceType.Damage, RiskType.Fail)).ToList();
+      var study = new StudyAreaConsequencesBinned(results);
+
+      foreach (var realization in caseEl.GetProperty("consequence_results").EnumerateArray()) {
+        var cr = new ConsequenceResult(damageCategory);
+        foreach (var inc in realization.GetProperty("increments").EnumerateArray()) {
+          cr.IncrementConsequence(D(inc[0]), D(inc[1]), D(inc[2]), D(inc[3]));
+        }
+        study.AddConsequenceRealization(cr, damageCategory, impactAreaID, realization.GetProperty("iteration").GetInt32());
+      }
+      study.PutDataIntoHistograms();
+
+      double[] xs = DA(caseEl.GetProperty("xs"));
+      var (damageUpds, quantityUpds) = StudyAreaConsequencesBinned.ToUncertainPairedData(xs.ToList(), new List<StudyAreaConsequencesBinned> { study }, impactAreaID);
+
+      int assetIndex = (int)D(argsEl[0]);
+      if (method == "to_uncertain_paired_data_damage_yvals") return damageUpds[assetIndex].SamplePairedData(0, true).Yvals.ToArray();
+      if (method == "to_uncertain_paired_data_quantity_yvals") return quantityUpds[assetIndex].SamplePairedData(0, true).Yvals.ToArray();
+      throw new Exception("unknown study_area_consequences_binned method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -818,6 +869,7 @@ namespace oracle_emitter {
               case "inventory_compute_damages": val = EvalInventoryComputeDamages(c, method); break;
               case "consequence_result": val = EvalConsequenceResult(c, method); break;
               case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
+              case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

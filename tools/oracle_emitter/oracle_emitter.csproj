@@ -62,6 +62,11 @@
          below). Compiled unpatched. -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/ConsequenceTypes.cs" />
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/RiskType.cs" />
+    <!-- Task Phase4T4: StringGlobalConstants is a single-file, zero-dependency constants class
+         (STRUCTURE_ASSET_CATEGORY/CONTENT_ASSET_CATEGORY/OTHER_ASSET_CATEGORY/
+         VEHICLE_ASSET_CATEGORY/UNASSIGNED), needed by patched/StudyAreaConsequencesBinned.cs's
+         stage-damage AddConsequenceRealization overload. Compiled unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/StringGlobalConstants.cs" />
     <!-- Task Phase3T4: OccupancyType uses MessageHub/MessageReportedEventHandler/
          IDontImplementValidationButMyPropertiesDo (MVVM messaging), but unlike
          CurveMetaData/GraphicalUncertainPairedData's WriteToXML/ReadFromXML, which pull in the
@@ -96,5 +101,19 @@
          members (and the now-unused System.Xml.Linq using); the ctors, PutDataIntoHistogram,
          AddConsequenceRealization, the three accessor methods, and Equals are kept VERBATIM. Same
          auto-pickup as patched/Structure.cs/Inventory.cs above, no explicit Compile Include. -->
+    <!-- Task Phase4T4: patched/ConsequenceExtensions.cs keeps ONLY the AggregatedConsequencesBinned
+         FilterByCategories overload; the sibling AggregatedConsequencesByQuantile overload is a
+         genuine compile blocker (that type isn't compiled into this project). patched/
+         StudyAreaConsequencesBinned.cs drops WriteToXML/ReadFromXML (calls AggregatedConsequencesBinned
+         methods the Task 3 patch already dropped) and ConvertToStudyAreaConsequencesByQuantile
+         (references the uncompiled quantile-result types); GetAggregateEmpiricalDistribution,
+         SampleMeanDamage, and ConsequenceExceededWithProbabilityQ are dropped too, matching the C++
+         port's scope (not hard compile blockers, but out of scope; see that file's header).
+         Everything else (both ctors, AddNewConsequenceResultObject,
+         AddExistingConsequenceResultObject, both AddConsequenceRealization overloads,
+         PutDataIntoHistograms, Equals, GetSpecificHistogram, RemainingIterations,
+         ResultsAreConverged, ToUncertainPairedData, GetAssetCategories/GetDamageCategories,
+         GetConsequenceResult) is kept VERBATIM. Same auto-pickup as the patched/ files above, no
+         explicit Compile Include. -->
   </ItemGroup>
 </Project>

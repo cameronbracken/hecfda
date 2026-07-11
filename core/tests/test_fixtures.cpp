@@ -9,7 +9,9 @@
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/extensions/graphical_distribution.hpp"
 #include "hecfda/model/metrics/aggregated_consequences_binned.hpp"
+#include "hecfda/model/metrics/consequence_extensions.hpp"
 #include "hecfda/model/metrics/consequence_result.hpp"
+#include "hecfda/model/metrics/study_area_consequences_binned.hpp"
 #include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
@@ -1883,6 +1885,100 @@ TEST_CASE("aggregated_consequences_binned fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// StudyAreaConsequencesBinned (Phase 4 Task 4) is the collection wrapper over per-asset-category
+// AggregatedConsequencesBinned results. `construct` is {damage_category, impact_area_id,
+// convergence: {min_iterations, max_iterations}, asset_categories: [...]}; one
+// AggregatedConsequencesBinned is built per asset_category (in list order, matching
+// ConsequenceType::Damage/RiskType::Fail -- StudyAreaConsequencesBinned's own
+// get_consequence_result defaults). `consequence_results` is a list of {iteration, increments:
+// [[structureDamage,contentDamage,vehicleDamage,otherDamage], ...]}; each entry builds a fresh
+// ConsequenceResult(damage_category), replays every increment tuple via increment_consequence (same
+// convention as consequence_result.json), then feeds it through the stage-damage
+// add_consequence_realization(ConsequenceResult, damage_category, impact_area_id, iteration)
+// overload -- the 4-way asset-category split this task ports. put_data_into_histograms() runs once
+// after every consequence_results entry is applied (matching AggregatedConsequencesBinned's
+// staged-batch convention), then to_uncertain_paired_data(xs, {study}, impact_area_id) is called
+// fresh per assertion (mirrors run_uncertain_paired_data_ops). `args[0]` indexes into the
+// construct's asset_categories list, selecting which of the resulting (single damage_category x N
+// asset_category) UncertainPairedData pairs to sample -- get_damage_categories/get_asset_categories
+// walk ConsequenceResultList in first-seen == construction order, so this indexing is deterministic.
+// `method` dispatches to_uncertain_paired_data_damage_yvals or
+// to_uncertain_paired_data_quantity_yvals, each returning sample_paired_data(0, true)'s
+// (deterministic, monotonicity-forced) yvals -- exercising the IHistogram branch of
+// convert_distribution_to_deterministic added by this task.
+static hecfda::model::metrics::StudyAreaConsequencesBinned make_study_area_consequences_binned(
+    const json& ctor) {
+    using namespace hecfda::model::metrics;
+    const auto& conv = ctor["convergence"];
+    hecfda::statistics::ConvergenceCriteria cc(conv["min_iterations"].get<int>(),
+                                                conv["max_iterations"].get<int>());
+    std::string damage_category = ctor["damage_category"].get<std::string>();
+    int impact_area_id = ctor["impact_area_id"].get<int>();
+    std::vector<AggregatedConsequencesBinned> results;
+    for (const auto& asset_category_json : ctor["asset_categories"]) {
+        results.emplace_back(damage_category, asset_category_json.get<std::string>(), cc, impact_area_id,
+                              ConsequenceType::Damage, RiskType::Fail);
+    }
+    return StudyAreaConsequencesBinned(std::move(results));
+}
+
+static std::vector<double> run_study_area_consequences_binned(const json& c, const std::string& method,
+                                                                 const json& args) {
+    using namespace hecfda::model::metrics;
+    StudyAreaConsequencesBinned study = make_study_area_consequences_binned(c["construct"]);
+    std::string damage_category = c["construct"]["damage_category"].get<std::string>();
+    int impact_area_id = c["construct"]["impact_area_id"].get<int>();
+
+    for (const auto& realization : c["consequence_results"]) {
+        ConsequenceResult cr(damage_category);
+        for (const auto& inc : realization["increments"]) {
+            cr.increment_consequence(inc[0].get<double>(), inc[1].get<double>(), inc[2].get<double>(),
+                                      inc[3].get<double>());
+        }
+        study.add_consequence_realization(cr, damage_category, impact_area_id,
+                                           realization["iteration"].get<int>());
+    }
+    study.put_data_into_histograms();
+
+    std::vector<double> xs = c["xs"].get<std::vector<double>>();
+    std::vector<StudyAreaConsequencesBinned> y_values;
+    y_values.push_back(std::move(study));
+    auto upds = StudyAreaConsequencesBinned::to_uncertain_paired_data(xs, y_values, impact_area_id);
+    auto& damage_upds = upds.first;
+    auto& quantity_upds = upds.second;
+
+    int asset_index = args[0].get<int>();
+    if (method == "to_uncertain_paired_data_damage_yvals") {
+        return damage_upds.at(static_cast<std::size_t>(asset_index)).sample_paired_data(0, true).yvals();
+    }
+    if (method == "to_uncertain_paired_data_quantity_yvals") {
+        return quantity_upds.at(static_cast<std::size_t>(asset_index)).sample_paired_data(0, true).yvals();
+    }
+    auto msg = std::string("unknown study_area_consequences_binned method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("study_area_consequences_binned fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/study_area_consequences_binned.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "study_area_consequences_binned");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_study_area_consequences_binned(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = a["expected"].get<std::vector<double>>();
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());
