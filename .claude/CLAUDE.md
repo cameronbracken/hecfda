@@ -63,7 +63,15 @@ ShiftedGamma, Empirical), `statistics::convergence::ConvergenceCriteria`,
 `statistics::histograms::DynamicHistogram`, and
 `distributions::UncertainToDeterministicDistributionConverter`. `Gamma`/`ShiftedGamma`/
 `PearsonIII` are internal helper classes (not `IDistribution` members of the factory dispatch).
-All phases 2-6 build outward from this base -- see `PLAN.md` for the dependency-ordered bulk-port
+
+Phase 2 added the paired-data compute layer under `hecfda::model::paired_data`: the faithful .NET
+`Array.BinarySearch` (replacing `std::lower_bound` in `PairedData`/`Empirical` lookups),
+`CurveMetaData`, `PairedData` compose/multiply/`sum_ys_for_given_x`/monotonicity,
+`UncertainPairedData` generalized from `Normal` to `IDistribution` with every sample path
+(including deterministic-via-converter), and `GraphicalUncertainPairedData` +
+`GraphicalDistribution` + `GraphicalFrequencyUncertaintyCalculators` + `InterpolateQuantiles`.
+Phase 2 also added `-ffp-contract=off` project-wide (see "FP-contraction (FMA) parity" below).
+All phases 3-6 build outward from this base -- see `PLAN.md` for the dependency-ordered bulk-port
 sequence.
 
 ## Build & test commands
@@ -107,6 +115,24 @@ gate) or from an existing upstream test literal. The pinned Phase 0 values:
 `UncertainPairedData::sample_and_integrate(seed=1234) == 24.425549382855987` and the RNG digest
 `sum(seed=12345, n=100000) == 50124.341288393982`, both identical across C++/R/Python and matching
 the real C#.
+
+## FP-contraction (FMA) parity (standing invariant, added Phase 2)
+
+Clang and GCC default to fusing multiply-add expressions (`FP_CONTRACT` on, even at `-O0`), which
+rounds differently than .NET's non-fused, strict left-to-right IEEE 754 arithmetic. Task P2T4b
+found this the hard way: `GraphicalFrequencyUncertaintyCalculators::compute_slope`'s epsilon
+(1e-5) finite-difference division amplifies a single ULP difference by roughly 1e5x, breaking
+bit-for-bit reproduction at scattered indices for some inputs. `-ffp-contract=off` is now set
+project-wide, non-MSVC only (MSVC already defaults to no contraction):
+
+- `core/CMakeLists.txt` -- per test target
+- `hecfdar/src/Makevars` and `Makevars.win` -- `PKG_CXXFLAGS = -ffp-contract=off`
+- `hecfdapy/CMakeLists.txt` -- `target_compile_options(_core PRIVATE
+  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-ffp-contract=off>)`
+
+Treat this like RNG parity: any future core code using epsilon finite-differences or other
+FMA-sensitive arithmetic depends on this flag to reproduce identically across C++/R/Python/C#.
+Never remove or scope it down without re-verifying every fixture in all three languages.
 
 ## Validation model (DRY)
 
@@ -185,6 +211,15 @@ full four-way per-distribution parity in R/Python, by design.
     quantile in its estimate.
   - `LogNormal` mixes natural-log (`ln`) and `log10` semantics inconsistently between methods,
     matching the C# inconsistency rather than normalizing it.
+  - `CurveMetaData` has an "unassiged" typo (misspelled, not "unassigned") in a member/constant
+    name, transcribed verbatim.
+  - `PairedData::multiply`'s doc comment claims "damages below curve are 0," which is inaccurate;
+    the actual code clamps to `y[0]` (the first y-value), not zero. Comment kept as-is, behavior
+    matches upstream code (not the comment).
+  - `ExtrapolateFrequencyFunction` has an array-length mismatch bug in the narrow `-1e-4..0`
+    input range, reproduced rather than fixed.
+  - `GraphicalFrequencyUncertaintyCalculators` takes a `curveMetaData` constructor parameter that
+    is dead -- never read by any method -- reproduced verbatim rather than dropped.
 
 ## Git & CI
 
@@ -203,16 +238,39 @@ full four-way per-distribution parity in R/Python, by design.
 
 ## Status
 
-**Phase 0 and Phase 1 are complete.** The Phase 0 vertical slice (.NET `Random` -> `Normal` ->
-`PairedData` -> `UncertainPairedData.sample_and_integrate`) passes identically in C++, R, and
-Python; the seeded RNG stream is byte-identical across all three and matches a real .NET capture.
-Phase 1 (Statistics foundation) ported the validation subsystem, full `SpecialFunctions`,
-`SampleStatistics`, the distribution base/enum/factory with generic four-runner dispatch, all 13
-distributions, `ConvergenceCriteria`, `DynamicHistogram`, and the
-`UncertainToDeterministicDistributionConverter`. The exit gate is green on all four legs:
-`make test-core` (ctest, C++), `make test-r` (testthat, 37 passed / 0 failed), `make test-py`
-(pytest, 6 passed), and `make oracles` (dotnet gate, 366 reproduced / 0 failed -- up from Phase
-0's 18). The Makefile targets and 3-platform CI are green. See `PLAN.md` for the conventions
-established in Phase 1 (port-internal factory keys, bespoke fixture targets, the faithful-bug
-list), the Phase 2-6 plan, and the top Phase-2 risk (binary-search divergence on duplicate x/y
-values in paired data).
+**Phase 0, Phase 1, and Phase 2 are complete.** The Phase 0 vertical slice (.NET `Random` ->
+`Normal` -> `PairedData` -> `UncertainPairedData.sample_and_integrate`) passes identically in
+C++, R, and Python; the seeded RNG stream is byte-identical across all three and matches a real
+.NET capture. Phase 1 (Statistics foundation) ported the validation subsystem, full
+`SpecialFunctions`, `SampleStatistics`, the distribution base/enum/factory with generic
+four-runner dispatch, all 13 distributions, `ConvergenceCriteria`, `DynamicHistogram`, and the
+`UncertainToDeterministicDistributionConverter`.
+
+Phase 2 (paired-data compute) delivered the full paired-data curve algebra (`PairedData`
+compose/multiply/`sum_ys_for_given_x`/monotonicity, `CurveMetaData`), the faithful .NET
+`Array.BinarySearch` (closing the top Phase-1 risk: `std::lower_bound` diverged from C# on
+duplicate x/y values), `UncertainPairedData` generalized to `IDistribution` with all sample paths
+including deterministic-via-converter, and `GraphicalUncertainPairedData` +
+`GraphicalDistribution` + the graphical uncertainty calculators + `InterpolateQuantiles`. Phase 2
+also found and closed a cross-language FMA divergence: `-ffp-contract=off` is now set in
+`core/CMakeLists.txt`, `hecfdar/src/Makevars`/`Makevars.win`, and `hecfdapy/CMakeLists.txt` (see
+"FP-contraction (FMA) parity" above) -- a standing invariant alongside RNG parity.
+
+The exit gate is green on all four legs: `make test-core` (ctest, C++, all passing), `make test-r`
+(testthat, 62 passed / 0 failed), `make test-py` (pytest, 8 passed / 0 failed), and `make oracles`
+(dotnet gate, 492 reproduced / 0 failed -- up from Phase 1's 366). The Makefile targets and
+3-platform CI are green. The `24.425549382855987` cross-language value and the RNG digest
+(FMA-insensitive) reproduce unchanged after adding `-ffp-contract=off` to R and Python.
+
+Severed/deferred from Phase 2: `CurveMetaData`/`GraphicalDistribution`/
+`GraphicalUncertainPairedData` XML + `ValidationErrorLogger`/GUI wiring;
+`UncertainPairedData.CombineWithWeights` (depends on severed `Empirical` stacking, untested),
+`Equals`, and `ConvertDamagedElementCountToText`; the graphical path is validated in C++ and the
+oracle gate but not yet bound in R/Python (the `-ffp-contract=off` flag is already in place for
+when it lands).
+
+See `PLAN.md` for the conventions established in Phase 1 and Phase 2 (port-internal factory keys,
+bespoke fixture targets, the faithful-bug list), the Phase 3-6 plan, and the FMA parity detail.
+**Next: Phase 3 -- structures & inventory** (`HEC.FDA.Model/structures`: `Structure`, `Inventory`,
+`OccupancyType`, depth-percent-damage + first-floor-elevation + value uncertainty), which builds
+structure depth-damage sampling on the paired-data + distribution layer Phase 2 delivered.
