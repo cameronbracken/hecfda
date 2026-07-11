@@ -1,0 +1,64 @@
+{
+  "target": "pearson3",
+  "kind": "pearson3",
+  "source_test": "HEC.FDA.StatisticsTests/Distributions/PearsonIIITests.cs (PearsonIII_InverseCDF)",
+  "note": "PearsonIII.cs is a public plain helper class, not an IDistribution. `construct.params` is [mean, sd, skew, sampleSize] matching the PearsonIII(mean, sd, skew, n) ctor. All InlineData cases use skew=1.323 (positive skew -> ShiftedGamma branch); the no-skew (Normal) and negative-skew (reflection) branches have no dedicated upstream fixture case but are transcribed verbatim in pearson3.hpp per the C# source. tol/mode mirror the upstream test's own assertion: `percent = Math.Abs((output - result) / output); Assert.True(percent < .01)` -> mode rel, tol 0.01.",
+  "cases": [
+    {
+      "name": "usgs_r_smwr_p0998",
+      "construct": { "params": [4434.739, 1681.290, 1.323, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.998], "expected": 11941.46931887674872996286, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "usgs_r_smwr_p0995",
+      "construct": { "params": [4434.739, 1681.290, 1.323, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.995], "expected": 10763.40989302623711409979, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "usgs_r_smwr_p098",
+      "construct": { "params": [4434.739, 1681.290, 1.323, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.98], "expected": 8933.28373736705179908313, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "usgs_r_smwr_p095",
+      "construct": { "params": [4434.739, 1681.290, 1.323, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.95], "expected": 7676.20361345045967027545, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "usgs_r_smwr_p05",
+      "construct": { "params": [4434.739, 1681.290, 1.323, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 4075.17124630542957675061, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "usgs_r_smwr_p01",
+      "construct": { "params": [4434.739, 1681.290, 1.323, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.1], "expected": 2654.30189278692023435724, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "usgs_r_smwr_p005",
+      "construct": { "params": [4434.739, 1681.290, 1.323, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.05], "expected": 2421.96631832806406237069, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "usgs_r_smwr_p001",
+      "construct": { "params": [4434.739, 1681.290, 1.323, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.01], "expected": 2135.36487671968916401966, "tol": 0.01, "mode": "rel" }
+      ]
+    }
+  ]
+}

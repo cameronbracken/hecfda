@@ -110,6 +110,19 @@ namespace oracle_emitter {
       if (method == "inverse_cdf") return dist.InverseCDF(D(argsEl[0]));
       throw new Exception("unknown shifted_gamma method: " + method);
     }
+    // PearsonIII (Task B6) is a public plain helper class, not an IDistribution, so it is
+    // constructed directly here rather than through DistFactory. `construct.params` is
+    // [mean, sd, skew, n]. This transitively validates the internal Normal (no-skew branch) and
+    // ShiftedGamma/Gamma (skewed branches) it delegates to against the real C#.
+    static object EvalPearson3(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      double[] p = DA(c.GetProperty("params"));
+      var dist = new PearsonIII(p[0], p[1], p[2], (long)p[3]);
+      if (method == "pdf") return dist.PDF(D(argsEl[0]));
+      if (method == "cdf") return dist.CDF(D(argsEl[0]));
+      if (method == "inverse_cdf") return dist.InverseCDF(D(argsEl[0]));
+      throw new Exception("unknown pearson3 method: " + method);
+    }
     static object EvalPaired(JsonElement c, string method, JsonElement args) {
       var pd = new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
       return method switch {
@@ -190,6 +203,7 @@ namespace oracle_emitter {
                 val = EvalRng(method, c.GetProperty("construct").GetProperty("seed").GetInt32(), argsEl); break;
               case "distribution": val = EvalDistribution(c, method, argsEl); break;
               case "shifted_gamma": val = EvalShiftedGamma(c, method, argsEl); break;
+              case "pearson3": val = EvalPearson3(c, method, argsEl); break;
               case "paired_data": val = EvalPaired(c.GetProperty("construct"), method, argsEl); break;
               case "special_functions": val = EvalSpecial(method, argsEl); break;
               case "sample_statistics": val = EvalSampleStatistics(c.GetProperty("construct"), method); break;

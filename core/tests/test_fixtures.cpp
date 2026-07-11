@@ -10,6 +10,7 @@
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/statistics/distributions/i_distribution_factory.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
+#include "hecfda/statistics/distributions/pearson3.hpp"
 #include "hecfda/statistics/distributions/shifted_gamma.hpp"
 #include "hecfda/statistics/distributions/triangular.hpp"
 #include "hecfda/statistics/distributions/uniform.hpp"
@@ -287,6 +288,42 @@ TEST_CASE("shifted_gamma fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_shifted_gamma(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for PearsonIII (Task B6): like ShiftedGamma, PearsonIII is a plain helper
+// class -- not an IDistribution -- so it is constructed directly rather than via
+// IDistributionFactory::create. `construct.params` is [mean, sd, skew, n] matching the
+// PearsonIII(mean, sd, skew, n) ctor.
+static double run_pearson3(const json& c, const std::string& method, const json& args) {
+    std::vector<double> params = c["construct"]["params"].get<std::vector<double>>();
+    hecfda::statistics::distributions::PearsonIII dist(params[0], params[1], params[2],
+                                                         static_cast<long>(params[3]));
+    if (method == "pdf") return dist.pdf(args[0].get<double>());
+    if (method == "cdf") return dist.cdf(args[0].get<double>());
+    if (method == "inverse_cdf") return dist.inverse_cdf(args[0].get<double>());
+    auto msg = std::string("unknown pearson3 method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("pearson3 fixture") {
+    std::ifstream f(fixtures_dir() + "/distributions/pearson3.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "pearson3");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_pearson3(c, a["method"], a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
