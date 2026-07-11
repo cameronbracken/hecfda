@@ -44,5 +44,8 @@
          ValueUncertainty's ValidationErrorLogger), which is the same MVVM closure already
          reachable transitively above, so it compiles unpatched. -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/ValueRatioWithUncertainty.cs" />
+    <!-- Task Phase3T3: FirstFloorElevationUncertainty extends Validation directly, same MVVM
+         closure already reachable transitively above, so it compiles unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/FirstFloorElevationUncertainty.cs" />
   </ItemGroup>
 </Project>

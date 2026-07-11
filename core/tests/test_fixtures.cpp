@@ -12,6 +12,7 @@
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/model/structures/first_floor_elevation_uncertainty.hpp"
 #include "hecfda/model/structures/value_ratio_with_uncertainty.hpp"
 #include "hecfda/model/structures/value_uncertainty.hpp"
 #include "hecfda/model/utilities/graphical_frequency_uncertainty_calculators.hpp"
@@ -1243,6 +1244,47 @@ TEST_CASE("value_uncertainty fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_value_uncertainty(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for FirstFloorElevationUncertainty (Phase 3 Task 3): same shape as
+// run_value_ratio_with_uncertainty above -- a plain Validation-derived per-structure uncertainty
+// sampler, not an IDistribution. `construct` is {"dist": "<name>", "std_or_min": ..., "max": ...}
+// (no "central" field -- the center of the distribution is hardcoded to 0 inside the class, unlike
+// ValueRatioWithUncertainty). `sample` takes [probability]; `sample_iteration` takes [iteration,
+// computeIsDeterministic] (both JSON numbers; the flag is interpreted via != 0).
+static double run_first_floor_elevation_uncertainty(const json& c, const std::string& method,
+                                                       const json& args) {
+    const auto& ctor = c["construct"];
+    auto dist_type = hecfda::statistics::distributions::distribution_type_from_name(
+        ctor["dist"].get<std::string>());
+    hecfda::model::structures::FirstFloorElevationUncertainty ffeu(
+        dist_type, ctor["std_or_min"].get<double>(), ctor["max"].get<double>());
+    if (method == "sample") return ffeu.sample(args[0].get<double>());
+    if (method == "sample_iteration")
+        return ffeu.sample(args[0].get<long>(), args[1].get<double>() != 0.0);
+    auto msg = std::string("unknown first_floor_elevation_uncertainty method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("first_floor_elevation_uncertainty fixture") {
+    std::ifstream f(fixtures_dir() + "/structures/first_floor_elevation_uncertainty.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "first_floor_elevation_uncertainty");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_first_floor_elevation_uncertainty(c, a["method"], a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
