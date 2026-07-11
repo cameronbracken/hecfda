@@ -49,6 +49,10 @@ test_that("uniform fixture", {
   run_distribution_fixture("distributions/uniform.json")
 })
 
+test_that("deterministic fixture", {
+  run_distribution_fixture("distributions/deterministic.json")
+})
+
 test_that("paired_data fixture", {
   fx <- read_fx("paired_data/paired_data.json")
   for (c in fx$cases) for (a in c$assertions) {

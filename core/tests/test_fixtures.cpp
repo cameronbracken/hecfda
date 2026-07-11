@@ -10,12 +10,15 @@
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/histograms/dynamic_histogram.hpp"
+#include "hecfda/statistics/distributions/deterministic.hpp"
 #include "hecfda/statistics/distributions/empirical.hpp"
 #include "hecfda/statistics/distributions/i_distribution_factory.hpp"
+#include "hecfda/statistics/distributions/lognormal.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 #include "hecfda/statistics/distributions/pearson3.hpp"
 #include "hecfda/statistics/distributions/shifted_gamma.hpp"
 #include "hecfda/statistics/distributions/triangular.hpp"
+#include "hecfda/statistics/distributions/truncated_normal.hpp"
 #include "hecfda/statistics/distributions/uncertain_to_deterministic_converter.hpp"
 #include "hecfda/statistics/distributions/uniform.hpp"
 #include "hecfda/statistics/sample_statistics.hpp"
@@ -135,6 +138,12 @@ static double run_distribution(const json& c, const std::string& method, const j
         auto fitted = dist->fit(data);
         std::string param = method.substr(4);
         if (param == "sample_size") return static_cast<double>(fitted->sample_size());
+        // Matches the emitter's fit_ demux (tools/oracle_emitter/Program.cs EvalDistribution): the
+        // same six IDistribution concrete types (Normal/Uniform/Triangular/Deterministic/LogNormal/
+        // TruncatedNormal) support fit_<param> against real C#, so the port dispatches the same set.
+        // Unlike C#'s `TruncatedNormal : Normal`, the C++ TruncatedNormal does NOT derive from
+        // Normal (see truncated_normal.hpp), so there is no dynamic_cast ambiguity/footgun ordering
+        // requirement here -- each branch is independent.
         if (type_name == "Normal") {
             auto* n = dynamic_cast<hecfda::statistics::distributions::Normal*>(fitted.get());
             REQUIRE(n != nullptr);
@@ -145,6 +154,28 @@ static double run_distribution(const json& c, const std::string& method, const j
             REQUIRE(u != nullptr);
             if (param == "min") return u->min();
             if (param == "max") return u->max();
+        } else if (type_name == "Triangular") {
+            auto* t = dynamic_cast<hecfda::statistics::distributions::Triangular*>(fitted.get());
+            REQUIRE(t != nullptr);
+            if (param == "min") return t->min();
+            if (param == "max") return t->max();
+            if (param == "most_likely") return t->most_likely();
+        } else if (type_name == "Deterministic") {
+            auto* d = dynamic_cast<hecfda::statistics::distributions::Deterministic*>(fitted.get());
+            REQUIRE(d != nullptr);
+            if (param == "value") return d->value();
+        } else if (type_name == "LogNormal") {
+            auto* ln = dynamic_cast<hecfda::statistics::distributions::LogNormal*>(fitted.get());
+            REQUIRE(ln != nullptr);
+            if (param == "mean") return ln->mean();
+            if (param == "standard_deviation") return ln->standard_deviation();
+        } else if (type_name == "TruncatedNormal") {
+            auto* tn = dynamic_cast<hecfda::statistics::distributions::TruncatedNormal*>(fitted.get());
+            REQUIRE(tn != nullptr);
+            if (param == "mean") return tn->mean();
+            if (param == "standard_deviation") return tn->standard_deviation();
+            if (param == "min") return tn->min();
+            if (param == "max") return tn->max();
         }
         auto msg = std::string("unknown fit param: ") + param + " for type " + type_name;
         FAIL(msg.c_str());
@@ -297,6 +328,26 @@ TEST_CASE("logpearson3 fixture") {
 
 TEST_CASE("truncated_logpearson3 fixture") {
     std::ifstream f(fixtures_dir() + "/distributions/truncated_logpearson3.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "distribution");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_distribution(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+TEST_CASE("deterministic fixture") {
+    std::ifstream f(fixtures_dir() + "/distributions/deterministic.json");
     REQUIRE(f.good());
     json fx; f >> fx;
     CHECK(fx["target"] == "distribution");

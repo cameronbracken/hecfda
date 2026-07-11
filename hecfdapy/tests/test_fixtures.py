@@ -51,6 +51,9 @@ def test_normal():
 def test_uniform():
     _run_distribution_fixture("distributions/uniform.json")
 
+def test_deterministic():
+    _run_distribution_fixture("distributions/deterministic.json")
+
 def test_paired_data():
     fx = _read("paired_data/paired_data.json")
     for c in fx["cases"]:

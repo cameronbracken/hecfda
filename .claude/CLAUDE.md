@@ -117,6 +117,13 @@ R `hecfdar/tests/testthat/test-fixtures.R` (jsonlite), Python `hecfdapy/tests/te
 runner -- no new per-item glue. Don't hardcode oracle values in test files. `verify_oracles.py` is
 the fourth, dev-only check that the fixtures still match the C# source.
 
+**R/Python distribution coverage scope:** the R and Python fixture runners exercise the generic
+`distribution` target dispatch (`dist_eval`/`hecfda_dist_eval`) only against Normal and Uniform
+fixtures; the remaining distributions traverse the identical binding and compiled core, so they are
+validated transitively through R/Python and explicitly in C++ (`test_fixtures.cpp` loads every
+`fixtures/distributions/*.json`) and against real C# via the `verify_oracles.py` gate -- this is not
+full four-way per-distribution parity in R/Python, by design.
+
 ## Conventions & gotchas
 
 - **Structural mirroring:** C++ mirrors the C# file/class/method layout so upstream diffs map
