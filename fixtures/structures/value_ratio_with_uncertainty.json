@@ -1,0 +1,64 @@
+{
+  "target": "value_ratio_with_uncertainty",
+  "kind": "value_ratio_with_uncertainty",
+  "source_test": "HEC.FDA.ModelTest/unittests/structures/ValueRatioWithUncertaintyShould.cs (Theory rows)",
+  "note": "construct = {dist, std_or_min, central, max}, matching ValueRatioWithUncertainty(IDistributionEnum distributionEnum, double standardDeviationOrMin, double centralTendency, double max = double.MaxValue). `sample` asserts ValueRatioWithUncertainty.Sample(probability) DIRECTLY -- no post-processing (unlike ValueUncertainty, there is no /100 scaling anywhere in the C# source). `sample_iteration` asserts Sample(iteration, computeIsDeterministic); the two cases below use computeIsDeterministic=true to exercise the UncertainToDeterministicDistributionConverter path on LogNormal and Uniform.",
+  "cases": [
+    {
+      "name": "normal_std0_1_central0_6",
+      "construct": { "dist": "Normal", "std_or_min": 0.1, "central": 0.6, "max": 0 },
+      "assertions": [
+        { "method": "sample", "args": [0.95], "expected": 0.7645211440143815, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "lognormal_std0_57_central-0_85",
+      "construct": { "dist": "LogNormal", "std_or_min": 0.57, "central": -0.85, "max": 0 },
+      "assertions": [
+        { "method": "sample", "args": [0.05], "expected": 0.16733281913159817, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "triangular_min0_7_central0_85_max0_9",
+      "construct": { "dist": "Triangular", "std_or_min": 0.7, "central": 0.85, "max": 0.9 },
+      "assertions": [
+        { "method": "sample", "args": [0.88], "expected": 0.8653589838486224, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "uniform_min0_6_max0_95",
+      "construct": { "dist": "Uniform", "std_or_min": 0.6, "central": 0.8, "max": 0.95 },
+      "assertions": [
+        { "method": "sample", "args": [0.40], "expected": 0.74, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "deterministic_ignores_probability",
+      "construct": { "dist": "Deterministic", "std_or_min": 394802, "central": 0.8, "max": 20442 },
+      "assertions": [
+        { "method": "sample", "args": [333], "expected": 0.8, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "normal_std0_5_central0_1_negative_clamp",
+      "construct": { "dist": "Normal", "std_or_min": 0.5, "central": 0.1, "max": 0 },
+      "assertions": [
+        { "method": "sample", "args": [0.01], "expected": 0.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "lognormal_deterministic_iteration_via_converter",
+      "construct": { "dist": "LogNormal", "std_or_min": 0.57, "central": -0.85, "max": 0 },
+      "assertions": [
+        { "method": "sample_iteration", "args": [1, 1], "expected": 0.4274149319487267, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "uniform_deterministic_iteration_via_converter",
+      "construct": { "dist": "Uniform", "std_or_min": 0.6, "central": 0.8, "max": 0.95 },
+      "assertions": [
+        { "method": "sample_iteration", "args": [1, 1], "expected": 0.7749999999999999, "tol": 1e-9, "mode": "abs" }
+      ]
+    }
+  ]
+}

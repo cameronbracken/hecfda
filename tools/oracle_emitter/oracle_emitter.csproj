@@ -40,5 +40,9 @@
          (HEC.FDA.Statistics to HEC.MVVMFramework.Model to HEC.MVVMFramework.Base, both plain
          project references with no RAS/NuGet feed dependency), so it compiles unpatched. -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/ValueUncertainty.cs" />
+    <!-- Task Phase3T2: ValueRatioWithUncertainty extends Validation directly (a lighter base than
+         ValueUncertainty's ValidationErrorLogger), which is the same MVVM closure already
+         reachable transitively above, so it compiles unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/ValueRatioWithUncertainty.cs" />
   </ItemGroup>
 </Project>

@@ -402,6 +402,23 @@ namespace oracle_emitter {
       throw new Exception("unknown value_uncertainty method: " + method);
     }
 
+    // ValueRatioWithUncertainty (Phase 3 Task 2) is a plain Validation-derived per-structure
+    // uncertainty sampler, same shape as EvalValueUncertainty above. `construct` is {"dist":
+    // "<name>", "std_or_min": ..., "central": ..., "max": ...}; `dist` parsed via Enum.Parse
+    // against IDistributionEnum. `sample` dispatches Sample(double); `sample_iteration`
+    // dispatches Sample(long, bool) with args [iteration, computeIsDeterministic].
+    static object EvalValueRatioWithUncertainty(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var distType = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), c.GetProperty("dist").GetString());
+      double stdOrMin = c.GetProperty("std_or_min").GetDouble();
+      double central = c.GetProperty("central").GetDouble();
+      double max = c.GetProperty("max").GetDouble();
+      var vru = new ValueRatioWithUncertainty(distType, stdOrMin, central, max);
+      if (method == "sample") return vru.Sample(D(argsEl[0]));
+      if (method == "sample_iteration") return vru.Sample((long)D(argsEl[0]), D(argsEl[1]) != 0.0);
+      throw new Exception("unknown value_ratio_with_uncertainty method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -444,6 +461,7 @@ namespace oracle_emitter {
               case "graphical_calculators": val = EvalGraphicalCalculators(c, method, argsEl); break;
               case "graphical_uncertain_paired_data": val = EvalGupd(c, method, argsEl); break;
               case "value_uncertainty": val = EvalValueUncertainty(c, method, argsEl); break;
+              case "value_ratio_with_uncertainty": val = EvalValueRatioWithUncertainty(c, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{
