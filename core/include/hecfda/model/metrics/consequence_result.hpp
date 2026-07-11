@@ -1,10 +1,16 @@
 // ported from: HEC.FDA.Model/metrics/ConsequenceResult.cs @ f63682a86a30dc306a105689714a92bfd95956c5
 #ifndef HECFDA_MODEL_METRICS_CONSEQUENCE_RESULT_HPP
 #define HECFDA_MODEL_METRICS_CONSEQUENCE_RESULT_HPP
+#include <cmath>
 #include <string>
 namespace hecfda {
 namespace model {
 namespace metrics {
+
+// ported from: the C# `Double.Equals(Double)` semantics used by ConsequenceResult.Equals's
+// field-by-field double comparisons. Unlike `==`, .NET's Double.Equals treats NaN as equal to
+// NaN; reproduced here so the port matches C# bit-for-bit rather than IEEE 754 `==`.
+inline bool double_equals(double a, double b) { return (a == b) || (std::isnan(a) && std::isnan(b)); }
 
 // ported from: ConsequenceResult.cs `public class ConsequenceResult`. A plain per-structure
 // damage accumulator: four running damage totals (structure/content/vehicle/other) and their
@@ -63,18 +69,20 @@ class ConsequenceResult {
 
     // ported from: ConsequenceResult.cs internal bool Equals(ConsequenceResult damageResult).
     // Field-by-field short-circuit comparison of the four damage totals and the damage category
-    // -- NOT the four quantity counters or IsNull, matching the C# source exactly.
+    // -- NOT the four quantity counters or IsNull, matching the C# source exactly. The four
+    // damage comparisons use double_equals (NaN-aware), reproducing C# `Double.Equals` rather
+    // than `==`, since the upstream source calls `.Equals()` on each double field.
     bool equals(const ConsequenceResult& damage_result) const {
-        if (!(structure_damage_ == damage_result.structure_damage_)) {
+        if (!double_equals(structure_damage_, damage_result.structure_damage_)) {
             return false;
         }
-        if (!(content_damage_ == damage_result.content_damage_)) {
+        if (!double_equals(content_damage_, damage_result.content_damage_)) {
             return false;
         }
-        if (!(other_damage_ == damage_result.other_damage_)) {
+        if (!double_equals(other_damage_, damage_result.other_damage_)) {
             return false;
         }
-        if (!(vehicle_damage_ == damage_result.vehicle_damage_)) {
+        if (!double_equals(vehicle_damage_, damage_result.vehicle_damage_)) {
             return false;
         }
         if (!(damage_category_ == damage_result.damage_category_)) {

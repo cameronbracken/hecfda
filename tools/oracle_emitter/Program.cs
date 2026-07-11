@@ -646,7 +646,11 @@ namespace oracle_emitter {
     // is {"damage_category": "<name>"}; `increments` is a list of [structureDamage, contentDamage,
     // vehicleDamage, otherDamage] tuples applied in order via IncrementConsequence. `method`
     // dispatches one of the eight accessors; the four *Quantity accessors return int, boxed as
-    // double via implicit cast for the shared double-comparison harness.
+    // double via implicit cast for the shared double-comparison harness. `equals` builds a second
+    // ConsequenceResult from the case's `compare_to` block (same {construct, increments} shape)
+    // and returns 1.0/0.0 for cr.Equals(cr2). ConsequenceResult.cs is compiled directly into this
+    // project (see the csproj `<Compile Include=...>`, not referenced via a built assembly), so
+    // the `internal` Equals is directly accessible -- no reflection needed.
     static object EvalConsequenceResult(JsonElement caseEl, string method) {
       var c = caseEl.GetProperty("construct");
       var cr = new ConsequenceResult(c.GetProperty("damage_category").GetString());
@@ -661,6 +665,14 @@ namespace oracle_emitter {
       if (method == "damaged_contents_quantity") return (double)cr.DamagedContentsQuantity;
       if (method == "damaged_vehicles_quantity") return (double)cr.DamagedVehiclesQuantity;
       if (method == "damaged_others_quantity") return (double)cr.DamagedOthersQuantity;
+      if (method == "equals") {
+        var c2 = caseEl.GetProperty("compare_to").GetProperty("construct");
+        var cr2 = new ConsequenceResult(c2.GetProperty("damage_category").GetString());
+        foreach (var inc in caseEl.GetProperty("compare_to").GetProperty("increments").EnumerateArray()) {
+          cr2.IncrementConsequence(D(inc[0]), D(inc[1]), D(inc[2]), D(inc[3]));
+        }
+        return cr.Equals(cr2) ? 1.0 : 0.0;
+      }
       throw new Exception("unknown consequence_result method: " + method);
     }
 

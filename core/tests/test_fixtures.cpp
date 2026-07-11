@@ -1650,7 +1650,9 @@ TEST_CASE("inventory fixture") {
 // before every assertion in the case -- each assertion reconstructs a fresh ConsequenceResult and
 // replays the full increment list, matching run_value_uncertainty's per-call reconstruction
 // pattern. `method` dispatches one of the eight accessors; the four *_quantity accessors return
-// int, cast to double for the shared double-comparison harness.
+// int, cast to double for the shared double-comparison harness. `equals` builds a second
+// ConsequenceResult from the case's `compare_to` block (same {construct, increments} shape) and
+// returns 1.0/0.0 for cr.equals(cr2).
 static double run_consequence_result(const json& c, const std::string& method, const json& args) {
     (void)args;
     const auto& ctor = c["construct"];
@@ -1671,6 +1673,15 @@ static double run_consequence_result(const json& c, const std::string& method, c
         return static_cast<double>(cr.damaged_vehicles_quantity());
     if (method == "damaged_others_quantity")
         return static_cast<double>(cr.damaged_others_quantity());
+    if (method == "equals") {
+        const auto& ctor2 = c["compare_to"]["construct"];
+        hecfda::model::metrics::ConsequenceResult cr2(ctor2["damage_category"].get<std::string>());
+        for (const auto& inc : c["compare_to"]["increments"]) {
+            cr2.increment_consequence(inc[0].get<double>(), inc[1].get<double>(),
+                                       inc[2].get<double>(), inc[3].get<double>());
+        }
+        return cr.equals(cr2) ? 1.0 : 0.0;
+    }
     auto msg = std::string("unknown consequence_result method: ") + method;
     FAIL(msg.c_str());
     return 0.0;
