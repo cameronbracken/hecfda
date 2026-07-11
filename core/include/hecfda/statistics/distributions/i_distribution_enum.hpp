@@ -36,6 +36,7 @@ enum class DistributionType {
 inline DistributionType distribution_type_from_name(const std::string& name) {
     if (name == "Normal") return DistributionType::Normal;
     if (name == "Uniform") return DistributionType::Uniform;
+    if (name == "Triangular") return DistributionType::Triangular;
     throw std::invalid_argument("distribution_type_from_name: unknown distribution type: " + name);
 }
 

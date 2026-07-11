@@ -38,6 +38,7 @@ namespace oracle_emitter {
       return type switch {
         "Normal" => new Normal(p[0], p[1], (int)p[2]),
         "Uniform" => new Uniform(p[0], p[1], (int)p[2]),
+        "Triangular" => new Triangular(p[0], p[1], p[2], (int)p[3]),
         _ => throw new Exception("unknown distribution type: " + type) };
     }
     static object EvalDistribution(JsonElement caseEl, string method, JsonElement argsEl) {
@@ -64,6 +65,11 @@ namespace oracle_emitter {
         if (fitted is Uniform u) {
           if (param == "min") return u.Min;
           if (param == "max") return u.Max;
+        }
+        if (fitted is Triangular t) {
+          if (param == "min") return t.Min;
+          if (param == "max") return t.Max;
+          if (param == "most_likely") return t.MostLikely;
         }
         throw new Exception("unknown fit param: " + param + " for type " + type);
       }

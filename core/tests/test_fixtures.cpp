@@ -10,6 +10,7 @@
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/statistics/distributions/i_distribution_factory.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
+#include "hecfda/statistics/distributions/triangular.hpp"
 #include "hecfda/statistics/distributions/uniform.hpp"
 #include "hecfda/statistics/sample_statistics.hpp"
 #include "hecfda/statistics/special_functions.hpp"
@@ -162,6 +163,26 @@ TEST_CASE("normal fixture") {
 
 TEST_CASE("uniform fixture") {
     std::ifstream f(fixtures_dir() + "/distributions/uniform.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "distribution");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_distribution(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+TEST_CASE("triangular fixture") {
+    std::ifstream f(fixtures_dir() + "/distributions/triangular.json");
     REQUIRE(f.good());
     json fx; f >> fx;
     CHECK(fx["target"] == "distribution");
