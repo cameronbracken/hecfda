@@ -52,8 +52,19 @@ port), `hecfda::model::compute::RandomProvider` (`next_random`/`next_random_sequ
 `ContinuousDistribution`/`IDistribution`), `hecfda::statistics::Mathematics` (trapezoidal / CDF
 integration), `hecfda::model::paired_data::PairedData` (`f`/`f_inverse`/`integrate`), and
 `hecfda::model::paired_data::UncertainPairedData` (`sample_paired_data`/`sample_and_integrate`,
-the vertical-slice type). All phases 1-6 build outward from this base -- see `PLAN.md` for the
-dependency-ordered bulk-port sequence.
+the vertical-slice type).
+
+Phase 1 added the rest of `hecfda::statistics`: the validation subsystem (`ErrorLevel` + rules),
+the full `SpecialFunctions` gamma/beta closure, `SampleStatistics`, the `IDistribution`
+base/enum/factory with generic four-runner dispatch, all 13 distributions under
+`statistics::distributions` (Normal, Uniform, Triangular, Deterministic, LogNormal,
+TruncatedNormal, TruncatedLogNormal, PearsonIII, LogPearson3, TruncatedLogPearson3, Gamma,
+ShiftedGamma, Empirical), `statistics::convergence::ConvergenceCriteria`,
+`statistics::histograms::DynamicHistogram`, and
+`distributions::UncertainToDeterministicDistributionConverter`. `Gamma`/`ShiftedGamma`/
+`PearsonIII` are internal helper classes (not `IDistribution` members of the factory dispatch).
+All phases 2-6 build outward from this base -- see `PLAN.md` for the dependency-ordered bulk-port
+sequence.
 
 ## Build & test commands
 
@@ -106,6 +117,13 @@ R `hecfdar/tests/testthat/test-fixtures.R` (jsonlite), Python `hecfdapy/tests/te
 runner -- no new per-item glue. Don't hardcode oracle values in test files. `verify_oracles.py` is
 the fourth, dev-only check that the fixtures still match the C# source.
 
+**R/Python distribution coverage scope:** the R and Python fixture runners exercise the generic
+`distribution` target dispatch (`dist_eval`/`hecfda_dist_eval`) only against Normal and Uniform
+fixtures; the remaining distributions traverse the identical binding and compiled core, so they are
+validated transitively through R/Python and explicitly in C++ (`test_fixtures.cpp` loads every
+`fixtures/distributions/*.json`) and against real C# via the `verify_oracles.py` gate -- this is not
+full four-way per-distribution parity in R/Python, by design.
+
 ## Conventions & gotchas
 
 - **Structural mirroring:** C++ mirrors the C# file/class/method layout so upstream diffs map
@@ -139,6 +157,34 @@ the fourth, dev-only check that the fixtures still match the C# source.
   `TargetFramework` to net10.0 without checking upstream still builds clean there.
 - **Fixture schema and comparison modes:** `abs | rel | exact | bool | vector | matrix`; see
   `fixtures/README.md`. `exact` uses `tol == 0.0` and also matches `NaN == NaN`.
+- **Distribution factory keys (Phase 1):** `i_distribution_enum.hpp` uses **port-internal** enum
+  values `TruncatedLogNormal = 1005` and `TruncatedLogPearson3 = 1006` for distributions whose C#
+  `Type` property aliases an existing `DistributionType` (both alias `Normal`/`LogPearson3`
+  respectively at the instance level). The factory key and the instance's `type()` are
+  intentionally different values; `equals()` uses a checked `dynamic_cast` (not `type()`
+  comparison) to avoid relying on that aliasing, and to avoid UB if the cast target is wrong.
+- **Bespoke fixture targets:** `Gamma`, `ShiftedGamma`, and `PearsonIII` are internal helper
+  classes, not `IDistribution`, so they are not reachable through the generic factory dispatch.
+  Their fixtures use dedicated runner targets (`shifted_gamma`/`pearson3`) rather than the
+  `construct`-by-enum-name path; `ConvergenceCriteria` and `DynamicHistogram` fixtures
+  (`convergence_criteria`/`histogram`) follow the same bespoke pattern for the same reason.
+- **Adding a distribution (Phase 1 recipe):** header under `statistics/distributions/` + a
+  factory `switch` case + a name-mapping entry (the enum <-> string lookup used by fixtures) + a
+  fixture file. No other runner glue needed -- the generic dispatch picks it up in all three
+  languages automatically.
+- **Faithful upstream bugs (deliberately reproduced, do NOT "fix" without an explicit upstream
+  change to port):**
+  - `SampleStatistics`'s median getter indexes into the **unsorted** input array (C# bug; the
+    port copies it verbatim).
+  - `Empirical`'s PDF returns 0 for any `x` that isn't an exact grid point, and its `Equals`
+    has a field-mismatch (compares the wrong pair of members) inherited from the C# source.
+  - `UncertainToDeterministicDistributionConverter`'s `LogPearsonIII` branch computes
+    `pow(mean, 10)` (i.e. `logMean^10`), not the mathematically expected `10^logMean` --
+    transcribed exactly as upstream wrote it.
+  - `DynamicHistogram::EstimateIterationsRemaining` has a copy-paste bug reusing the wrong
+    quantile in its estimate.
+  - `LogNormal` mixes natural-log (`ln`) and `log10` semantics inconsistently between methods,
+    matching the C# inconsistency rather than normalizing it.
 
 ## Git & CI
 
@@ -157,10 +203,16 @@ the fourth, dev-only check that the fixtures still match the C# source.
 
 ## Status
 
-**Phase 0 is complete.** The vertical slice (.NET `Random` -> `Normal` -> `PairedData` ->
-`UncertainPairedData.sample_and_integrate`) passes identically in C++, R, and Python; the seeded
-RNG stream is byte-identical across all three and matches a real .NET capture; the dotnet oracle
-gate reproduces all 18 fixture assertions against the real HEC-FDA C# (0 failed); the Makefile
-targets and 3-platform CI are green. No bulk porting has started. See `PLAN.md` for the Phase 1-6
-plan and the exemplar tasks (Task 2 for a foundation module, Task 4 for a distribution) that
-anchor the recipe for writing new porting task briefs.
+**Phase 0 and Phase 1 are complete.** The Phase 0 vertical slice (.NET `Random` -> `Normal` ->
+`PairedData` -> `UncertainPairedData.sample_and_integrate`) passes identically in C++, R, and
+Python; the seeded RNG stream is byte-identical across all three and matches a real .NET capture.
+Phase 1 (Statistics foundation) ported the validation subsystem, full `SpecialFunctions`,
+`SampleStatistics`, the distribution base/enum/factory with generic four-runner dispatch, all 13
+distributions, `ConvergenceCriteria`, `DynamicHistogram`, and the
+`UncertainToDeterministicDistributionConverter`. The exit gate is green on all four legs:
+`make test-core` (ctest, C++), `make test-r` (testthat, 37 passed / 0 failed), `make test-py`
+(pytest, 6 passed), and `make oracles` (dotnet gate, 366 reproduced / 0 failed -- up from Phase
+0's 18). The Makefile targets and 3-platform CI are green. See `PLAN.md` for the conventions
+established in Phase 1 (port-internal factory keys, bespoke fixture targets, the faithful-bug
+list), the Phase 2-6 plan, and the top Phase-2 risk (binary-search divergence on duplicate x/y
+values in paired data).

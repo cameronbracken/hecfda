@@ -30,12 +30,29 @@ def test_rng_digest():
             got = sum(bf.rng_sequence(int(c["construct"]["seed"]), n))
             _close(got, a["expected"], a["tol"], a["mode"])
 
-def test_normal():
-    fx = _read("distributions/normal.json")
+# Generic factory-based distribution dispatch (Task A4): drives any `distribution`-kind fixture
+# through bf.dist_eval(type, params, method, x). `fit_*` methods construct a distribution via
+# IDistribution::fit(data) and are verified in C++ + the dotnet oracle gate only (per the task
+# brief -- binding the polymorphic Fit() return type into Python adds no coverage over those
+# two), so they are skipped here.
+def _run_distribution_fixture(path):
+    fx = _read(path)
     for c in fx["cases"]:
         for a in c["assertions"]:
-            got = bf.normal_eval(c["construct"]["mean"], c["construct"]["sd"], a["method"], a["args"][0])
+            if a["method"].startswith("fit_"):
+                continue
+            x = a["args"][0] if a["args"] else 0.0
+            got = bf.dist_eval(c["construct"]["type"], c["construct"]["params"], a["method"], x)
             _close(got, a["expected"], a["tol"], a["mode"])
+
+def test_normal():
+    _run_distribution_fixture("distributions/normal.json")
+
+def test_uniform():
+    _run_distribution_fixture("distributions/uniform.json")
+
+def test_deterministic():
+    _run_distribution_fixture("distributions/deterministic.json")
 
 def test_paired_data():
     fx = _read("paired_data/paired_data.json")

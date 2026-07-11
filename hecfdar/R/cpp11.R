@@ -4,8 +4,8 @@ hecfda_rng_sequence <- function(seed, n) {
   .Call(`_hecfdar_hecfda_rng_sequence`, seed, n)
 }
 
-hecfda_normal_eval <- function(mean, sd, method, x) {
-  .Call(`_hecfdar_hecfda_normal_eval`, mean, sd, method, x)
+hecfda_dist_eval <- function(type, params, method, x) {
+  .Call(`_hecfdar_hecfda_dist_eval`, type, params, method, x)
 }
 
 hecfda_paired_f <- function(xs, ys, method, x) {

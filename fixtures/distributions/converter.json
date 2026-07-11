@@ -1,0 +1,50 @@
+{
+  "target": "distribution",
+  "kind": "distribution",
+  "source_test": "HEC.FDA.Statistics/Distributions/UncertainToDeterministicDistributionConverter.cs",
+  "note": "Task D1: UncertainToDeterministicDistributionConverter.ConvertDistributionToDeterministic. Reuses the generic `distribution` construct ({type, params}) via the `convert_to_deterministic` method; the resulting Deterministic's Value is the dispatched scalar result. Empirical is covered separately in empirical.json (bespoke two-array construct). COMPUTE-THEN-PIN: expected values computed by the C++ port, then confirmed reproduced by the real C# converter via tools/oracle_emitter / tools/verify_oracles.py.",
+  "cases": [
+    {
+      "name": "normal_converts_to_mean",
+      "construct": { "type": "Normal", "params": [5.5, 2.0, 1] },
+      "assertions": [
+        { "method": "convert_to_deterministic", "args": [], "expected": 5.5, "tol": 1e-12, "mode": "abs", "note": "Deterministic(Mean)" }
+      ]
+    },
+    {
+      "name": "uniform_converts_to_median",
+      "construct": { "type": "Uniform", "params": [10.0, 20.0, 1] },
+      "assertions": [
+        { "method": "convert_to_deterministic", "args": [], "expected": 15.0, "tol": 1e-12, "mode": "abs", "note": "Deterministic(InverseCDF(0.5))" }
+      ]
+    },
+    {
+      "name": "triangular_converts_to_most_likely",
+      "construct": { "type": "Triangular", "params": [1.0, 4.0, 9.0, 1] },
+      "assertions": [
+        { "method": "convert_to_deterministic", "args": [], "expected": 4.0, "tol": 1e-12, "mode": "abs", "note": "Deterministic(MostLikely)" }
+      ]
+    },
+    {
+      "name": "logpearson3_converts_via_upstream_pow_bug",
+      "construct": { "type": "LogPearsonIII", "params": [2.0, 0.5, 0.1, 10] },
+      "assertions": [
+        { "method": "convert_to_deterministic", "args": [], "expected": 1024.0, "tol": 1e-9, "mode": "abs", "note": "UPSTREAM BUG, reproduced verbatim: Deterministic(Math.Pow(Mean, 10)) == 2.0^10 == 1024, NOT the presumably-intended 10^Mean (== 100.0)." }
+      ]
+    },
+    {
+      "name": "lognormal_converts_via_natural_exp",
+      "construct": { "type": "LogNormal", "params": [1.0, 0.3, 1] },
+      "assertions": [
+        { "method": "convert_to_deterministic", "args": [], "expected": 2.718281828459045, "tol": 1e-12, "mode": "abs", "note": "Deterministic(Math.Exp(Mean)) -- natural exp, not 10^Mean." }
+      ]
+    },
+    {
+      "name": "deterministic_converts_to_itself",
+      "construct": { "type": "Deterministic", "params": [3.5] },
+      "assertions": [
+        { "method": "convert_to_deterministic", "args": [], "expected": 3.5, "tol": 1e-12, "mode": "abs", "note": "(Deterministic)iDistribution -- returns (a copy of) itself." }
+      ]
+    }
+  ]
+}

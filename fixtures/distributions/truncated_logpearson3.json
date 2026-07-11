@@ -1,0 +1,146 @@
+{
+  "target": "distribution",
+  "kind": "distribution",
+  "source_test": "planning-captured: no dedicated TruncatedLogPearson3Tests.cs upstream -- oracles computed then pinned via tools/verify_oracles.py against the real C# TruncatedLogPearson3 (see fixtures/README.md). Construct params order [mean, standardDeviation, skew, min, max, sampleSize] matches TruncatedLogPearson3.cs's ctor. inverse_cdf tolerances (0.01 rel) match the precedent set by pearson3.json/shifted_gamma.json, since InverseCDF delegates to PearsonIII::inverse_cdf's iterative ShiftedGamma/Gamma root-finder (Newton/bisection), which is not guaranteed bit-identical between the C++ port and the real C#. cdf/pdf are closed-form (regularized incomplete gamma, no root-finding) so use tighter tolerances.",
+  "cases": [
+    {
+      "name": "inverse_cdf_p25_within_truncation",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.25], "expected": 1550.2638584820415, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_p50_within_truncation",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 2189.2892163482293, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_p75_within_truncation",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.75], "expected": 3270.962639222771, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_p0_clamps_to_min",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.0], "expected": 500.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_p1_clamps_to_max",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [1.0], "expected": 20000.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "cdf_at_min_bound_uses_pinned_probability_min",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "cdf", "args": [500.0], "expected": 2.4551875062952776e-07, "tol": 1e-6, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "cdf_at_max_bound_uses_pinned_probability_max",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "cdf", "args": [20000.0], "expected": 0.99835025658623999, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "cdf_within_truncation",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "cdf", "args": [2000.0], "expected": 0.43310229767570119, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "cdf_below_min_clamps_to_zero",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "cdf", "args": [100.0], "expected": 0.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "cdf_above_max_clamps_to_one",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "cdf", "args": [50000.0], "expected": 1.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "pdf_within_truncation",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "pdf", "args": [2000.0], "expected": 0.00036893862851669694, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "pdf_below_min_returns_double_epsilon",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "pdf", "args": [100.0], "expected": 4.9406564584124654e-324, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "pdf_above_max_returns_double_epsilon",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "pdf", "args": [50000.0], "expected": 4.9406564584124654e-324, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "truncated_logpearson3_bad_sd_too_large",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 5.0, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "truncated_logpearson3_bad_sd_negative",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, -1.0, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "truncated_logpearson3_bad_mean_too_large",
+      "construct": { "type": "TruncatedLogPearson3", "params": [8.0, 0.246, 0.668, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "truncated_logpearson3_bad_skew_too_large",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 3.1, 500.0, 20000.0, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "truncated_logpearson3_bad_sample_size",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 0] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "truncated_logpearson3_good",
+      "construct": { "type": "TruncatedLogPearson3", "params": [3.368, 0.246, 0.668, 500.0, 20000.0, 100] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 0, "tol": 0.0, "mode": "exact" }
+      ]
+    }
+  ]
+}

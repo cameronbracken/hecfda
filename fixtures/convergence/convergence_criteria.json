@@ -1,0 +1,60 @@
+{
+  "target": "convergence_criteria",
+  "kind": "convergence_criteria",
+  "source_test": "HEC.FDA.Statistics/Convergence/ConvergeCriteria.cs (no dedicated upstream test project; oracle-emitter-derived per Task C1)",
+  "note": "ConvergenceCriteria is a plain Validation-derived parameter holder (not IDistribution), constructed directly like ShiftedGamma/PearsonIII/Empirical. construct.params is [minIterations, maxIterations, zAlpha, tolerance] matching the ConvergenceCriteria(minIterations, maxIterations, zAlpha, tolerance) ctor. All three AddRules() rules use the C# two-arg `new Rule(expr, msg)` form, which defaults to ErrorLevel.Info (0x01) per Rule.cs's `Rule(expr, msg) : this(expr, msg, ErrorLevel.Info)` -- so any single failing rule yields error_level 1, not a Fatal/Major value. has_errors/error_level call validate() first, same convention as the distribution fixtures.",
+  "cases": [
+    {
+      "name": "defaults_valid",
+      "construct": { "params": [50000, 500000, 1.96039491692543, 0.01] },
+      "assertions": [
+        { "method": "min_iterations", "args": [], "expected": 50000, "tol": 0.0, "mode": "exact" },
+        { "method": "max_iterations", "args": [], "expected": 500000, "tol": 0.0, "mode": "exact" },
+        { "method": "z_alpha", "args": [], "expected": 1.96039491692543, "tol": 1e-12, "mode": "abs" },
+        { "method": "tolerance", "args": [], "expected": 0.01, "tol": 1e-12, "mode": "abs" },
+        { "method": "iteration_count", "args": [], "expected": 100, "tol": 0.0, "mode": "exact" },
+        { "method": "has_errors", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "max_below_100_iteration_count_one",
+      "construct": { "params": [50, 50, 1.96, 0.01] },
+      "assertions": [
+        { "method": "iteration_count", "args": [], "expected": 1, "tol": 0.0, "mode": "exact" },
+        { "method": "has_errors", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "bad_max_less_than_min",
+      "construct": { "params": [100000, 50000, 1.96, 0.01] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 1, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "bad_z_alpha_out_of_range",
+      "construct": { "params": [50000, 500000, 5.0, 0.01] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 1, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "bad_tolerance_out_of_range",
+      "construct": { "params": [50000, 500000, 1.96, 1.5] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 1, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "bad_all_three_rules",
+      "construct": { "params": [100000, 50000, -5.0, 1.5] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 1, "tol": 0.0, "mode": "exact" }
+      ]
+    }
+  ]
+}

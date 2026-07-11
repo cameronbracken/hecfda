@@ -1,0 +1,24 @@
+{
+  "target": "sample_statistics",
+  "kind": "sample_statistics",
+  "source_test": "HEC.FDA.StatisticsTests/SummaryStatisticsShould.cs (SampleStatistics_Pass_Mavro_Dataset), data from HEC.FDA.StatisticsTests/Resources (NIST Mavro dataset, https://www.itl.nist.gov/div898/strd/univ/data/Mavro.dat)",
+  "note": "Expected values are pinned from the real C# Statistics.SampleStatistics type via tools/oracle_emitter (verified by tools/verify_oracles.py). The upstream unit test only asserts mean/stddev to 4 decimal places and median to 2, so exact doubles here are gate-computed-and-pinned, not transcribed from the test's loose assertions.",
+  "cases": [
+    {
+      "name": "mavro",
+      "construct": {
+        "data": [2.0018, 2.0017, 2.0018, 2.0019, 2.0018, 2.0017, 2.0015, 2.0014, 2.0015, 2.0015, 2.0017, 2.0018, 2.0018, 2.0019, 2.0019, 2.0021, 2.002, 2.0016, 2.0014, 2.0013, 2.0013, 2.0015, 2.0015, 2.0016, 2.0015, 2.0014, 2.0013, 2.0014, 2.0015, 2.0014, 2.0015, 2.0016, 2.0015, 2.0016, 2.0019, 2.002, 2.002, 2.0021, 2.0022, 2.0023, 2.0024, 2.0025, 2.0027, 2.0026, 2.0026, 2.0026, 2.0027, 2.0026, 2.0025, 2.0024]
+      },
+      "assertions": [
+        { "method": "mean", "args": [], "expected": 2.001855999999999, "tol": 1e-12, "mode": "rel" },
+        { "method": "variance", "args": [], "expected": 1.804640000003181e-07, "tol": 1e-12, "mode": "rel" },
+        { "method": "standard_deviation", "args": [], "expected": 0.00042481054600882747, "tol": 1e-12, "mode": "rel" },
+        { "method": "median", "args": [], "expected": 2.00145, "tol": 1e-12, "mode": "rel", "note": "faithfully reproduces the upstream Array.Sort(observations.ToArray()) dead-copy bug: Median indexes into the ORIGINAL (unsorted) sample order, not sorted order (verified against real C# via oracle_emitter -- sorted median would be 2.0018)" },
+        { "method": "skewness", "args": [], "expected": 0.6647726085748232, "tol": 1e-11, "mode": "rel" },
+        { "method": "min", "args": [], "expected": 2.0013, "tol": 0.0, "mode": "abs" },
+        { "method": "max", "args": [], "expected": 2.0027, "tol": 0.0, "mode": "abs" },
+        { "method": "sample_size", "args": [], "expected": 50.0, "tol": 0.0, "mode": "abs" }
+      ]
+    }
+  ]
+}

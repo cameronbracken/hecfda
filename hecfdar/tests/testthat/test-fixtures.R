@@ -26,12 +26,31 @@ test_that("rng_digest fixture", {
   }
 })
 
-test_that("normal fixture", {
-  fx <- read_fx("distributions/normal.json")
+# Generic factory-based distribution dispatch (Task A4): drives any `distribution`-kind fixture
+# through hecfda_dist_eval(type, params, method, x). `fit_*` methods construct a distribution via
+# IDistribution::fit(data) and are verified in C++ + the dotnet oracle gate only (per the task
+# brief -- binding the polymorphic Fit() return type into R adds no coverage over those two), so
+# they are skipped here.
+run_distribution_fixture <- function(path) {
+  fx <- read_fx(path)
   for (c in fx$cases) for (a in c$assertions) {
-    got <- ns$hecfda_normal_eval(c$construct$mean, c$construct$sd, a$method, a$args[[1]])
+    if (startsWith(a$method, "fit_")) next
+    x <- if (length(a$args) > 0) a$args[[1]] else 0
+    got <- ns$hecfda_dist_eval(c$construct$type, as.double(unlist(c$construct$params)), a$method, x)
     cmp(got, a$expected, a$tol, a$mode)
   }
+}
+
+test_that("normal fixture", {
+  run_distribution_fixture("distributions/normal.json")
+})
+
+test_that("uniform fixture", {
+  run_distribution_fixture("distributions/uniform.json")
+})
+
+test_that("deterministic fixture", {
+  run_distribution_fixture("distributions/deterministic.json")
 })
 
 test_that("paired_data fixture", {
