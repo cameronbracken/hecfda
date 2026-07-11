@@ -40,6 +40,7 @@ class PairedData : public IPairedData {
     // x_vals_.size() if x exceeds every element). This must NOT be std::lower_bound, which always
     // returns the FIRST equal element and so can silently diverge from the real C# on duplicates.
     double f(double x) const override {
+        require_non_empty();  // C# indexes _xVals[0]/[^1]; empty throws (avoid UB on empty curve)
         if (x_vals_.front() > x_vals_.back()) {
             throw std::invalid_argument("X values must be in increasing order.");
         }
@@ -102,6 +103,7 @@ class PairedData : public IPairedData {
     // Symmetric to f(), binary-searching y_vals_ instead of x_vals_ (assumes y is increasing) via
     // dotnet_binary_search -- see f()'s comment for why this must not be std::lower_bound.
     double f_inverse(double y) const override {
+        require_non_empty();  // C# indexes _xVals[0]/[^1]; empty throws (avoid UB on empty curve)
         if (x_vals_.front() > x_vals_.back()) {
             throw std::invalid_argument("X values must be in increasing order.");
         }
