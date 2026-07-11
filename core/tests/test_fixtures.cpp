@@ -10,6 +10,7 @@
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/statistics/distributions/i_distribution_factory.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
+#include "hecfda/statistics/distributions/shifted_gamma.hpp"
 #include "hecfda/statistics/distributions/triangular.hpp"
 #include "hecfda/statistics/distributions/uniform.hpp"
 #include "hecfda/statistics/sample_statistics.hpp"
@@ -249,6 +250,43 @@ TEST_CASE("truncated_lognormal fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_distribution(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for ShiftedGamma (Task B9+B10): unlike run_distribution, ShiftedGamma is a
+// plain helper class -- not an IDistribution -- so it is constructed directly rather than via
+// IDistributionFactory::create. `construct.params` is [alpha, beta, shift] matching the
+// ShiftedGamma(alpha, beta, shift) ctor. Follow this same bespoke-target pattern (dedicated
+// run_* function + TEST_CASE, no factory/enum entry) for other internal, non-IDistribution helper
+// classes such as PearsonIII's other building blocks.
+static double run_shifted_gamma(const json& c, const std::string& method, const json& args) {
+    std::vector<double> params = c["construct"]["params"].get<std::vector<double>>();
+    hecfda::statistics::distributions::ShiftedGamma dist(params[0], params[1], params[2]);
+    if (method == "pdf") return dist.pdf(args[0].get<double>());
+    if (method == "cdf") return dist.cdf(args[0].get<double>());
+    if (method == "inverse_cdf") return dist.inverse_cdf(args[0].get<double>());
+    auto msg = std::string("unknown shifted_gamma method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("shifted_gamma fixture") {
+    std::ifstream f(fixtures_dir() + "/distributions/shifted_gamma.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "shifted_gamma");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_shifted_gamma(c, a["method"], a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();

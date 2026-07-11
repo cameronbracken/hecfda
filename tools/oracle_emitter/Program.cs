@@ -97,6 +97,19 @@ namespace oracle_emitter {
       }
       throw new Exception("unknown distribution method: " + method);
     }
+    // ShiftedGamma (Task B9+B10) is a public plain helper class, not an IDistribution, so it is
+    // constructed directly here rather than through DistFactory. `construct.params` is
+    // [alpha, beta, shift]. This transitively validates the internal Gamma class it wraps
+    // (including Gamma's Newton/bisection InverseCDF root-finder) against the real C#.
+    static object EvalShiftedGamma(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      double[] p = DA(c.GetProperty("params"));
+      var dist = new ShiftedGamma(p[0], p[1], p[2]);
+      if (method == "pdf") return dist.PDF(D(argsEl[0]));
+      if (method == "cdf") return dist.CDF(D(argsEl[0]));
+      if (method == "inverse_cdf") return dist.InverseCDF(D(argsEl[0]));
+      throw new Exception("unknown shifted_gamma method: " + method);
+    }
     static object EvalPaired(JsonElement c, string method, JsonElement args) {
       var pd = new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
       return method switch {
@@ -176,6 +189,7 @@ namespace oracle_emitter {
               case "rng_digest":
                 val = EvalRng(method, c.GetProperty("construct").GetProperty("seed").GetInt32(), argsEl); break;
               case "distribution": val = EvalDistribution(c, method, argsEl); break;
+              case "shifted_gamma": val = EvalShiftedGamma(c, method, argsEl); break;
               case "paired_data": val = EvalPaired(c.GetProperty("construct"), method, argsEl); break;
               case "special_functions": val = EvalSpecial(method, argsEl); break;
               case "sample_statistics": val = EvalSampleStatistics(c.GetProperty("construct"), method); break;
