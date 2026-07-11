@@ -41,6 +41,7 @@ namespace oracle_emitter {
         "Triangular" => new Triangular(p[0], p[1], p[2], (int)p[3]),
         "Deterministic" => new Deterministic(p[0]),
         "LogNormal" => new LogNormal(p[0], p[1], (int)p[2]),
+        "TruncatedNormal" => new TruncatedNormal(p[0], p[1], p[2], p[3], (long)p[4]),
         _ => throw new Exception("unknown distribution type: " + type) };
     }
     static object EvalDistribution(JsonElement caseEl, string method, JsonElement argsEl) {
@@ -60,6 +61,17 @@ namespace oracle_emitter {
         IDistribution fitted = dist.Fit(data);
         string param = method.Substring(4);
         if (param == "sample_size") return (double)fitted.SampleSize;
+        // TruncatedNormal : Normal in C#, so `fitted is Normal n` below would also match a fitted
+        // TruncatedNormal -- but n.Mean/n.StandardDeviation would then resolve to the BASE Normal's
+        // `new`-hidden (permanently inert, locked at 0/1) properties, not TruncatedNormal's real
+        // ones. Checked first so its mean/standard_deviation/min/max return before the generic
+        // Normal branch's subclass-shadowing footgun can fire.
+        if (fitted is TruncatedNormal tn) {
+          if (param == "mean") return tn.Mean;
+          if (param == "standard_deviation") return tn.StandardDeviation;
+          if (param == "min") return tn.Min;
+          if (param == "max") return tn.Max;
+        }
         if (fitted is Normal n) {
           if (param == "mean") return n.Mean;
           if (param == "standard_deviation") return n.StandardDeviation;

@@ -1,0 +1,178 @@
+{
+  "target": "distribution",
+  "kind": "distribution",
+  "source_test": "planning-captured: no dedicated TruncatedNormalTests.cs upstream -- oracles computed then pinned via tools/verify_oracles.py against the real C# TruncatedNormal (see fixtures/README.md)",
+  "cases": [
+    {
+      "name": "symmetric_pdf_within",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "pdf", "args": [0.0], "expected": 0.3989422804014327, "tol": 1e-12, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "symmetric_pdf_at_bound",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "pdf", "args": [2.0], "expected": 0.05399096651318806, "tol": 1e-12, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "symmetric_pdf_outside_bounds",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "pdf", "args": [3.0], "expected": 0.0044318484119380075, "tol": 1e-12, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "symmetric_cdf_within",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "cdf", "args": [0.0], "expected": 0.5, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "symmetric_cdf_at_min",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "cdf", "args": [-2.0], "expected": 0.02275013194817882, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "symmetric_cdf_at_max",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "cdf", "args": [2.0], "expected": 0.97724986805182112, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "symmetric_inverse_cdf_p0",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.0], "expected": -2.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "symmetric_inverse_cdf_p025",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.25], "expected": -0.63878517805464607, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "symmetric_inverse_cdf_p05",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 1.0100667546808495e-07, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "symmetric_inverse_cdf_p075",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.75], "expected": 0.63878517805464585, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "symmetric_inverse_cdf_p1",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [1.0], "expected": 2.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "asymmetric_pdf_at_mean",
+      "construct": { "type": "TruncatedNormal", "params": [5.0, 2.0, 3.0, 9.0, 1] },
+      "assertions": [
+        { "method": "pdf", "args": [5.0], "expected": 0.19947114020071635, "tol": 1e-12, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "asymmetric_cdf_at_mean",
+      "construct": { "type": "TruncatedNormal", "params": [5.0, 2.0, 3.0, 9.0, 1] },
+      "assertions": [
+        { "method": "cdf", "args": [5.0], "expected": 0.5, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "asymmetric_inverse_cdf_p0",
+      "construct": { "type": "TruncatedNormal", "params": [5.0, 2.0, 3.0, 9.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.0], "expected": 3.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "asymmetric_inverse_cdf_p01",
+      "construct": { "type": "TruncatedNormal", "params": [5.0, 2.0, 3.0, 9.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.1], "expected": 3.5912590102936619, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "asymmetric_inverse_cdf_p03",
+      "construct": { "type": "TruncatedNormal", "params": [5.0, 2.0, 3.0, 9.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.3], "expected": 4.5160064773728301, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "asymmetric_inverse_cdf_p05",
+      "construct": { "type": "TruncatedNormal", "params": [5.0, 2.0, 3.0, 9.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 5.3416426621286899, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "asymmetric_inverse_cdf_p07",
+      "construct": { "type": "TruncatedNormal", "params": [5.0, 2.0, 3.0, 9.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.7], "expected": 6.235068802996544, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "asymmetric_inverse_cdf_p09",
+      "construct": { "type": "TruncatedNormal", "params": [5.0, 2.0, 3.0, 9.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.9], "expected": 7.5117513017265729, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "asymmetric_inverse_cdf_p1",
+      "construct": { "type": "TruncatedNormal", "params": [5.0, 2.0, 3.0, 9.0, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [1.0], "expected": 9.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "truncated_normal_bad_sd",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, -1.0, -2.0, 2.0, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "truncated_normal_bad_sample_size",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, 1.0, -2.0, 2.0, 0] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "truncated_normal_bad_sd_and_sample_size",
+      "construct": { "type": "TruncatedNormal", "params": [0.0, -1.0, -2.0, 2.0, -1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "truncated_normal_good",
+      "construct": { "type": "TruncatedNormal", "params": [5.0, 2.0, 3.0, 9.0, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" }
+      ]
+    }
+  ]
+}

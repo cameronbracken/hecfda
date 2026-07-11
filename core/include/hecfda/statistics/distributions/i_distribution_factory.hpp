@@ -10,6 +10,7 @@
 #include "hecfda/statistics/distributions/lognormal.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 #include "hecfda/statistics/distributions/triangular.hpp"
+#include "hecfda/statistics/distributions/truncated_normal.hpp"
 #include "hecfda/statistics/distributions/uniform.hpp"
 namespace hecfda {
 namespace statistics {
@@ -30,10 +31,11 @@ namespace distributions {
 //   DistributionType::LogNormal  -> FactoryLogNormal(mean, stDev, sampleSize)
 //                                    params = [mean, stDev, sampleSize] (moments of the
 //                                    NATURAL-log-scale data -- see lognormal.hpp)
+//   DistributionType::TruncatedNormal -> FactoryTruncatedNormal(mean, stDev, min, max, sampleSize)
+//                                    params = [mean, stDev, min, max, sampleSize]
 //
 // Later distribution tasks add one `case` each (LogPearsonIII,
-// IHistogram, Empirical, TruncatedNormal), documenting their own params order here in the same
-// style.
+// IHistogram, Empirical), documenting their own params order here in the same style.
 class IDistributionFactory {
    public:
     static std::unique_ptr<IDistribution> create(DistributionType type, const std::vector<double>& params) {
@@ -49,11 +51,13 @@ class IDistributionFactory {
                 return std::make_unique<Deterministic>(params.at(0));
             case DistributionType::LogNormal:
                 return std::make_unique<LogNormal>(params.at(0), params.at(1), static_cast<long>(params.at(2)));
+            case DistributionType::TruncatedNormal:
+                return std::make_unique<TruncatedNormal>(params.at(0), params.at(1), params.at(2), params.at(3),
+                                                           static_cast<long>(params.at(4)));
             case DistributionType::NotSupported:
             case DistributionType::LogPearsonIII:
             case DistributionType::IHistogram:
             case DistributionType::Empirical:
-            case DistributionType::TruncatedNormal:
             default:
                 throw std::invalid_argument("IDistributionFactory::create: unsupported DistributionType");
         }
