@@ -1,9 +1,13 @@
 # Plan: `hecfdar` (R) + `hecfdapy` (Python) from a shared C++ core, ported from HEC-FDA
 
-> **Current status (kept in sync by hand):** Phase 0 is **complete**. The full toolchain is
-> proven end to end: seeded .NET `Random` -> `Normal` -> `PairedData` -> `UncertainPairedData`
-> integrate-and-sample, identical in C++, R, and Python, and reproduced by the real HEC-FDA C#.
-> Phases 1-6 (the bulk port) have not started.
+> **Current status (kept in sync by hand):** Phase 0 and Phase 1 (Statistics foundation) are
+> **complete**. The full toolchain is proven end to end: seeded .NET `Random` -> `Normal` ->
+> `PairedData` -> `UncertainPairedData` integrate-and-sample, identical in C++, R, and Python, and
+> reproduced by the real HEC-FDA C#. Phase 1 added the validation subsystem, full
+> `SpecialFunctions`, `SampleStatistics`, the distribution base/enum/factory with generic
+> four-runner dispatch, all 13 distributions, the `Gamma`/`ShiftedGamma`/`PearsonIII` helpers,
+> `ConvergenceCriteria`, `DynamicHistogram`, and the `UncertainToDeterministicDistributionConverter`.
+> Phases 2-6 have not started.
 >
 > Phase 0 delivered the canonical C++17 header core at `core/include/hecfda/`
 > (`sampling::DotNetRandom`, `model::compute::RandomProvider`,
@@ -16,9 +20,21 @@
 > build time. The pinned cross-language value is
 > `UncertainPairedData::sample_and_integrate(seed=1234) = 24.425549382855987`, reproduced
 > exactly in C++, R, Python, and the real C# `UncertainPairedData.SamplePairedDataRaw`; the RNG
-> digest `sum(seed=12345, n=100000) = 50124.341288393982` matches the same way. The dotnet oracle
-> gate (`tools/verify_oracles.py` + `tools/oracle_emitter/`) reproduces all 18 fixture assertions
-> against the real upstream code, 0 failed. The Makefile (`test-core`/`test-r`/`test-py`/
+> digest `sum(seed=12345, n=100000) = 50124.341288393982` matches the same way.
+>
+> Phase 1 delivered the rest of `HEC.FDA.Statistics`: the validation subsystem (`ErrorLevel` +
+> rules reproducing C#'s intra-property bitwise-OR and cross-property overwrite semantics), the
+> full `SpecialFunctions` gamma/beta closure, `SampleStatistics` (including the faithful
+> population-moment getters and the upstream median-on-unsorted-array bug), the distribution
+> base/enum/factory plus generic four-runner dispatch (adding a distribution is now header +
+> factory case + name-mapping entry + fixture, no new glue), all 13 distributions (Normal,
+> Uniform, Triangular, Deterministic, LogNormal, TruncatedNormal, TruncatedLogNormal, PearsonIII,
+> LogPearson3, TruncatedLogPearson3, Gamma, ShiftedGamma, Empirical), `ConvergenceCriteria`,
+> `DynamicHistogram` (the Monte Carlo accumulator), and the
+> `UncertainToDeterministicDistributionConverter`. `Gamma`/`ShiftedGamma`/`PearsonIII` are
+> internal helper classes (not `IDistribution`) with bespoke fixture targets rather than the
+> generic dispatch. The dotnet oracle gate now reproduces 366 fixture assertions against the real
+> upstream code, 0 failed (up from Phase 0's 18). The Makefile (`test-core`/`test-r`/`test-py`/
 > `materialize`/`oracles`) and 3-platform CI (`.github/workflows/ci.yml`) are green. See
 > `CLAUDE.md` (same directory) for the working-context detail.
 
@@ -145,10 +161,28 @@ integrate-and-sample path. Exit criterion met: the same fixture passes in C++/R/
 RNG stream is byte-identical across all three; symlink vendoring and the dotnet gate proven; CI
 green.
 
-**Phases 1-6 -- bulk port up the dependency chain** (tests ported alongside each chunk):
+**Phase 1 -- COMPLETE (Statistics foundation).** Ported the rest of `HEC.FDA.Statistics`:
+validation, `SpecialFunctions`, `SampleStatistics`, the distribution base/enum/factory + generic
+dispatch, all 13 distributions, the `Gamma`/`ShiftedGamma`/`PearsonIII` helpers,
+`ConvergenceCriteria`, `DynamicHistogram`, and the `UncertainToDeterministicDistributionConverter`.
+Exit criterion met: `test-core`/`test-r`/`test-py`/`oracles` all green, oracle gate at 366
+reproduced / 0 failed. See `CLAUDE.md` for conventions established (factory keys, bespoke fixture
+targets) and the faithful-bug list (deliberately reproduced upstream quirks, not to be "fixed"
+later). Severed/deferred to Phase 2: `Empirical` stacking/weighting; `DynamicHistogram`
+XML/plotting/`ConvertToEmpiricalDistribution`; the converter's `IHistogram` case; the
+`UncertainPairedData` deterministic-sample-path wiring (needs `UncertainPairedData` generalized
+from `Normal` to `IDistribution`, which is Phase 2 work); `TruncatedNormal`/`TruncatedLogNormal`/
+`Gamma`/`TruncatedLogPearson3` currently have gate-only oracle coverage (no upstream unit-test
+literals to transcribe beyond what the oracle gate already checks).
 
-1. **Statistics foundation** -- `SpecialFunctions`, `Mathematics`, `SampleStatistics`, all 13
-   distributions, `DynamicHistogram`, `ConvergeCriteria`. Parallelizable once the base exists.
+**Top risk carried into Phase 2:** C++ `std::lower_bound` vs. C#'s `Array.BinarySearch` diverge on
+duplicate x/y values. Real FDA damage/frequency curves have flat segments, and both
+`PairedData::f_inverse` and `Empirical`'s inverse-CDF lookup binary-search into paired value
+arrays, so this must be closed early in Phase 2 (paired-data), before it's masked by fixtures that
+happen not to contain duplicates.
+
+**Phases 2-6 -- bulk port up the dependency chain** (tests ported alongside each chunk):
+
 2. **Paired-data library** -- full `PairedData` / `UncertainPairedData` /
    `GraphicalUncertainPairedData` algebra (integrate, sample, compose, multiply, interpolate
    quantiles).
@@ -198,7 +232,7 @@ Python fixtures pass; `verify_oracles.py` green (when `dotnet` is available); th
 - **Upstream sync:** pinned `upstream/HEC-FDA` submodule (`f63682a86a30dc306a105689714a92bfd95956c5`)
   is the diff baseline for provenance headers and the oracle gate. A `PORTING_MANIFEST.toml` +
   `tools/upstream_diff.py` worklist generator (bestfit precedent) is deferred until the bulk port
-  needs it -- not required for Phase 0 or the start of Phase 1.
+  needs it -- not required through the end of Phase 1.
 - **Portability rules (bestfit-learned):** never `M_PI` (use `hecfda::kPi`); do not name a
   namespace alias `gamma` (clashes with glibc `gamma()`) or `stat`; pass `-Wall/-Wextra` only to
   non-MSVC compilers.
@@ -214,8 +248,15 @@ Python fixtures pass; `verify_oracles.py` green (when `dotnet` is available); th
   every fixture passes identically to its stated tolerances.
 - **dotnet oracle gate:** dev-only, reproduces every fixture against the real upstream C#.
 
-## Open items carried into Phase 1
+## Open items carried into Phase 2
 
+- **Top risk:** `std::lower_bound` vs. `Array.BinarySearch` on duplicate x/y values -- see
+  "Top risk carried into Phase 2" under Phasing above. Close this early in the paired-data phase.
+- `Empirical` stacking/weighting, `DynamicHistogram` XML/plotting/`ConvertToEmpiricalDistribution`,
+  and the converter's `IHistogram` case -- severed from Phase 1, revisit once paired-data and
+  histogram consumers exist.
+- `UncertainPairedData` deterministic-sample-path wiring needs `UncertainPairedData` generalized
+  from `Normal` to `IDistribution` -- do this as part of the Phase 2 paired-data work.
 - `PORTING_MANIFEST.toml` + `tools/upstream_diff.py` (deferred per bestfit precedent; needed once
   upstream churn must be tracked across many ported files).
 - cibuildwheel / `R CMD check --as-cran` wiring (deferred until the package surface is broad
