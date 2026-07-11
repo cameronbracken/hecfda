@@ -1,0 +1,57 @@
+{
+  "target": "first_floor_elevation_uncertainty",
+  "kind": "first_floor_elevation_uncertainty",
+  "source_test": "HEC.FDA.ModelTest/unittests/structures/FirstFloorElevationUncertaintyShould.cs (Theory rows + Sample(iteration,true) LogNormal/Normal cases)",
+  "note": "construct = {dist, std_or_min, max}, matching FirstFloorElevationUncertainty(IDistributionEnum distributionEnum, double standardDeviationOrMinimum, double maximum = double.MaxValue). `sample` asserts FirstFloorElevationUncertainty.Sample(probability) DIRECTLY -- the RAW offset, with NO post-processing (the C# test theory applies inv+offset additively, or inv*offset for LogNormal, but this fixture checks the pre-multiplication/pre-addition offset itself). Cross-check against the C# theory: row 1 (Normal) offset should satisfy 5 + offset = 4.873326 => offset ~= -0.126674; row 5 (Deterministic) offset = 0 (10 + 0 = 10). Unlike ValueUncertainty/ValueRatioWithUncertainty, there is NO negative clamp -- offsets may be negative. `sample_iteration` asserts Sample(iteration, computeIsDeterministic) with args [iteration, computeIsDeterministic]; the two cases below use computeIsDeterministic=true: LogNormal always returns 1, everything else returns 0 (centerOfDistribution).",
+  "cases": [
+    {
+      "name": "normal_std0_5_max0",
+      "construct": { "dist": "Normal", "std_or_min": 0.5, "max": 0 },
+      "assertions": [
+        { "method": "sample", "args": [0.4], "expected": -0.12646663391329127, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "lognormal_std0_050636_max0",
+      "construct": { "dist": "LogNormal", "std_or_min": 0.050636, "max": 0 },
+      "assertions": [
+        { "method": "sample", "args": [0.7], "expected": 1.0268885023647412, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "triangular_min0_5_max1",
+      "construct": { "dist": "Triangular", "std_or_min": 0.5, "max": 1 },
+      "assertions": [
+        { "method": "sample", "args": [0.75], "expected": 0.38762756430420553, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "uniform_min0_5_max1",
+      "construct": { "dist": "Uniform", "std_or_min": 0.5, "max": 1 },
+      "assertions": [
+        { "method": "sample", "args": [0.45], "expected": 0.17500000000000004, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "deterministic_ignores_probability",
+      "construct": { "dist": "Deterministic", "std_or_min": 203958, "max": 20935 },
+      "assertions": [
+        { "method": "sample", "args": [0.456], "expected": 0.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "lognormal_deterministic_iteration",
+      "construct": { "dist": "LogNormal", "std_or_min": 0.050636, "max": 0 },
+      "assertions": [
+        { "method": "sample_iteration", "args": [1, 1], "expected": 1.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "normal_deterministic_iteration",
+      "construct": { "dist": "Normal", "std_or_min": 0.5, "max": 0 },
+      "assertions": [
+        { "method": "sample_iteration", "args": [1, 1], "expected": 0.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    }
+  ]
+}

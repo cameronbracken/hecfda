@@ -33,13 +33,29 @@ extern "C" SEXP _hecfdar_hecfda_upd_sample_integrate(SEXP xs, SEXP means, SEXP s
     return cpp11::as_sexp(hecfda_upd_sample_integrate(cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(xs), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(means), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(sds), cpp11::as_cpp<cpp11::decay_t<int>>(seed)));
   END_CPP11
 }
+// glue.cpp
+double hecfda_value_uncertainty(std::string dist, double std_or_min, double max, std::string method, cpp11::doubles args);
+extern "C" SEXP _hecfdar_hecfda_value_uncertainty(SEXP dist, SEXP std_or_min, SEXP max, SEXP method, SEXP args) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(hecfda_value_uncertainty(cpp11::as_cpp<cpp11::decay_t<std::string>>(dist), cpp11::as_cpp<cpp11::decay_t<double>>(std_or_min), cpp11::as_cpp<cpp11::decay_t<double>>(max), cpp11::as_cpp<cpp11::decay_t<std::string>>(method), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(args)));
+  END_CPP11
+}
+// glue.cpp
+double hecfda_structure(std::string oc_name, std::string oc_damage_category, cpp11::doubles struct_depths, cpp11::strings struct_types, cpp11::list struct_params, cpp11::doubles content_depths, cpp11::strings content_types, cpp11::list content_params, std::string ffe_dist, double ffe_std_or_min, double ffe_max, std::string sv_dist, double sv_std_or_min, double sv_max, std::string csvr_dist, double csvr_std_or_min, double csvr_central, double csvr_max, int sample_iteration, bool sample_compute_is_deterministic, std::string fid, double first_floor_elevation, double val_struct, std::string st_damcat, std::string occtype, int impact_area_id, double val_cont, double val_vehic, double val_other, double ground_elevation, std::string method, double wse);
+extern "C" SEXP _hecfdar_hecfda_structure(SEXP oc_name, SEXP oc_damage_category, SEXP struct_depths, SEXP struct_types, SEXP struct_params, SEXP content_depths, SEXP content_types, SEXP content_params, SEXP ffe_dist, SEXP ffe_std_or_min, SEXP ffe_max, SEXP sv_dist, SEXP sv_std_or_min, SEXP sv_max, SEXP csvr_dist, SEXP csvr_std_or_min, SEXP csvr_central, SEXP csvr_max, SEXP sample_iteration, SEXP sample_compute_is_deterministic, SEXP fid, SEXP first_floor_elevation, SEXP val_struct, SEXP st_damcat, SEXP occtype, SEXP impact_area_id, SEXP val_cont, SEXP val_vehic, SEXP val_other, SEXP ground_elevation, SEXP method, SEXP wse) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(hecfda_structure(cpp11::as_cpp<cpp11::decay_t<std::string>>(oc_name), cpp11::as_cpp<cpp11::decay_t<std::string>>(oc_damage_category), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(struct_depths), cpp11::as_cpp<cpp11::decay_t<cpp11::strings>>(struct_types), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(struct_params), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(content_depths), cpp11::as_cpp<cpp11::decay_t<cpp11::strings>>(content_types), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(content_params), cpp11::as_cpp<cpp11::decay_t<std::string>>(ffe_dist), cpp11::as_cpp<cpp11::decay_t<double>>(ffe_std_or_min), cpp11::as_cpp<cpp11::decay_t<double>>(ffe_max), cpp11::as_cpp<cpp11::decay_t<std::string>>(sv_dist), cpp11::as_cpp<cpp11::decay_t<double>>(sv_std_or_min), cpp11::as_cpp<cpp11::decay_t<double>>(sv_max), cpp11::as_cpp<cpp11::decay_t<std::string>>(csvr_dist), cpp11::as_cpp<cpp11::decay_t<double>>(csvr_std_or_min), cpp11::as_cpp<cpp11::decay_t<double>>(csvr_central), cpp11::as_cpp<cpp11::decay_t<double>>(csvr_max), cpp11::as_cpp<cpp11::decay_t<int>>(sample_iteration), cpp11::as_cpp<cpp11::decay_t<bool>>(sample_compute_is_deterministic), cpp11::as_cpp<cpp11::decay_t<std::string>>(fid), cpp11::as_cpp<cpp11::decay_t<double>>(first_floor_elevation), cpp11::as_cpp<cpp11::decay_t<double>>(val_struct), cpp11::as_cpp<cpp11::decay_t<std::string>>(st_damcat), cpp11::as_cpp<cpp11::decay_t<std::string>>(occtype), cpp11::as_cpp<cpp11::decay_t<int>>(impact_area_id), cpp11::as_cpp<cpp11::decay_t<double>>(val_cont), cpp11::as_cpp<cpp11::decay_t<double>>(val_vehic), cpp11::as_cpp<cpp11::decay_t<double>>(val_other), cpp11::as_cpp<cpp11::decay_t<double>>(ground_elevation), cpp11::as_cpp<cpp11::decay_t<std::string>>(method), cpp11::as_cpp<cpp11::decay_t<double>>(wse)));
+  END_CPP11
+}
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
-    {"_hecfdar_hecfda_dist_eval",            (DL_FUNC) &_hecfdar_hecfda_dist_eval,            4},
-    {"_hecfdar_hecfda_paired_f",             (DL_FUNC) &_hecfdar_hecfda_paired_f,             4},
-    {"_hecfdar_hecfda_rng_sequence",         (DL_FUNC) &_hecfdar_hecfda_rng_sequence,         2},
-    {"_hecfdar_hecfda_upd_sample_integrate", (DL_FUNC) &_hecfdar_hecfda_upd_sample_integrate, 4},
+    {"_hecfdar_hecfda_dist_eval",            (DL_FUNC) &_hecfdar_hecfda_dist_eval,             4},
+    {"_hecfdar_hecfda_paired_f",             (DL_FUNC) &_hecfdar_hecfda_paired_f,              4},
+    {"_hecfdar_hecfda_rng_sequence",         (DL_FUNC) &_hecfdar_hecfda_rng_sequence,          2},
+    {"_hecfdar_hecfda_structure",            (DL_FUNC) &_hecfdar_hecfda_structure,            32},
+    {"_hecfdar_hecfda_upd_sample_integrate", (DL_FUNC) &_hecfdar_hecfda_upd_sample_integrate,  4},
+    {"_hecfdar_hecfda_value_uncertainty",    (DL_FUNC) &_hecfdar_hecfda_value_uncertainty,     5},
     {NULL, NULL, 0}
 };
 }

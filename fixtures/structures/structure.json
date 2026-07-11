@@ -1,0 +1,195 @@
+{
+  "target": "structure",
+  "kind": "structure",
+  "source_test": "HEC.FDA.ModelTest/unittests/structures/StructureShould.cs (ComputeStructureDamage, SELA_StructureDamage_Should)",
+  "note": "construct is {occupancy_type: {name, damage_category, struct_depths, struct_damages:[{type,params}], content_depths, content_damages:[{type,params}], ffe:{dist,std_or_min,[central],[max]}, structure_value:{dist,std_or_min,[max]}, csvr:{dist,std_or_min,central,[max]}}, sample:[iteration, computeIsDeterministic], structure:{fid, first_floor_elevation, val_struct, st_damcat, occtype, impact_area_id, [val_cont], [val_vehic], [val_other], [ground_elevation]}}. Unlike structures/occupancy_type.json (which shares one 'depths' array between struct/content), struct_depths/content_depths are separate here because the SELA case's structure and content depth-percent-damage curves have different lengths (21 vs 18 points) -- a bespoke schema for this bespoke 'structure' dispatch target, not a reuse of the occupancy_type dispatch. Each assertion builds the occupancy type + structure fresh, samples once, and dispatches compute_damage_{struct,content,vehicle,other} = the four tuple items of Structure::compute_damage(wse, sampled, priceIndex=1, analysisYear=9999); 'args' is [wse]. The 'compute_structure_damage' case reproduces ComputeStructureDamage's shared fixture (Normal depth-percent-damage curves, CSVR-driven content); the 'sela_structure_*' cases reproduce SELA_StructureDamage_Should's triangular occupancy type against two real SELA structures. All expected values gate-pinned ('PIN'); the rounded literals in each case's note are the upstream InlineData/computed cross-check values, not hand-derived oracle values.",
+  "cases": [
+    {
+      "name": "compute_structure_damage",
+      "note": "cross-check (upstream InlineData literals): wse 102 -> struct 200 / content 180; wse 104 -> struct 400 / content 360.",
+      "construct": {
+        "occupancy_type": {
+          "name": "MyOccupancyType",
+          "damage_category": "DamageCategory",
+          "struct_depths": [0, 1, 2, 3, 4, 5],
+          "struct_damages": [
+            { "type": "Normal", "params": [0, 0, 1] },
+            { "type": "Normal", "params": [10, 5, 1] },
+            { "type": "Normal", "params": [20, 6, 1] },
+            { "type": "Normal", "params": [30, 7, 1] },
+            { "type": "Normal", "params": [40, 8, 1] },
+            { "type": "Normal", "params": [50, 9, 1] }
+          ],
+          "content_depths": [0, 1, 2, 3, 4, 5],
+          "content_damages": [
+            { "type": "Normal", "params": [0, 0, 1] },
+            { "type": "Normal", "params": [10, 5, 1] },
+            { "type": "Normal", "params": [20, 6, 1] },
+            { "type": "Normal", "params": [30, 7, 1] },
+            { "type": "Normal", "params": [40, 8, 1] },
+            { "type": "Normal", "params": [50, 9, 1] }
+          ],
+          "ffe": { "dist": "Normal", "std_or_min": 0.5 },
+          "structure_value": { "dist": "Normal", "std_or_min": 0.1 },
+          "csvr": { "dist": "Normal", "std_or_min": 10, "central": 90 }
+        },
+        "sample": [1, 1],
+        "structure": {
+          "fid": "44",
+          "first_floor_elevation": 100,
+          "val_struct": 1000,
+          "st_damcat": "DamageCategory",
+          "occtype": "MyOccupancyType",
+          "impact_area_id": 55,
+          "ground_elevation": 0
+        }
+      },
+      "assertions": [
+        { "method": "compute_damage_struct", "args": [102], "expected": 200, "tol": 0.5, "mode": "abs" },
+        { "method": "compute_damage_content", "args": [102], "expected": 180.00000000000003, "tol": 0.5, "mode": "abs" },
+        { "method": "compute_damage_struct", "args": [104], "expected": 400, "tol": 0.5, "mode": "abs" },
+        { "method": "compute_damage_content", "args": [104], "expected": 360.00000000000006, "tol": 0.5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "sela_structure_232549",
+      "note": "cross-check (upstream computed literal): 0.4213 * 74.946944 == 31.5751475072 (percent damage externally interpolated in the upstream test, tolerance .01 there); tol here is 0.02*value.",
+      "construct": {
+        "occupancy_type": {
+          "name": "MyOccupancyType",
+          "damage_category": "DamageCategory",
+          "struct_depths": [-1.1, -1, -0.5, 0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+          "struct_damages": [
+            { "type": "Triangular", "params": [0, 0, 0, 1] },
+            { "type": "Triangular", "params": [1.5, 4, 9.5, 1] },
+            { "type": "Triangular", "params": [1.5, 5.4, 9.5, 1] },
+            { "type": "Triangular", "params": [7.5, 20.5, 33.5, 1] },
+            { "type": "Triangular", "params": [18.8, 40.5, 63.3, 1] },
+            { "type": "Triangular", "params": [41.5, 41.5, 64.8, 1] },
+            { "type": "Triangular", "params": [41.6, 45.1, 65, 1] },
+            { "type": "Triangular", "params": [44.7, 52.3, 69.9, 1] },
+            { "type": "Triangular", "params": [44.8, 53.1, 70, 1] },
+            { "type": "Triangular", "params": [44.9, 57.1, 71.2, 1] },
+            { "type": "Triangular", "params": [46.3, 66.7, 80.5, 1] },
+            { "type": "Triangular", "params": [46.4, 66.8, 80.6, 1] },
+            { "type": "Triangular", "params": [46.5, 66.9, 80.7, 1] },
+            { "type": "Triangular", "params": [46.6, 67, 80.8, 1] },
+            { "type": "Triangular", "params": [68.3, 74.3, 81.1, 1] },
+            { "type": "Triangular", "params": [68.4, 74.4, 99.5, 1] },
+            { "type": "Triangular", "params": [77.6, 84.4, 99.6, 1] },
+            { "type": "Triangular", "params": [77.7, 84.5, 99.7, 1] },
+            { "type": "Triangular", "params": [77.8, 84.6, 99.8, 1] },
+            { "type": "Triangular", "params": [77.9, 84.7, 99.9, 1] },
+            { "type": "Triangular", "params": [78, 84.8, 100, 1] }
+          ],
+          "content_depths": [0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+          "content_damages": [
+            { "type": "Triangular", "params": [0, 0, 0, 1] },
+            { "type": "Triangular", "params": [18.7, 28.1, 28.1, 1] },
+            { "type": "Triangular", "params": [30.1, 41.8, 41.8, 1] },
+            { "type": "Triangular", "params": [37.4, 49.3, 49.3, 1] },
+            { "type": "Triangular", "params": [45.6, 62.9, 62.9, 1] },
+            { "type": "Triangular", "params": [59.1, 82.1, 82.1, 1] },
+            { "type": "Triangular", "params": [70.5, 84.6, 84.6, 1] },
+            { "type": "Triangular", "params": [76.4, 91.2, 91.2, 1] },
+            { "type": "Triangular", "params": [77.7, 91.3, 91.3, 1] },
+            { "type": "Triangular", "params": [77.8, 91.4, 91.4, 1] },
+            { "type": "Triangular", "params": [80.4, 91.5, 91.5, 1] },
+            { "type": "Triangular", "params": [80.5, 91.6, 91.6, 1] },
+            { "type": "Triangular", "params": [80.6, 91.7, 91.7, 1] },
+            { "type": "Triangular", "params": [80.7, 91.8, 91.8, 1] },
+            { "type": "Triangular", "params": [80.8, 91.9, 91.9, 1] },
+            { "type": "Triangular", "params": [80.9, 92, 92, 1] },
+            { "type": "Triangular", "params": [81, 92.1, 92.1, 1] },
+            { "type": "Triangular", "params": [81.1, 92.2, 92.2, 1] }
+          ],
+          "ffe": { "dist": "Normal", "std_or_min": 0.59 },
+          "structure_value": { "dist": "Triangular", "std_or_min": 69, "max": 116 },
+          "csvr": { "dist": "Normal", "std_or_min": 25.53, "central": 69 }
+        },
+        "sample": [1, 1],
+        "structure": {
+          "fid": "232549",
+          "first_floor_elevation": -2.35625,
+          "val_struct": 74.946944,
+          "st_damcat": "DamageCategory",
+          "occtype": "MyOccupancyType",
+          "impact_area_id": 55
+        }
+      },
+      "assertions": [
+        { "method": "compute_damage_struct", "args": [-1.27], "expected": 31.56840238516397, "tol": 0.6316, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "sela_structure_233375",
+      "note": "cross-check (upstream computed literal): 0.04476 * 88.204817 == 3.94804761 (percent damage externally interpolated in the upstream test, tolerance .01 there); tol here is 0.02*value.",
+      "construct": {
+        "occupancy_type": {
+          "name": "MyOccupancyType",
+          "damage_category": "DamageCategory",
+          "struct_depths": [-1.1, -1, -0.5, 0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+          "struct_damages": [
+            { "type": "Triangular", "params": [0, 0, 0, 1] },
+            { "type": "Triangular", "params": [1.5, 4, 9.5, 1] },
+            { "type": "Triangular", "params": [1.5, 5.4, 9.5, 1] },
+            { "type": "Triangular", "params": [7.5, 20.5, 33.5, 1] },
+            { "type": "Triangular", "params": [18.8, 40.5, 63.3, 1] },
+            { "type": "Triangular", "params": [41.5, 41.5, 64.8, 1] },
+            { "type": "Triangular", "params": [41.6, 45.1, 65, 1] },
+            { "type": "Triangular", "params": [44.7, 52.3, 69.9, 1] },
+            { "type": "Triangular", "params": [44.8, 53.1, 70, 1] },
+            { "type": "Triangular", "params": [44.9, 57.1, 71.2, 1] },
+            { "type": "Triangular", "params": [46.3, 66.7, 80.5, 1] },
+            { "type": "Triangular", "params": [46.4, 66.8, 80.6, 1] },
+            { "type": "Triangular", "params": [46.5, 66.9, 80.7, 1] },
+            { "type": "Triangular", "params": [46.6, 67, 80.8, 1] },
+            { "type": "Triangular", "params": [68.3, 74.3, 81.1, 1] },
+            { "type": "Triangular", "params": [68.4, 74.4, 99.5, 1] },
+            { "type": "Triangular", "params": [77.6, 84.4, 99.6, 1] },
+            { "type": "Triangular", "params": [77.7, 84.5, 99.7, 1] },
+            { "type": "Triangular", "params": [77.8, 84.6, 99.8, 1] },
+            { "type": "Triangular", "params": [77.9, 84.7, 99.9, 1] },
+            { "type": "Triangular", "params": [78, 84.8, 100, 1] }
+          ],
+          "content_depths": [0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+          "content_damages": [
+            { "type": "Triangular", "params": [0, 0, 0, 1] },
+            { "type": "Triangular", "params": [18.7, 28.1, 28.1, 1] },
+            { "type": "Triangular", "params": [30.1, 41.8, 41.8, 1] },
+            { "type": "Triangular", "params": [37.4, 49.3, 49.3, 1] },
+            { "type": "Triangular", "params": [45.6, 62.9, 62.9, 1] },
+            { "type": "Triangular", "params": [59.1, 82.1, 82.1, 1] },
+            { "type": "Triangular", "params": [70.5, 84.6, 84.6, 1] },
+            { "type": "Triangular", "params": [76.4, 91.2, 91.2, 1] },
+            { "type": "Triangular", "params": [77.7, 91.3, 91.3, 1] },
+            { "type": "Triangular", "params": [77.8, 91.4, 91.4, 1] },
+            { "type": "Triangular", "params": [80.4, 91.5, 91.5, 1] },
+            { "type": "Triangular", "params": [80.5, 91.6, 91.6, 1] },
+            { "type": "Triangular", "params": [80.6, 91.7, 91.7, 1] },
+            { "type": "Triangular", "params": [80.7, 91.8, 91.8, 1] },
+            { "type": "Triangular", "params": [80.8, 91.9, 91.9, 1] },
+            { "type": "Triangular", "params": [80.9, 92, 92, 1] },
+            { "type": "Triangular", "params": [81, 92.1, 92.1, 1] },
+            { "type": "Triangular", "params": [81.1, 92.2, 92.2, 1] }
+          ],
+          "ffe": { "dist": "Normal", "std_or_min": 0.59 },
+          "structure_value": { "dist": "Triangular", "std_or_min": 69, "max": 116 },
+          "csvr": { "dist": "Normal", "std_or_min": 25.53, "central": 69 }
+        },
+        "sample": [1, 1],
+        "structure": {
+          "fid": "233375",
+          "first_floor_elevation": -3.3375,
+          "val_struct": 88.204817,
+          "st_damcat": "DamageCategory",
+          "occtype": "MyOccupancyType",
+          "impact_area_id": 55
+        }
+      },
+      "assertions": [
+        { "method": "compute_damage_struct", "args": [-4.17], "expected": 3.9418730833041824, "tol": 0.079, "mode": "abs" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "target": "inventory",
+  "kind": "inventory",
+  "source_test": "bespoke (Phase 3 Task 6) -- upstream InventoryShould.cs is entirely shapefile/terrain/ImpactArea-bound (severed), so no upstream test maps directly onto the in-memory ctor this fixture exercises. See inventory.hpp's class comment for the storage/aliasing decisions this fixture's design leans on.",
+  "note": "construct is {occ_types: [<occupancy_type construct, same shape as structures/occupancy_type.json's 'construct'>, ...], structures: [<structure construct, same shape as structures/structure.json's 'construct.structure'>, ...], [price_index]}. `damage_category_count`/`trim_to_impact_area_count` are numeric proxies for GetDamageCategories()/GetInventoryTrimmedToImpactArea() (a string-vector compare mode was NOT added since a count proxy is sufficient and keeps the fixture's string-comparison surface at zero, per the brief). `generate_then_sample_struct_yvals` calls generate_random_numbers(convergence) then sample_occupancy_types(iteration, computeIsDeterministic)[0]'s struct-curve yvals -- gate-captured, never hand-derived. Its case deliberately uses min_iterations=10/max_iterations=50 (quantity = max_iterations*2 = 100) against the SAME occupancy-type construct as structures/occupancy_type.json's 'generate_then_sample_seeded' case (size=100) as an internal cross-check: since Inventory.GenerateRandomNumbers/SampleOccupancyTypes are thin wrappers over the already-gate-verified OccupancyType.GenerateRandomNumbers/Sample, this case's expected value is expected to equal that case's pinned value bit-for-bit -- confirmed via the gate below, not assumed. `validate_error_level`/`validate_has_errors` on 'validate_bad_structure' and 'validate_empty' both use an EMPTY occ_types list, sidestepping the still-latent (undemonstrated-but-unproven-safe) OccupancyType-child validate() hazard documented in inventory.hpp -- neither case needs a real occupancy type.",
+  "cases": [
+    {
+      "name": "trim_and_categories",
+      "construct": {
+        "occ_types": [
+          {
+            "name": "MyOccupancyType",
+            "damage_category": "DamageCategory",
+            "depths": [0, 1, 2, 3, 4, 5],
+            "struct_damages": [
+              { "type": "Normal", "params": [0, 0, 1] },
+              { "type": "Normal", "params": [10, 5, 1] },
+              { "type": "Normal", "params": [20, 6, 1] },
+              { "type": "Normal", "params": [30, 7, 1] },
+              { "type": "Normal", "params": [40, 8, 1] },
+              { "type": "Normal", "params": [50, 9, 1] }
+            ],
+            "content_damages": [
+              { "type": "Normal", "params": [0, 0, 1] },
+              { "type": "Normal", "params": [10, 5, 1] },
+              { "type": "Normal", "params": [20, 6, 1] },
+              { "type": "Normal", "params": [30, 7, 1] },
+              { "type": "Normal", "params": [40, 8, 1] },
+              { "type": "Normal", "params": [50, 9, 1] }
+            ],
+            "ffe": { "dist": "Normal", "std_or_min": 0.5 },
+            "structure_value": { "dist": "Normal", "std_or_min": 0.1 },
+            "csvr": { "dist": "Normal", "std_or_min": 10, "central": 90 }
+          }
+        ],
+        "structures": [
+          { "fid": "1", "first_floor_elevation": 10, "val_struct": 1000, "st_damcat": "Residential", "occtype": "MyOccupancyType", "impact_area_id": 55 },
+          { "fid": "2", "first_floor_elevation": 12, "val_struct": 2000, "st_damcat": "Commercial", "occtype": "MyOccupancyType", "impact_area_id": 55 },
+          { "fid": "3", "first_floor_elevation": 8, "val_struct": 1500, "st_damcat": "Residential", "occtype": "MyOccupancyType", "impact_area_id": 99 }
+        ]
+      },
+      "assertions": [
+        { "method": "damage_category_count", "args": [], "expected": 2, "tol": 0.0, "mode": "exact" },
+        { "method": "trim_to_impact_area_count", "args": [55], "expected": 2, "tol": 0.0, "mode": "exact" },
+        { "method": "trim_to_impact_area_count", "args": [99], "expected": 1, "tol": 0.0, "mode": "exact" },
+        { "method": "trim_to_impact_area_count", "args": [777], "expected": 0, "tol": 0.0, "mode": "exact" },
+        {
+          "method": "generate_then_sample_struct_yvals",
+          "args": [1, 0],
+          "convergence": { "min_iterations": 10, "max_iterations": 50 },
+          "expected": [0, 16.293447975714408, 27.552137570857287, 38.810827166000166, 50.06951676114305, 61.32820635628593],
+          "tol": 1e-9,
+          "mode": "vector"
+        }
+      ]
+    },
+    {
+      "name": "validate_bad_structure",
+      "construct": {
+        "occ_types": [],
+        "structures": [
+          { "fid": "bad1", "first_floor_elevation": -400, "val_struct": 100, "st_damcat": "cat", "occtype": "occX", "impact_area_id": 1 }
+        ]
+      },
+      "assertions": [
+        { "method": "validate_error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" },
+        { "method": "validate_has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "validate_empty",
+      "construct": {
+        "occ_types": [],
+        "structures": []
+      },
+      "assertions": [
+        { "method": "validate_error_level", "args": [], "expected": 2, "tol": 0.0, "mode": "exact" },
+        { "method": "validate_has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" }
+      ]
+    }
+  ]
+}

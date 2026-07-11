@@ -1,0 +1,74 @@
+{
+  "target": "occupancy_type",
+  "kind": "occupancy_type",
+  "source_test": "HEC.FDA.ModelTest/unittests/structures/OccupancyTypeShould.cs OccupancyTypeShouldSampleCorrectly (Theory row [1,0])",
+  "note": "construct builds the occupancy type via the builder chain: depths=[0,1,2,3,4,5]; struct/content percentDamages = Normal(0,0),Normal(10,5),Normal(20,6),Normal(30,7),Normal(40,8),Normal(50,9) (params [mean,sd,sampleSize], sampleSize=1, irrelevant to InverseCDF); ffe = FirstFloorElevationUncertainty(Normal, std_or_min=0.5); structure_value = ValueUncertainty(Normal, std_or_min=0.1); csvr = ValueRatioWithUncertainty(Normal, std_or_min=10, central=90). The five deterministic assertions dispatch Sample(iteration=1, computeIsDeterministic=true) accessors. The seeded case calls GenerateRandomNumbers(size=100) then Sample(iteration=1, computeIsDeterministic=false) and asserts the struct depth-damage curve's yvals -- gate-captured, never hand-derived, proving the per-category-seed RNG wiring (DEPTH_DAMAGE_SEED=1234 for the struct curve) reproduces the real C# bit-for-bit.",
+  "cases": [
+    {
+      "name": "sample_deterministic",
+      "construct": {
+        "name": "MyOccupancyType",
+        "damage_category": "DamageCategory",
+        "depths": [0, 1, 2, 3, 4, 5],
+        "struct_damages": [
+          { "type": "Normal", "params": [0, 0, 1] },
+          { "type": "Normal", "params": [10, 5, 1] },
+          { "type": "Normal", "params": [20, 6, 1] },
+          { "type": "Normal", "params": [30, 7, 1] },
+          { "type": "Normal", "params": [40, 8, 1] },
+          { "type": "Normal", "params": [50, 9, 1] }
+        ],
+        "content_damages": [
+          { "type": "Normal", "params": [0, 0, 1] },
+          { "type": "Normal", "params": [10, 5, 1] },
+          { "type": "Normal", "params": [20, 6, 1] },
+          { "type": "Normal", "params": [30, 7, 1] },
+          { "type": "Normal", "params": [40, 8, 1] },
+          { "type": "Normal", "params": [50, 9, 1] }
+        ],
+        "ffe": { "dist": "Normal", "std_or_min": 0.5 },
+        "structure_value": { "dist": "Normal", "std_or_min": 0.1 },
+        "csvr": { "dist": "Normal", "std_or_min": 10, "central": 90 }
+      },
+      "assertions": [
+        { "method": "sample_iteration_struct_yvals", "args": [1, 1], "expected": [0, 10, 20, 30, 40, 50], "tol": 0.0, "mode": "vector" },
+        { "method": "sample_iteration_content_yvals", "args": [1, 1], "expected": [0, 10, 20, 30, 40, 50], "tol": 0.0, "mode": "vector" },
+        { "method": "sample_iteration_structure_value_offset", "args": [1, 1], "expected": 1, "tol": 0.0, "mode": "exact" },
+        { "method": "sample_iteration_ffe_offset", "args": [1, 1], "expected": 0, "tol": 0.0, "mode": "exact" },
+        { "method": "sample_iteration_csvr", "args": [1, 1], "expected": 90, "tol": 0.0, "mode": "exact" },
+        { "method": "validate_error_level", "args": [1, 1], "expected": 0, "tol": 0.0, "mode": "exact" },
+        { "method": "validate_has_errors", "args": [1, 1], "expected": 0, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "generate_then_sample_seeded",
+      "construct": {
+        "name": "MyOccupancyType",
+        "damage_category": "DamageCategory",
+        "depths": [0, 1, 2, 3, 4, 5],
+        "struct_damages": [
+          { "type": "Normal", "params": [0, 0, 1] },
+          { "type": "Normal", "params": [10, 5, 1] },
+          { "type": "Normal", "params": [20, 6, 1] },
+          { "type": "Normal", "params": [30, 7, 1] },
+          { "type": "Normal", "params": [40, 8, 1] },
+          { "type": "Normal", "params": [50, 9, 1] }
+        ],
+        "content_damages": [
+          { "type": "Normal", "params": [0, 0, 1] },
+          { "type": "Normal", "params": [10, 5, 1] },
+          { "type": "Normal", "params": [20, 6, 1] },
+          { "type": "Normal", "params": [30, 7, 1] },
+          { "type": "Normal", "params": [40, 8, 1] },
+          { "type": "Normal", "params": [50, 9, 1] }
+        ],
+        "ffe": { "dist": "Normal", "std_or_min": 0.5 },
+        "structure_value": { "dist": "Normal", "std_or_min": 0.1 },
+        "csvr": { "dist": "Normal", "std_or_min": 10, "central": 90 }
+      },
+      "assertions": [
+        { "method": "generate_then_sample_iteration_struct_yvals", "args": [1, 0], "size": 100, "expected": [0, 16.293447975714408, 27.552137570857287, 38.810827166000166, 50.06951676114305, 61.32820635628593], "tol": 1e-9, "mode": "vector" }
+      ]
+    }
+  ]
+}

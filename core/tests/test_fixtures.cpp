@@ -12,6 +12,13 @@
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/model/structures/deterministic_occupancy_type.hpp"
+#include "hecfda/model/structures/first_floor_elevation_uncertainty.hpp"
+#include "hecfda/model/structures/inventory.hpp"
+#include "hecfda/model/structures/occupancy_type.hpp"
+#include "hecfda/model/structures/structure.hpp"
+#include "hecfda/model/structures/value_ratio_with_uncertainty.hpp"
+#include "hecfda/model/structures/value_uncertainty.hpp"
 #include "hecfda/model/utilities/graphical_frequency_uncertainty_calculators.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/histograms/dynamic_histogram.hpp"
@@ -1195,6 +1202,429 @@ TEST_CASE("graphical_uncertain_paired_data fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             auto got = run_gupd(c, a["method"], a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for ValueUncertainty (Phase 3 Task 1): a plain Validation-derived
+// per-structure uncertainty sampler, not an IDistribution, so it is constructed directly here
+// like ShiftedGamma/PearsonIII/ConvergenceCriteria. `construct` is {"dist": "<name>",
+// "std_or_min": ..., "max": ...}, `dist` mapped via the shared distribution_type_from_name()
+// already used by run_distribution. `sample` takes [probability]; `sample_iteration` takes
+// [iteration, computeIsDeterministic] (both encoded as JSON numbers; the flag is interpreted via
+// != 0).
+static double run_value_uncertainty(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    auto dist_type = hecfda::statistics::distributions::distribution_type_from_name(
+        ctor["dist"].get<std::string>());
+    hecfda::model::structures::ValueUncertainty vu(dist_type, ctor["std_or_min"].get<double>(),
+                                                     ctor["max"].get<double>());
+    if (method == "sample") return vu.sample(args[0].get<double>());
+    if (method == "sample_iteration")
+        return vu.sample(args[0].get<long>(), args[1].get<double>() != 0.0);
+    auto msg = std::string("unknown value_uncertainty method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("value_uncertainty fixture") {
+    std::ifstream f(fixtures_dir() + "/structures/value_uncertainty.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "value_uncertainty");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_value_uncertainty(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for FirstFloorElevationUncertainty (Phase 3 Task 3): same shape as
+// run_value_ratio_with_uncertainty above -- a plain Validation-derived per-structure uncertainty
+// sampler, not an IDistribution. `construct` is {"dist": "<name>", "std_or_min": ..., "max": ...}
+// (no "central" field -- the center of the distribution is hardcoded to 0 inside the class, unlike
+// ValueRatioWithUncertainty). `sample` takes [probability]; `sample_iteration` takes [iteration,
+// computeIsDeterministic] (both JSON numbers; the flag is interpreted via != 0).
+static double run_first_floor_elevation_uncertainty(const json& c, const std::string& method,
+                                                       const json& args) {
+    const auto& ctor = c["construct"];
+    auto dist_type = hecfda::statistics::distributions::distribution_type_from_name(
+        ctor["dist"].get<std::string>());
+    hecfda::model::structures::FirstFloorElevationUncertainty ffeu(
+        dist_type, ctor["std_or_min"].get<double>(), ctor["max"].get<double>());
+    if (method == "sample") return ffeu.sample(args[0].get<double>());
+    if (method == "sample_iteration")
+        return ffeu.sample(args[0].get<long>(), args[1].get<double>() != 0.0);
+    auto msg = std::string("unknown first_floor_elevation_uncertainty method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("first_floor_elevation_uncertainty fixture") {
+    std::ifstream f(fixtures_dir() + "/structures/first_floor_elevation_uncertainty.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "first_floor_elevation_uncertainty");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_first_floor_elevation_uncertainty(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for ValueRatioWithUncertainty (Phase 3 Task 2): same shape as
+// run_value_uncertainty above -- a plain Validation-derived per-structure uncertainty sampler,
+// not an IDistribution. `construct` is {"dist": "<name>", "std_or_min": ..., "central": ...,
+// "max": ...}. `sample` takes [probability]; `sample_iteration` takes [iteration,
+// computeIsDeterministic] (both JSON numbers; the flag is interpreted via != 0).
+static double run_value_ratio_with_uncertainty(const json& c, const std::string& method,
+                                                 const json& args) {
+    const auto& ctor = c["construct"];
+    auto dist_type = hecfda::statistics::distributions::distribution_type_from_name(
+        ctor["dist"].get<std::string>());
+    hecfda::model::structures::ValueRatioWithUncertainty vru(
+        dist_type, ctor["std_or_min"].get<double>(), ctor["central"].get<double>(),
+        ctor["max"].get<double>());
+    if (method == "sample") return vru.sample(args[0].get<double>());
+    if (method == "sample_iteration")
+        return vru.sample(args[0].get<long>(), args[1].get<double>() != 0.0);
+    auto msg = std::string("unknown value_ratio_with_uncertainty method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("value_ratio_with_uncertainty fixture") {
+    std::ifstream f(fixtures_dir() + "/structures/value_ratio_with_uncertainty.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "value_ratio_with_uncertainty");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_value_ratio_with_uncertainty(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for OccupancyType + DeterministicOccupancyType (Phase 3 Task 4): the
+// integration class that binds the three leaf samplers (ValueUncertainty,
+// ValueRatioWithUncertainty, FirstFloorElevationUncertainty) to the Phase-2 UncertainPairedData
+// via OccupancyType::builder(). `construct` is {name, damage_category, depths,
+// struct_damages:[{type,params}], content_damages:[{type,params}], ffe:{dist,std_or_min,[max]},
+// structure_value:{dist,std_or_min,[max]}, csvr:{dist,std_or_min,central,[max]}} -- the "max"
+// fields are optional, matching the C# ctors' default-max-parameter convention (each type's
+// default max is used when omitted). `sample_iteration_*` methods dispatch
+// Sample(iteration, computeIsDeterministic) and pull one field off the resulting
+// DeterministicOccupancyType; `generate_then_sample_iteration_struct_yvals` additionally reads a
+// "size" field off the assertion itself and calls GenerateRandomNumbers(size) before sampling
+// with computeIsDeterministic=false, exercising the per-category-seed RNG wiring end to end.
+static hecfda::model::paired_data::UncertainPairedData make_occupancy_type_upd(const json& xs_json,
+                                                                                const json& ys_json) {
+    std::vector<double> xs = xs_json.get<std::vector<double>>();
+    std::vector<std::unique_ptr<hecfda::statistics::distributions::IDistribution>> ys;
+    for (const auto& y : ys_json) {
+        ys.push_back(hecfda::statistics::distributions::IDistributionFactory::create(
+            hecfda::statistics::distributions::distribution_type_from_name(y["type"].get<std::string>()),
+            y["params"].get<std::vector<double>>()));
+    }
+    return hecfda::model::paired_data::UncertainPairedData(std::move(xs), std::move(ys));
+}
+
+static hecfda::model::structures::OccupancyType make_occupancy_type(const json& ctor) {
+    using namespace hecfda::model::structures;
+    using hecfda::statistics::distributions::distribution_type_from_name;
+
+    auto struct_upd = make_occupancy_type_upd(ctor["depths"], ctor["struct_damages"]);
+    auto content_upd = make_occupancy_type_upd(ctor["depths"], ctor["content_damages"]);
+
+    const auto& ffe_c = ctor["ffe"];
+    auto ffe_dist = distribution_type_from_name(ffe_c["dist"].get<std::string>());
+    FirstFloorElevationUncertainty ffe = ffe_c.contains("max")
+        ? FirstFloorElevationUncertainty(ffe_dist, ffe_c["std_or_min"].get<double>(), ffe_c["max"].get<double>())
+        : FirstFloorElevationUncertainty(ffe_dist, ffe_c["std_or_min"].get<double>());
+
+    const auto& sv_c = ctor["structure_value"];
+    auto sv_dist = distribution_type_from_name(sv_c["dist"].get<std::string>());
+    ValueUncertainty structure_value = sv_c.contains("max")
+        ? ValueUncertainty(sv_dist, sv_c["std_or_min"].get<double>(), sv_c["max"].get<double>())
+        : ValueUncertainty(sv_dist, sv_c["std_or_min"].get<double>());
+
+    const auto& csvr_c = ctor["csvr"];
+    auto csvr_dist = distribution_type_from_name(csvr_c["dist"].get<std::string>());
+    ValueRatioWithUncertainty csvr = csvr_c.contains("max")
+        ? ValueRatioWithUncertainty(csvr_dist, csvr_c["std_or_min"].get<double>(),
+                                     csvr_c["central"].get<double>(), csvr_c["max"].get<double>())
+        : ValueRatioWithUncertainty(csvr_dist, csvr_c["std_or_min"].get<double>(),
+                                     csvr_c["central"].get<double>());
+
+    return OccupancyType::builder()
+        .with_name(ctor["name"].get<std::string>())
+        .with_damage_category(ctor["damage_category"].get<std::string>())
+        .with_structure_depth_percent_damage(std::move(struct_upd))
+        .with_content_depth_percent_damage(std::move(content_upd))
+        .with_first_floor_elevation_uncertainty(ffe)
+        .with_structure_value_uncertainty(structure_value)
+        .with_content_to_structure_value_ratio(csvr)
+        .build();
+}
+
+static std::vector<double> run_occupancy_type(const json& c, const json& a) {
+    auto occ = make_occupancy_type(c["construct"]);
+    std::string method = a["method"].get<std::string>();
+    const auto& args = a["args"];
+    if (method == "validate_error_level") {
+        // Exercises OccupancyType::validate() -> each sampler's Validation::validate(), i.e. the
+        // path that was formerly UB (see value_uncertainty.hpp/value_ratio_with_uncertainty.hpp/
+        // first_floor_elevation_uncertainty.hpp add_rules() comments on the [this]-capture fix).
+        occ.validate();
+        return {static_cast<double>(static_cast<int>(occ.error_level()))};
+    }
+    if (method == "validate_has_errors") {
+        occ.validate();
+        return {occ.has_errors() ? 1.0 : 0.0};
+    }
+    if (method == "generate_then_sample_iteration_struct_yvals") {
+        occ.generate_random_numbers(a["size"].get<long>());
+        auto sampled = occ.sample(args[0].get<long>(), args[1].get<double>() != 0.0);
+        return sampled.struct_percent_damage_paired_data().yvals();
+    }
+    auto sampled = occ.sample(args[0].get<long>(), args[1].get<double>() != 0.0);
+    if (method == "sample_iteration_struct_yvals") return sampled.struct_percent_damage_paired_data().yvals();
+    if (method == "sample_iteration_content_yvals") return sampled.content_percent_damage_paired_data().yvals();
+    if (method == "sample_iteration_structure_value_offset") return {sampled.structure_value_offset()};
+    if (method == "sample_iteration_ffe_offset") return {sampled.first_floor_elevation_offset()};
+    if (method == "sample_iteration_csvr") return {sampled.content_to_structure_value_ratio()};
+    auto msg = std::string("unknown occupancy_type method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("occupancy_type fixture") {
+    std::ifstream f(fixtures_dir() + "/structures/occupancy_type.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "occupancy_type");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_occupancy_type(c, a);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for Structure (Phase 3 Task 5): the per-structure numeric depth-damage compute.
+// `construct` is {occupancy_type: {name, damage_category, struct_depths,
+// struct_damages:[{type,params}], content_depths, content_damages:[{type,params}], ffe:{...},
+// structure_value:{...}, csvr:{...}}, sample:[iteration, computeIsDeterministic],
+// structure:{fid, first_floor_elevation, val_struct, st_damcat, occtype, impact_area_id,
+// [val_cont], [val_vehic], [val_other], [ground_elevation]}}. Unlike make_occupancy_type (which
+// shares one "depths" array between struct/content), struct_depths/content_depths are separate
+// here because the SELA fixture case's structure and content curves have different lengths -- see
+// fixtures/structures/structure.json's note. compute_damage is non-const and mutates the segment
+// indices (see structure.hpp), so `structure` below is a fresh, non-const local per assertion,
+// matching the fixture's "fresh per assertion" convention used throughout this file.
+static hecfda::model::structures::OccupancyType make_structure_occupancy_type(const json& ctor) {
+    using namespace hecfda::model::structures;
+    using hecfda::statistics::distributions::distribution_type_from_name;
+
+    auto struct_upd = make_occupancy_type_upd(ctor["struct_depths"], ctor["struct_damages"]);
+    auto content_upd = make_occupancy_type_upd(ctor["content_depths"], ctor["content_damages"]);
+
+    const auto& ffe_c = ctor["ffe"];
+    auto ffe_dist = distribution_type_from_name(ffe_c["dist"].get<std::string>());
+    FirstFloorElevationUncertainty ffe = ffe_c.contains("max")
+        ? FirstFloorElevationUncertainty(ffe_dist, ffe_c["std_or_min"].get<double>(), ffe_c["max"].get<double>())
+        : FirstFloorElevationUncertainty(ffe_dist, ffe_c["std_or_min"].get<double>());
+
+    const auto& sv_c = ctor["structure_value"];
+    auto sv_dist = distribution_type_from_name(sv_c["dist"].get<std::string>());
+    ValueUncertainty structure_value = sv_c.contains("max")
+        ? ValueUncertainty(sv_dist, sv_c["std_or_min"].get<double>(), sv_c["max"].get<double>())
+        : ValueUncertainty(sv_dist, sv_c["std_or_min"].get<double>());
+
+    const auto& csvr_c = ctor["csvr"];
+    auto csvr_dist = distribution_type_from_name(csvr_c["dist"].get<std::string>());
+    ValueRatioWithUncertainty csvr = csvr_c.contains("max")
+        ? ValueRatioWithUncertainty(csvr_dist, csvr_c["std_or_min"].get<double>(),
+                                     csvr_c["central"].get<double>(), csvr_c["max"].get<double>())
+        : ValueRatioWithUncertainty(csvr_dist, csvr_c["std_or_min"].get<double>(),
+                                     csvr_c["central"].get<double>());
+
+    return OccupancyType::builder()
+        .with_name(ctor["name"].get<std::string>())
+        .with_damage_category(ctor["damage_category"].get<std::string>())
+        .with_structure_depth_percent_damage(std::move(struct_upd))
+        .with_content_depth_percent_damage(std::move(content_upd))
+        .with_first_floor_elevation_uncertainty(ffe)
+        .with_structure_value_uncertainty(structure_value)
+        .with_content_to_structure_value_ratio(csvr)
+        .build();
+}
+
+static hecfda::model::structures::Structure make_structure(const json& ctor) {
+    using hecfda::model::structures::Structure;
+    double val_cont = ctor.contains("val_cont") ? ctor["val_cont"].get<double>() : 0;
+    double val_vehic = ctor.contains("val_vehic") ? ctor["val_vehic"].get<double>() : 0;
+    double val_other = ctor.contains("val_other") ? ctor["val_other"].get<double>() : 0;
+    double ground_elevation = ctor.contains("ground_elevation") ? ctor["ground_elevation"].get<double>()
+                                                                 : Structure::kDefaultMissingValue;
+    return Structure(ctor["fid"].get<std::string>(), ctor["first_floor_elevation"].get<double>(),
+                      ctor["val_struct"].get<double>(), ctor["st_damcat"].get<std::string>(),
+                      ctor["occtype"].get<std::string>(), ctor["impact_area_id"].get<int>(), val_cont,
+                      val_vehic, val_other, "unassigned", Structure::kDefaultMissingValue, ground_elevation);
+}
+
+static double run_structure(const json& c, const json& a) {
+    const auto& ctor = c["construct"];
+    auto occ = make_structure_occupancy_type(ctor["occupancy_type"]);
+    const auto& sample = ctor["sample"];
+    auto sampled = occ.sample(sample[0].get<long>(), sample[1].get<double>() != 0.0);
+    auto structure = make_structure(ctor["structure"]);
+    std::string method = a["method"].get<std::string>();
+    const auto& args = a["args"];
+    float wse = static_cast<float>(args[0].get<double>());
+    auto [struct_damage, cont_damage, vehicle_damage, other_damage] = structure.compute_damage(wse, sampled);
+    if (method == "compute_damage_struct") return struct_damage;
+    if (method == "compute_damage_content") return cont_damage;
+    if (method == "compute_damage_vehicle") return vehicle_damage;
+    if (method == "compute_damage_other") return other_damage;
+    auto msg = std::string("unknown structure method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("structure fixture") {
+    std::ifstream f(fixtures_dir() + "/structures/structure.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "structure");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_structure(c, a);
+            double exp = a["expected"].get<double>();
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            bool ok = mode == "rel" ? (std::abs(got - exp) / (std::abs(exp) > 0 ? std::abs(exp) : 1.0)) <= tol
+                                     : std::abs(got - exp) <= tol;
+            if (!ok) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for Inventory (Phase 3 Task 6, the last core-code task of the phase): the
+// numeric subset (in-memory ctor, damage-category enumeration, impact-area trim, per-occ-type RNG
+// generation + sampling, ground elevations, Validate aggregation). `construct` is {occ_types:
+// [<occupancy_type construct>, ...], structures: [<structure construct>, ...], [price_index]} --
+// see fixtures/structures/inventory.json's note and inventory.hpp's class comment for the full
+// design rationale (why occ_types is a shared_ptr<map>, why Structure needed its this-capture
+// bugfix, and why the validate_* cases use an empty occ_types list).
+static hecfda::model::structures::Inventory make_inventory(const json& ctor) {
+    using namespace hecfda::model::structures;
+    std::map<std::string, OccupancyType> occ_types;
+    for (const auto& occ_ctor : ctor["occ_types"]) {
+        occ_types.emplace(occ_ctor["name"].get<std::string>(), make_occupancy_type(occ_ctor));
+    }
+    std::vector<Structure> structures;
+    structures.reserve(ctor["structures"].size());
+    for (const auto& struct_ctor : ctor["structures"]) {
+        structures.push_back(make_structure(struct_ctor));
+    }
+    double price_index = ctor.contains("price_index") ? ctor["price_index"].get<double>() : 1.0;
+    return Inventory(std::move(occ_types), std::move(structures), price_index);
+}
+
+static std::vector<double> run_inventory(const json& c, const json& a) {
+    using namespace hecfda::model::structures;
+    auto inv = make_inventory(c["construct"]);
+    std::string method = a["method"].get<std::string>();
+    const auto& args = a["args"];
+    if (method == "damage_category_count") {
+        return {static_cast<double>(inv.get_damage_categories().size())};
+    }
+    if (method == "trim_to_impact_area_count") {
+        auto trimmed = inv.get_inventory_trimmed_to_impact_area(args[0].get<int>());
+        return {static_cast<double>(trimmed.structures().size())};
+    }
+    if (method == "generate_then_sample_struct_yvals") {
+        const auto& conv = a["convergence"];
+        hecfda::statistics::ConvergenceCriteria cc(conv["min_iterations"].get<int>(), conv["max_iterations"].get<int>());
+        inv.generate_random_numbers(cc);
+        auto sampled = inv.sample_occupancy_types(args[0].get<long>(), args[1].get<double>() != 0.0);
+        return sampled[0].struct_percent_damage_paired_data().yvals();
+    }
+    if (method == "validate_error_level") {
+        inv.validate();
+        return {static_cast<double>(static_cast<unsigned char>(inv.error_level()))};
+    }
+    if (method == "validate_has_errors") {
+        inv.validate();
+        return {inv.has_errors() ? 1.0 : 0.0};
+    }
+    auto msg = std::string("unknown inventory method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("inventory fixture") {
+    std::ifstream f(fixtures_dir() + "/structures/inventory.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "inventory");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_inventory(c, a);
             std::vector<double> exp;
             if (a["expected"].is_array()) {
                 exp = a["expected"].get<std::vector<double>>();

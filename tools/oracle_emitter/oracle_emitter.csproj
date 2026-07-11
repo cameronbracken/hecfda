@@ -35,5 +35,51 @@
          FillInputExceedanceProbabilitiesWithRequiredPoints). -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/GraphicalFrequencyUncertaintyCalculators.cs" />
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/DoubleGlobalStatics.cs" />
+    <!-- Task Phase3T1: ValueUncertainty extends ValidationErrorLogger (MVVM), which is already
+         reachable transitively through the HEC.FDA.Statistics ProjectReference above
+         (HEC.FDA.Statistics to HEC.MVVMFramework.Model to HEC.MVVMFramework.Base, both plain
+         project references with no RAS/NuGet feed dependency), so it compiles unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/ValueUncertainty.cs" />
+    <!-- Task Phase3T2: ValueRatioWithUncertainty extends Validation directly (a lighter base than
+         ValueUncertainty's ValidationErrorLogger), which is the same MVVM closure already
+         reachable transitively above, so it compiles unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/ValueRatioWithUncertainty.cs" />
+    <!-- Task Phase3T3: FirstFloorElevationUncertainty extends Validation directly, same MVVM
+         closure already reachable transitively above, so it compiles unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/FirstFloorElevationUncertainty.cs" />
+    <!-- Task Phase3T4: DeterministicOccupancyType is a plain data holder with no MVVM/messaging
+         dependency, so it compiles unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/DeterministicOccupancyType.cs" />
+    <!-- Task Phase3T4: PropertyValidationHelper (HasErrors/ErrorLevel + ValidateProperty/
+         ResetErrors) is OccupancyType's base class; a plain helper over Validation with no
+         messaging dependency, so it compiles unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/PropertyValidationHelper.cs" />
+    <!-- Task Phase3T4: OccupancyType uses MessageHub/MessageReportedEventHandler/
+         IDontImplementValidationButMyPropertiesDo (MVVM messaging), but unlike
+         CurveMetaData/GraphicalUncertainPairedData's WriteToXML/ReadFromXML, which pull in the
+         H5Assist.Chunking-dependent Serialization class and so needed patched/ stub copies,
+         these messaging types are all reachable transitively through the existing
+         HEC.FDA.Statistics ProjectReference (HEC.FDA.Statistics to HEC.MVVMFramework.Model to
+         HEC.MVVMFramework.Base, already a plain project-reference chain with no RAS/NuGet feed
+         dependency). Verified by direct `dotnet build`: compiles clean, unpatched, 0
+         errors/warnings. No patched/OccupancyType.cs copy was needed. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/OccupancyType.cs" />
+    <!-- Task Phase3T5: IntegerGlobalConstants is a single-constant plain class (DEFAULT_MISSING_VALUE
+         = -999), no dependency of its own, needed for Structure's numeric ctor default args. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/IntegerGlobalConstants.cs" />
+    <!-- Task Phase3T5: Structure extends Validation directly (same reachable MVVM closure as
+         ValueUncertainty/ValueRatioWithUncertainty/FirstFloorElevationUncertainty above), but its
+         real source pulls in RasMapperLib (PointM ctor + Point property), Geospatial.Vectors (the
+         second ctor), and HEC.FDA.Model.metrics (the ConsequenceResult ComputeDamage overload),
+         none of which are reachable from this subset-compiled project (same rationale as
+         CurveMetaData.cs/GraphicalUncertainPairedData.cs's WriteToXML/ReadFromXML patches).
+         patched/Structure.cs is a numeric-only local copy: one ctor (no point parameter), no
+         ConsequenceResult overload, no ProduceDetails*/CalculateDepthZeroDamage/
+         FindHighestDepthZeroPercentDamage (CSV + f_inverse). The tuple ComputeDamage, FindOccType/
+         FindOccTypeIndex, AddRules, ResetIndexTracking, and the four LastWSP index fields are kept
+         verbatim; see that file's header for the full patch rationale. patched/Structure.cs needs
+         no explicit Compile Include: EnableDefaultCompileItems (set above) already picks up every
+         *.cs file under the project directory, including patched/, the same way
+         patched/CurveMetaData.cs and patched/GraphicalDistribution.cs are already picked up. -->
   </ItemGroup>
 </Project>
