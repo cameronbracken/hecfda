@@ -64,6 +64,14 @@ namespace oracle_emitter {
         "gamma_derivative" => SpecialFunctions.gammaDerivative(D(args[0]), D(args[1])),
         _ => throw new Exception("unknown special_functions method: " + method) };
     }
+    static object EvalSampleStatistics(JsonElement c, string method) {
+      var stats = new SampleStatistics(DA(c.GetProperty("data")));
+      return method switch {
+        "mean" => stats.Mean, "variance" => stats.Variance, "standard_deviation" => stats.StandardDeviation,
+        "median" => stats.Median, "skewness" => stats.Skewness, "min" => stats.Min, "max" => stats.Max,
+        "sample_size" => (double)stats.SampleSize,
+        _ => throw new Exception("unknown sample_statistics method: " + method) };
+    }
     static object EvalUpd(JsonElement caseEl, string method, JsonElement args) {
       var c = caseEl.GetProperty("construct");
       double[] xs = DA(c.GetProperty("xs"));
@@ -109,6 +117,7 @@ namespace oracle_emitter {
               case "normal": val = EvalNormal(c.GetProperty("construct"), method, argsEl); break;
               case "paired_data": val = EvalPaired(c.GetProperty("construct"), method, argsEl); break;
               case "special_functions": val = EvalSpecial(method, argsEl); break;
+              case "sample_statistics": val = EvalSampleStatistics(c.GetProperty("construct"), method); break;
               case "uncertain_paired_data": val = EvalUpd(c, method, argsEl); break;
               default: continue;
             }

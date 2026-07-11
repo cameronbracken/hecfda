@@ -6,6 +6,7 @@
 #include <vector>
 #include "hecfda/constants.hpp"
 #include "hecfda/statistics/distributions/continuous_distribution.hpp"
+#include "hecfda/statistics/sample_statistics.hpp"
 #include "hecfda/statistics/special_functions.hpp"
 namespace hecfda {
 namespace statistics {
@@ -72,21 +73,12 @@ class Normal : public ContinuousDistribution {
     }
 
     // ported from: Normal.cs Fit(double[] sample) -> `new Normal(stats.Mean, stats.StandardDeviation,
-    // stats.SampleSize)`. Phase 0 uses a thin population mean/sd inline (full SampleStatistics with
-    // its Welford-style running variance and skew lands in Phase 1); this matches SampleStatistics'
-    // final Variance getter, which is the population (divide-by-n) variance.
+    // stats.SampleSize)`. Phase 1 builds the real SampleStatistics (Welford-style running variance,
+    // rescaled to the population/divide-by-n moment on the Variance getter -- see
+    // sample_statistics.hpp) rather than Phase 0's thin inline population mean/sd stub.
     Normal fit(const std::vector<double>& sample) const {
-        long n = static_cast<long>(sample.size());
-        double sum = 0.0;
-        for (double v : sample) sum += v;
-        double fitted_mean = sum / static_cast<double>(n);
-        double sum_sq_dev = 0.0;
-        for (double v : sample) {
-            double d = v - fitted_mean;
-            sum_sq_dev += d * d;
-        }
-        double fitted_sd = std::sqrt(sum_sq_dev / static_cast<double>(n));
-        return Normal(fitted_mean, fitted_sd, n);
+        hecfda::statistics::SampleStatistics stats(sample);
+        return Normal(stats.mean(), stats.standard_deviation(), stats.sample_size());
     }
 
    private:

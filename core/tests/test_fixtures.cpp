@@ -9,6 +9,7 @@
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
+#include "hecfda/statistics/sample_statistics.hpp"
 #include "hecfda/statistics/special_functions.hpp"
 
 using json = nlohmann::json;
@@ -179,6 +180,40 @@ TEST_CASE("special_functions fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_special_functions(a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for method: ") + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+static double run_sample_statistics(const json& c, const std::string& method) {
+    hecfda::statistics::SampleStatistics stats(c["construct"]["data"].get<std::vector<double>>());
+    if (method == "mean") return stats.mean();
+    if (method == "variance") return stats.variance();
+    if (method == "standard_deviation") return stats.standard_deviation();
+    if (method == "median") return stats.median();
+    if (method == "skewness") return stats.skewness();
+    if (method == "min") return stats.min();
+    if (method == "max") return stats.max();
+    if (method == "sample_size") return static_cast<double>(stats.sample_size());
+    auto msg = std::string("unknown sample_statistics method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("sample_statistics fixture") {
+    std::ifstream f(fixtures_dir() + "/distributions/sample_statistics.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "sample_statistics");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_sample_statistics(c, a["method"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
