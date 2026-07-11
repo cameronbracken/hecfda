@@ -1,0 +1,55 @@
+{
+  "target": "histogram",
+  "kind": "histogram",
+  "source_test": "HEC.FDA.StatisticsTests/Histograms/HistogramTests.cs @ f63682a86a30dc306a105689714a92bfd95956c5",
+  "note": "DynamicHistogram (Task C2), the Monte Carlo result accumulator. Constructed directly like ShiftedGamma/PearsonIII/Empirical/ConvergenceCriteria (not via IDistributionFactory): DynamicHistogram(bin_width, ConvergenceCriteria()), then AddObservationsToHistogram(data), then AddObservationToHistogram(x) for each x in `added`. Method keys: min -> Min, max -> Max, sample_mean -> SampleMean (raw running mean), mean -> HistogramMean() (mean computed from the binned histogram), histogram_standard_deviation -> HistogramStandardDeviation(), standard_deviation -> StandardDeviation (raw running sqrt of the divide-by-(n-1)-rescaled variance), pdf/cdf/inverse_cdf take one scalar arg from `args`. Expected values are the InlineData literals from HistogramTests.cs, except `mean` (HistogramMean() for the uniform 1..5 data == 3.5 exactly; no dedicated InlineData literal for HistogramMean, emitter-verified). Tolerances map the C# assertion modes: Assert.Equal(exp, act) exact double equality -> mode exact; Assert.Equal(exp, act, 3) (3-decimal rounding) -> abs 5e-4; Assert.Equal(exp, act, 5) -> abs 5e-6; the pdf/cdf/inverse_cdf tests use err = |exp-act|/|exp| < 0.01 -> mode rel tol 0.01.",
+  "cases": [
+    {
+      "name": "stats_uniform_1to5",
+      "construct": { "bin_width": 1, "data": [1, 2, 3, 4, 5], "added": [] },
+      "assertions": [
+        { "method": "min", "args": [], "expected": 1, "tol": 0.0, "mode": "exact" },
+        { "method": "max", "args": [], "expected": 6, "tol": 0.0, "mode": "exact" },
+        { "method": "sample_mean", "args": [], "expected": 3, "tol": 0.0, "mode": "exact" },
+        { "method": "mean", "args": [], "expected": 3.5, "tol": 0.0, "mode": "exact" },
+        { "method": "histogram_standard_deviation", "args": [], "expected": 1.67705, "tol": 5e-4, "mode": "abs" },
+        { "method": "standard_deviation", "args": [], "expected": 1.414214, "tol": 5e-6, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "cdf_uniform_1to5",
+      "construct": { "bin_width": 1, "data": [1, 2, 3, 4, 5], "added": [] },
+      "assertions": [
+        { "method": "cdf", "args": [2], "expected": 0.4, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "pdf_uniform_1to5",
+      "construct": { "bin_width": 1, "data": [1, 2, 3, 4, 5], "added": [] },
+      "assertions": [
+        { "method": "pdf", "args": [2], "expected": 0.2, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_binned",
+      "construct": { "bin_width": 1, "data": [0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 4, 4], "added": [] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.4], "expected": 2.25, "tol": 0.01, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "added_data_minimum_reset_to_zero",
+      "construct": { "bin_width": 1, "data": [1, 2, 3, 4, 5], "added": [0] },
+      "assertions": [
+        { "method": "min", "args": [], "expected": 0, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "added_data_maximum_grows_above_max",
+      "construct": { "bin_width": 1, "data": [1, 2, 3, 4, 5], "added": [6] },
+      "assertions": [
+        { "method": "max", "args": [], "expected": 7, "tol": 0.0, "mode": "exact" }
+      ]
+    }
+  ]
+}

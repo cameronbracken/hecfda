@@ -9,6 +9,7 @@
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
+#include "hecfda/statistics/histograms/dynamic_histogram.hpp"
 #include "hecfda/statistics/distributions/empirical.hpp"
 #include "hecfda/statistics/distributions/i_distribution_factory.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
@@ -456,6 +457,57 @@ TEST_CASE("convergence_criteria fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_convergence_criteria(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for DynamicHistogram (Task C2): the Monte Carlo result accumulator. Like
+// ShiftedGamma/PearsonIII/Empirical/ConvergenceCriteria, it is constructed directly here rather
+// than via IDistributionFactory::create -- `construct` is `{"bin_width": w, "data": [...],
+// "added": [...]}`, mirroring the C# HistogramTests.cs pattern: `new DynamicHistogram(binWidth,
+// new ConvergenceCriteria())`, then `AddObservationsToHistogram(data)`, then one
+// `AddObservationToHistogram(x)` per x in `added` (the "AddedData" test variants). Accessors take
+// no args; pdf/cdf/inverse_cdf take one scalar from `args`. `mean` -> HistogramMean() (mean from
+// the binned histogram); `sample_mean` -> SampleMean (raw running mean); `standard_deviation` ->
+// StandardDeviation (raw running); `histogram_standard_deviation` -> HistogramStandardDeviation().
+static double run_histogram(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    hecfda::statistics::histograms::DynamicHistogram hist(ctor["bin_width"].get<double>(),
+                                                          hecfda::statistics::ConvergenceCriteria());
+    hist.add_observations_to_histogram(ctor["data"].get<std::vector<double>>());
+    if (ctor.contains("added")) {
+        for (const auto& x : ctor["added"]) hist.add_observation_to_histogram(x.get<double>());
+    }
+    if (method == "min") return hist.min();
+    if (method == "max") return hist.max();
+    if (method == "sample_mean") return hist.sample_mean();
+    if (method == "mean") return hist.histogram_mean();
+    if (method == "histogram_standard_deviation") return hist.histogram_standard_deviation();
+    if (method == "standard_deviation") return hist.standard_deviation();
+    if (method == "pdf") return hist.pdf(args[0].get<double>());
+    if (method == "cdf") return hist.cdf(args[0].get<double>());
+    if (method == "inverse_cdf") return hist.inverse_cdf(args[0].get<double>());
+    auto msg = std::string("unknown histogram method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("histogram fixture") {
+    std::ifstream f(fixtures_dir() + "/histograms/dynamic_histogram.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "histogram");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_histogram(c, a["method"], a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();

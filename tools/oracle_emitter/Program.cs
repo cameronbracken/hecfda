@@ -10,6 +10,7 @@ using System.Linq;
 using System.Text.Json;
 using Statistics;
 using Statistics.Distributions;
+using Statistics.Histograms;
 using HEC.FDA.Model.paireddata;
 using HEC.FDA.Model.compute;
 
@@ -160,6 +161,32 @@ namespace oracle_emitter {
       }
       throw new Exception("unknown convergence_criteria method: " + method);
     }
+    // DynamicHistogram (Task C2) is the Monte Carlo result accumulator, constructed directly here
+    // like ShiftedGamma/PearsonIII/Empirical/ConvergenceCriteria. `construct` is
+    // {"bin_width": w, "data": [...], "added": [...]}: build new DynamicHistogram(binWidth,
+    // new ConvergenceCriteria()), AddObservationsToHistogram(data), then one
+    // AddObservationToHistogram(x) per x in `added` (the "AddedData" test variants). `mean` maps to
+    // HistogramMean() (mean from the binned histogram); `sample_mean` to the raw running SampleMean;
+    // `standard_deviation` to the raw running StandardDeviation; `histogram_standard_deviation` to
+    // HistogramStandardDeviation().
+    static object EvalHistogram(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var hist = new DynamicHistogram(c.GetProperty("bin_width").GetDouble(), new ConvergenceCriteria());
+      hist.AddObservationsToHistogram(DA(c.GetProperty("data")));
+      if (c.TryGetProperty("added", out var added)) {
+        foreach (var x in added.EnumerateArray()) hist.AddObservationToHistogram(x.GetDouble());
+      }
+      if (method == "min") return hist.Min;
+      if (method == "max") return hist.Max;
+      if (method == "sample_mean") return hist.SampleMean;
+      if (method == "mean") return hist.HistogramMean();
+      if (method == "histogram_standard_deviation") return hist.HistogramStandardDeviation();
+      if (method == "standard_deviation") return hist.StandardDeviation;
+      if (method == "pdf") return hist.PDF(D(argsEl[0]));
+      if (method == "cdf") return hist.CDF(D(argsEl[0]));
+      if (method == "inverse_cdf") return hist.InverseCDF(D(argsEl[0]));
+      throw new Exception("unknown histogram method: " + method);
+    }
     static object EvalPaired(JsonElement c, string method, JsonElement args) {
       var pd = new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
       return method switch {
@@ -243,6 +270,7 @@ namespace oracle_emitter {
               case "pearson3": val = EvalPearson3(c, method, argsEl); break;
               case "empirical": val = EvalEmpirical(c, method, argsEl); break;
               case "convergence_criteria": val = EvalConvergenceCriteria(c, method, argsEl); break;
+              case "histogram": val = EvalHistogram(c, method, argsEl); break;
               case "paired_data": val = EvalPaired(c.GetProperty("construct"), method, argsEl); break;
               case "special_functions": val = EvalSpecial(method, argsEl); break;
               case "sample_statistics": val = EvalSampleStatistics(c.GetProperty("construct"), method); break;
