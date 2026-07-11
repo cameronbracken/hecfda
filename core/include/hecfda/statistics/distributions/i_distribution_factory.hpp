@@ -7,6 +7,7 @@
 #include "hecfda/statistics/distributions/i_distribution.hpp"
 #include "hecfda/statistics/distributions/i_distribution_enum.hpp"
 #include "hecfda/statistics/distributions/deterministic.hpp"
+#include "hecfda/statistics/distributions/logpearson3.hpp"
 #include "hecfda/statistics/distributions/lognormal.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 #include "hecfda/statistics/distributions/triangular.hpp"
@@ -40,9 +41,12 @@ namespace distributions {
 //                                    Normal`) -> params = [mean, stDev, min, max, sampleSize]
 //                                    (moments of the NATURAL-log-scale data, matching
 //                                    TruncatedLogNormal.cs's ctor -- see truncated_lognormal.hpp)
+//   DistributionType::LogPearsonIII -> FactoryLogPearsonIII(mean, stDev, skew, sampleSize)
+//                                    params = [mean, stDev, skew, sampleSize] (moments of the
+//                                    LOG BASE 10-scale data -- see logpearson3.hpp)
 //
-// Later distribution tasks add one `case` each (LogPearsonIII,
-// IHistogram, Empirical), documenting their own params order here in the same style.
+// Later distribution tasks add one `case` each (IHistogram, Empirical), documenting their own
+// params order here in the same style.
 class IDistributionFactory {
    public:
     static std::unique_ptr<IDistribution> create(DistributionType type, const std::vector<double>& params) {
@@ -64,8 +68,10 @@ class IDistributionFactory {
             case DistributionType::TruncatedLogNormal:
                 return std::make_unique<TruncatedLogNormal>(params.at(0), params.at(1), params.at(2),
                                                               params.at(3), static_cast<long>(params.at(4)));
-            case DistributionType::NotSupported:
             case DistributionType::LogPearsonIII:
+                return std::make_unique<LogPearson3>(params.at(0), params.at(1), params.at(2),
+                                                       static_cast<long>(params.at(3)));
+            case DistributionType::NotSupported:
             case DistributionType::IHistogram:
             case DistributionType::Empirical:
             default:

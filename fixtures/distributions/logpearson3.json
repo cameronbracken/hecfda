@@ -1,0 +1,479 @@
+{
+  "target": "distribution",
+  "kind": "distribution",
+  "source_test": "HEC.FDA.StatisticsTests/Distributions/LogPearsonIIITests.cs (LPIII_InverseCDF, BadValidation, GoodData_Returns_NoErrorState). InverseCDF cases use `new LogPearson3(mean, sd, skew)` (sampleSize defaults to 1) and assert `Math.Abs((output - result) / output) < .05` -> mode rel, tol 0.05, per the USGS-R SMWR oracle comments on each InlineData. BadValidation/GoodData cases call Validate() and assert HasErrors / ErrorLevel < Major; error_level values below were derived from LogPearson3.cs addRules() (see logpearson3.hpp comments): every failing BadValidation case fails at least one Fatal (0x20=32) rule and no Severe (successfullyLoggedData) rule ever fires from these constructor-only inputs, so composite error_level is always 32 (Fatal) for the bad cases and 0 (Unassigned) for the good cases.",
+  "cases": [
+    {
+      "name": "inverse_cdf_033_2_1_p05",
+      "construct": { "type": "LogPearsonIII", "params": [0.33, 2, 1, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.05], "expected": 0.00496956524453536289, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_033_2_1_p25",
+      "construct": { "type": "LogPearsonIII", "params": [0.33, 2, 1, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.25], "expected": 0.07333650550108276878, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_033_2_1_p5",
+      "construct": { "type": "LogPearsonIII", "params": [0.33, 2, 1, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 1.00475632515959278912, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_033_2_1_p75",
+      "construct": { "type": "LogPearsonIII", "params": [0.33, 2, 1, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.75], "expected": 27.50600294310048710145, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_033_2_1_p95",
+      "construct": { "type": "LogPearsonIII", "params": [0.33, 2, 1, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.95], "expected": 12124.29592557328032853547, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_033_2_1_p99",
+      "construct": { "type": "LogPearsonIII", "params": [0.33, 2, 1, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.99], "expected": 2372015.45751278521493077278, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_1_01_02_pnear0",
+      "construct": { "type": "LogPearsonIII", "params": [1, 0.1, 0.2, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.0000001], "expected": 3.66134726526910103672, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_1_01_02_p01",
+      "construct": { "type": "LogPearsonIII", "params": [1, 0.1, 0.2, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.01], "expected": 6.05563695368426380128, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_1_01_02_p05",
+      "construct": { "type": "LogPearsonIII", "params": [1, 0.1, 0.2, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.05], "expected": 6.94053218004162530974, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_1_01_02_p25",
+      "construct": { "type": "LogPearsonIII", "params": [1, 0.1, 0.2, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.25], "expected": 8.52821888415644657755, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_1_01_02_p5",
+      "construct": { "type": "LogPearsonIII", "params": [1, 0.1, 0.2, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 9.92358626175317404261, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_1_01_02_p75",
+      "construct": { "type": "LogPearsonIII", "params": [1, 0.1, 0.2, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.75], "expected": 11.62815802852201230166, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_1_01_02_p95",
+      "construct": { "type": "LogPearsonIII", "params": [1, 0.1, 0.2, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.95], "expected": 14.79010797131094889778, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_1_01_02_p99",
+      "construct": { "type": "LogPearsonIII", "params": [1, 0.1, 0.2, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.99], "expected": 17.66955511306299086982, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_1_01_02_pnear1",
+      "construct": { "type": "LogPearsonIII", "params": [1, 0.1, 0.2, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.9999999], "expected": 40.67518055224932282954, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p998",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.998], "expected": 18878.87515053270180942491, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p995",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.995], "expected": 14246.58825980164874636102, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p99",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.99], "expected": 11408.83966308754315832630, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p98",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.98], "expected": 9043.72657283687294693664, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p95",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.95], "expected": 6511.95816420457322237780, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p90",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.90], "expected": 4961.12702987368902540766, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p8",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.8], "expected": 3656.87315507261564562214, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p5",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 2191.79779904862152761780, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p2",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.2], "expected": 1435.93911608508096833248, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p1",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.1], "expected": 1189.92079576230275961279, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p05",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.05], "expected": 1035.43101823480742496031, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3368_0246_0668_p01",
+      "construct": { "type": "LogPearsonIII", "params": [3.368, 0.246, 0.668, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.01], "expected": 827.66401592971760692308, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p998",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.998], "expected": 68797.08324508435907773674, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p995",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.995], "expected": 49664.22500837691040942445, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p99",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.99], "expected": 38021.49704154192295391113, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p98",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.98], "expected": 28448.56144728167782886885, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p95",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.95], "expected": 18478.30725197442734497599, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p90",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.90], "expected": 12639.18321421466134779621, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p8",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.8], "expected": 8015.72587415261750720674, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p5",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 3400.36436700901276708464, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p2",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.2], "expected": 1468.46588154357164057728, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p1",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.1], "expected": 953.48702080914085854602, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p05",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.05], "expected": 669.90326710880833616102, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_3537_0438_0075_p01",
+      "construct": { "type": "LogPearsonIII", "params": [3.537, 0.438, 0.075, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.01], "expected": 348.55777089714820249355, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p998",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.998], "expected": 32506.82384690305480035022, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p995",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.995], "expected": 24602.16720938941944041289, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p99",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.99], "expected": 19284.35566198145897942595, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p98",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.98], "expected": 14566.43229235407852684148, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p95",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.95], "expected": 9288.03872218876131228171, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p90",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.90], "expected": 6041.78073029362531087827, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p8",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.8], "expected": 3451.04415806516362863476, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p5",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 1043.47618679165134381037, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p2",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.2], "expected": 265.80156381679307742161, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p1",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.1], "expected": 121.13255664011704482164, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p05",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.05], "expected": 60.95393539477918665170, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_2966_0668_neg0473_p01",
+      "construct": { "type": "LogPearsonIII", "params": [2.966, 0.668, -0.473, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.01], "expected": 15.29554262000421083201, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_033_2_neg25_p99",
+      "construct": { "type": "LogPearsonIII", "params": [0.33, 2, -2.5, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.99], "expected": 84.80334087270176723905, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_1_01_neg23_p99",
+      "construct": { "type": "LogPearsonIII", "params": [1, 0.1, -2.3, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.99], "expected": 12.21020204368260664296, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_09_05_2_p99",
+      "construct": { "type": "LogPearsonIII", "params": [0.9, 0.5, 2, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.99], "expected": 504.17939524040230026003, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_09_05_23_p99",
+      "construct": { "type": "LogPearsonIII", "params": [0.9, 0.5, 2.3, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.99], "expected": 598.04796932300769185531, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "inverse_cdf_0_1_25_p99",
+      "construct": { "type": "LogPearsonIII", "params": [0, 1, 2.5, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.99], "expected": 7004.83327479266154114157, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "bad_validation_mean0_sd_neg1_skew_neg2",
+      "construct": { "type": "LogPearsonIII", "params": [0, -1, -2, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "bad_validation_mean_neg1_sd_neg2_skew_neg3",
+      "construct": { "type": "LogPearsonIII", "params": [-1, -2, -3, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "bad_validation_mean_neg1_sd1_skew_neg31_n_neg1",
+      "construct": { "type": "LogPearsonIII", "params": [-1, 1, -3.1, -1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "bad_validation_mean1_sd1_skew_neg31",
+      "construct": { "type": "LogPearsonIII", "params": [1, 1, -3.1, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "bad_validation_mean1_sd1_skew31",
+      "construct": { "type": "LogPearsonIII", "params": [1, 1, 3.1, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "bad_validation_mean1_sd31_skew_neg1",
+      "construct": { "type": "LogPearsonIII", "params": [1, 3.1, -1, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "bad_validation_mean1_sd_neg31_skew_neg1",
+      "construct": { "type": "LogPearsonIII", "params": [1, -3.1, -1, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "bad_validation_mean71_sd1_skew_neg1",
+      "construct": { "type": "LogPearsonIII", "params": [7.1, 1, -1, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 32, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "good_data_no_error_state_1_1_1_100",
+      "construct": { "type": "LogPearsonIII", "params": [1, 1, 1, 100] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 0, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "good_data_no_error_state_5_299_neg299_100",
+      "construct": { "type": "LogPearsonIII", "params": [5, 2.99, -2.99, 100] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 0, "tol": 0.0, "mode": "exact" }
+      ]
+    }
+  ]
+}
