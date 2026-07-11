@@ -489,6 +489,14 @@ namespace oracle_emitter {
     static object EvalOccupancyType(JsonElement caseEl, JsonElement assertionEl, string method, JsonElement argsEl) {
       var c = caseEl.GetProperty("construct");
       var occ = MakeOccupancyType(c);
+      if (method == "validate_error_level") {
+        occ.Validate();
+        return (double)(int)occ.ErrorLevel;
+      }
+      if (method == "validate_has_errors") {
+        occ.Validate();
+        return occ.HasErrors ? 1.0 : 0.0;
+      }
       if (method == "generate_then_sample_iteration_struct_yvals") {
         long size = (long)assertionEl.GetProperty("size").GetDouble();
         occ.GenerateRandomNumbers(size);

@@ -182,25 +182,33 @@ class ValueUncertainty : public hecfda::statistics::Validation {
     // `nameof(_DistributionType)` / `nameof(_PercentOfInventoryValueStandardDeviationOrMin)` /
     // `nameof(_PercentOfInventoryValueMax)` literals exactly, including the "greaeter" typo in
     // the second rule's message (see class comment).
+    //
+    // BUGFIX (not a C# transcription issue -- a C++-port-only memory-safety defect; see
+    // structure.hpp's add_rules() for the fuller explanation): the predicates below capture the
+    // checked fields BY VALUE, not `[this]`. ValueUncertainty is held BY VALUE inside the
+    // move-only OccupancyType and is move-assigned by OccupancyTypeBuilder, so a `[this]`-
+    // capturing closure stored in a Validation rule would dangle after the object is relocated
+    // (confirmed via ASan on the identical pattern in structure.hpp). Every field read here is
+    // set once in the ctor and never mutated after, so by-value capture is behaviorally identical
+    // for the object's lifetime.
     void add_rules() {
         add_single_property_rule(
             "_DistributionType",
-            [this]() {
-                return distribution_type_ == DistributionType::Normal ||
-                       distribution_type_ == DistributionType::Uniform ||
-                       distribution_type_ == DistributionType::Deterministic ||
-                       distribution_type_ == DistributionType::Triangular;
+            [dist = distribution_type_]() {
+                return dist == DistributionType::Normal || dist == DistributionType::Uniform ||
+                       dist == DistributionType::Deterministic ||
+                       dist == DistributionType::Triangular;
             },
             "Only Deterministic, Normal, Triangular, and Uniform distributions can be used for "
             "value uncertainty",
             hecfda::statistics::ErrorLevel::Fatal);
         add_single_property_rule(
             "_PercentOfInventoryValueStandardDeviationOrMin",
-            [this]() { return std_or_min_ >= 0; },
+            [value = std_or_min_]() { return value >= 0; },
             "The percent of inventory value must be greaeter than or equal to zero.",
             hecfda::statistics::ErrorLevel::Fatal);
         add_single_property_rule(
-            "_PercentOfInventoryValueMax", [this]() { return max_ >= 100; },
+            "_PercentOfInventoryValueMax", [value = max_]() { return value >= 100; },
             "The max percent of the inventory value must be greater than or equal to 100",
             hecfda::statistics::ErrorLevel::Fatal);
     }

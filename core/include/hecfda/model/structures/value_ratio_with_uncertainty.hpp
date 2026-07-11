@@ -210,24 +210,53 @@ class ValueRatioWithUncertainty : public hecfda::statistics::Validation {
 
    private:
     // ported from: ValueRatioWithUncertainty.cs private void AddRules().
+    //
+    // BUGFIX (not a C# transcription issue -- a C++-port-only memory-safety defect; see
+    // structure.hpp's add_rules() for the fuller explanation): the predicates below capture the
+    // checked fields BY VALUE, not `[this]`. ValueRatioWithUncertainty is held BY VALUE inside
+    // the move-only OccupancyType and is move-assigned by OccupancyTypeBuilder, so a `[this]`-
+    // capturing closure stored in a Validation rule would dangle after the object is relocated
+    // (confirmed via ASan on the identical pattern in structure.hpp). Every field read here is
+    // set once in the ctor and never mutated after, so by-value capture is behaviorally identical
+    // for the object's lifetime. max_greater_than_central()/min_less_than_central() read `this`
+    // internally, so their logic is inlined into the by-value-captured lambdas below rather than
+    // calling those member functions from a stored predicate; the member functions themselves are
+    // kept (unused by add_rules now) since nothing else calls them, but removing them isn't part
+    // of this fix's scope.
     void add_rules() {
         add_single_property_rule(
             "_StandardDeviationOrMin",
-            [this]() { return std_or_min_ >= 0 && max_ >= 0 && central_tendency_ >= 0; },
+            [value = std_or_min_, maxv = max_, central = central_tendency_]() {
+                return value >= 0 && maxv >= 0 && central >= 0;
+            },
             "Value ratio parameter values must be non-negative",
             hecfda::statistics::ErrorLevel::Fatal);
         add_single_property_rule(
-            "_Max", [this]() { return max_ >= std_or_min_; }, "The max must be larger than the minimum",
-            hecfda::statistics::ErrorLevel::Fatal);
+            "_Max", [maxv = max_, value = std_or_min_]() { return maxv >= value; },
+            "The max must be larger than the minimum", hecfda::statistics::ErrorLevel::Fatal);
         add_single_property_rule(
-            "_Max", [this]() { return max_greater_than_central(); },
+            "_Max",
+            [dist = distribution_type_, maxv = max_, central = central_tendency_]() {
+                if (dist == DistributionType::Deterministic) {
+                    return true;  // because this doesn't matter for deterministic
+                }
+                return maxv >= central;
+            },
             "The max must be larger than the central tendency", hecfda::statistics::ErrorLevel::Fatal);
         add_single_property_rule(
-            "_StandardDeviationOrMin", [this]() { return min_less_than_central(); },
+            "_StandardDeviationOrMin",
+            [dist = distribution_type_, value = std_or_min_, central = central_tendency_]() {
+                if (dist == DistributionType::Triangular) {
+                    return value <= central;
+                }
+                return true;  // because this doesn't matter for deterministic or normal
+            },
             "The min must be less than the central tendency", hecfda::statistics::ErrorLevel::Fatal);
     }
 
-    // ported from: ValueRatioWithUncertainty.cs private bool MaxGreaterThanCentral().
+    // ported from: ValueRatioWithUncertainty.cs private bool MaxGreaterThanCentral(). Kept for
+    // fidelity with the C# source; add_rules() above inlines the equivalent logic into a
+    // by-value-captured lambda instead of calling this (see add_rules() comment).
     bool max_greater_than_central() const {
         if (distribution_type_ == DistributionType::Deterministic) {
             return true;  // because this doesn't matter for deterministic
@@ -235,7 +264,9 @@ class ValueRatioWithUncertainty : public hecfda::statistics::Validation {
         return max_ >= central_tendency_;
     }
 
-    // ported from: ValueRatioWithUncertainty.cs private bool MinLessThanCentral().
+    // ported from: ValueRatioWithUncertainty.cs private bool MinLessThanCentral(). Kept for
+    // fidelity with the C# source; add_rules() above inlines the equivalent logic into a
+    // by-value-captured lambda instead of calling this (see add_rules() comment).
     bool min_less_than_central() const {
         if (distribution_type_ == DistributionType::Triangular) {
             return std_or_min_ <= central_tendency_;

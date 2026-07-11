@@ -1408,6 +1408,17 @@ static std::vector<double> run_occupancy_type(const json& c, const json& a) {
     auto occ = make_occupancy_type(c["construct"]);
     std::string method = a["method"].get<std::string>();
     const auto& args = a["args"];
+    if (method == "validate_error_level") {
+        // Exercises OccupancyType::validate() -> each sampler's Validation::validate(), i.e. the
+        // path that was formerly UB (see value_uncertainty.hpp/value_ratio_with_uncertainty.hpp/
+        // first_floor_elevation_uncertainty.hpp add_rules() comments on the [this]-capture fix).
+        occ.validate();
+        return {static_cast<double>(static_cast<int>(occ.error_level()))};
+    }
+    if (method == "validate_has_errors") {
+        occ.validate();
+        return {occ.has_errors() ? 1.0 : 0.0};
+    }
     if (method == "generate_then_sample_iteration_struct_yvals") {
         occ.generate_random_numbers(a["size"].get<long>());
         auto sampled = occ.sample(args[0].get<long>(), args[1].get<double>() != 0.0);

@@ -35,7 +35,9 @@
         { "method": "sample_iteration_content_yvals", "args": [1, 1], "expected": [0, 10, 20, 30, 40, 50], "tol": 0.0, "mode": "vector" },
         { "method": "sample_iteration_structure_value_offset", "args": [1, 1], "expected": 1, "tol": 0.0, "mode": "exact" },
         { "method": "sample_iteration_ffe_offset", "args": [1, 1], "expected": 0, "tol": 0.0, "mode": "exact" },
-        { "method": "sample_iteration_csvr", "args": [1, 1], "expected": 90, "tol": 0.0, "mode": "exact" }
+        { "method": "sample_iteration_csvr", "args": [1, 1], "expected": 90, "tol": 0.0, "mode": "exact" },
+        { "method": "validate_error_level", "args": [1, 1], "expected": 0, "tol": 0.0, "mode": "exact" },
+        { "method": "validate_has_errors", "args": [1, 1], "expected": 0, "tol": 0.0, "mode": "bool" }
       ]
     },
     {
