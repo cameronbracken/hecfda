@@ -1,10 +1,10 @@
 // ported from: HEC.FDA.Model/paireddata/PairedData.cs @ f63682a86a30dc306a105689714a92bfd95956c5
 #ifndef HECFDA_MODEL_PAIRED_DATA_PAIRED_DATA_HPP
 #define HECFDA_MODEL_PAIRED_DATA_PAIRED_DATA_HPP
-#include <algorithm>
 #include <cstddef>
 #include <stdexcept>
 #include <vector>
+#include "hecfda/model/paired_data/dotnet_binary_search.hpp"
 #include "hecfda/statistics/mathematics.hpp"
 namespace hecfda {
 namespace model {
@@ -19,23 +19,24 @@ class PairedData {
         : x_vals_(std::move(xs)), y_vals_(std::move(ys)) {}
 
     // ported from: PairedData.cs f(double x)
-    // Array.BinarySearch(_xVals, x) semantics: an exact match returns that index; otherwise it
-    // returns the bitwise complement of the index of the first element strictly greater than x
-    // (the insertion point). std::lower_bound gives the same insertion point directly, so the
-    // "not found" branch below just uses `it - begin()` in place of `~index`.
+    // Array.BinarySearch(_xVals, x) semantics, faithfully via dotnet_binary_search: an exact
+    // match returns SOME matching index (midpoint-driven, not necessarily the first, when x_vals_
+    // has duplicates -- e.g. flat frequency segments); otherwise it returns the bitwise complement
+    // `~index` of the insertion point (the index of the first element strictly greater than x, or
+    // x_vals_.size() if x exceeds every element). This must NOT be std::lower_bound, which always
+    // returns the FIRST equal element and so can silently diverge from the real C# on duplicates.
     double f(double x) const {
         if (x_vals_.front() > x_vals_.back()) {
             throw std::invalid_argument("X values must be in increasing order.");
         }
         std::size_t len = x_vals_.size();
-        auto it = std::lower_bound(x_vals_.begin(), x_vals_.end(), x);
-        if (it != x_vals_.end() && *it == x) {
+        long search_index = dotnet_binary_search(x_vals_, x);
+        if (search_index >= 0) {
             // Matches a value exactly
-            std::size_t index = static_cast<std::size_t>(it - x_vals_.begin());
-            return y_vals_[index];
+            return y_vals_[static_cast<std::size_t>(search_index)];
         }
         // This is the next LARGER value.
-        std::size_t index = static_cast<std::size_t>(it - x_vals_.begin());
+        std::size_t index = static_cast<std::size_t>(~search_index);
         if (index == len) return y_vals_[len - 1];
         if (index == 0) return y_vals_[0];
 
@@ -49,20 +50,20 @@ class PairedData {
     }
 
     // ported from: PairedData.cs f_inverse(double y)
-    // Symmetric to f(), binary-searching y_vals_ instead of x_vals_ (assumes y is increasing).
+    // Symmetric to f(), binary-searching y_vals_ instead of x_vals_ (assumes y is increasing) via
+    // dotnet_binary_search -- see f()'s comment for why this must not be std::lower_bound.
     double f_inverse(double y) const {
         if (x_vals_.front() > x_vals_.back()) {
             throw std::invalid_argument("X values must be in increasing order.");
         }
         std::size_t len = y_vals_.size();
-        auto it = std::lower_bound(y_vals_.begin(), y_vals_.end(), y);
-        if (it != y_vals_.end() && *it == y) {
+        long search_index = dotnet_binary_search(y_vals_, y);
+        if (search_index >= 0) {
             // Matches a value exactly
-            std::size_t index = static_cast<std::size_t>(it - y_vals_.begin());
-            return x_vals_[index];
+            return x_vals_[static_cast<std::size_t>(search_index)];
         }
         // This is the next LARGER value.
-        std::size_t index = static_cast<std::size_t>(it - y_vals_.begin());
+        std::size_t index = static_cast<std::size_t>(~search_index);
         if (index == len) return x_vals_[len - 1];
         if (index == 0) return x_vals_[0];
 

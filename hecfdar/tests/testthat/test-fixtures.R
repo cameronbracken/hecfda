@@ -61,6 +61,14 @@ test_that("paired_data fixture", {
   }
 })
 
+test_that("paired_data duplicate_values fixture", {
+  fx <- read_fx("paired_data/duplicate_values.json")
+  for (c in fx$cases) for (a in c$assertions) {
+    got <- ns$hecfda_paired_f(as.double(unlist(c$construct$xs)), as.double(unlist(c$construct$ys)), a$method, as.double(a$args[[1]]))
+    cmp(got, a$expected, a$tol, a$mode)
+  }
+})
+
 test_that("uncertain_paired_data fixture", {
   fx <- read_fx("paired_data/uncertain_paired_data.json")
   for (c in fx$cases) for (a in c$assertions) {

@@ -1,0 +1,39 @@
+{
+  "target": "paired_data",
+  "kind": "paired_data",
+  "source_test": "hand-specified (PairedDataShould.cs has no duplicate-value case); exercises .NET Array.BinarySearch's midpoint-driven match index on arrays with duplicate x (flat frequency) / duplicate y (flat damage) segments, which std::lower_bound (always the FIRST equal element) can disagree with. expected values are PINNED from the real C# via tools/oracle_emitter / tools/verify_oracles.py -- not hand-computed.",
+  "cases": [
+    {
+      "name": "duplicate_x_middle_f",
+      "construct": { "xs": [1, 2, 2, 2, 3], "ys": [10, 20, 25, 30, 40] },
+      "assertions": [
+        { "method": "f", "args": [2],   "expected": 25, "tol": 0.0, "mode": "abs", "note": "exact match inside a 3-wide duplicate x run -- Array.BinarySearch's midpoint lands on the MIDDLE duplicate (index 2, y=25), std::lower_bound would return the FIRST duplicate (index 1, y=20)" },
+        { "method": "f", "args": [1],   "expected": 10, "tol": 0.0, "mode": "abs", "note": "boundary sanity: first array element, both algorithms agree" },
+        { "method": "f", "args": [3],   "expected": 40, "tol": 0.0, "mode": "abs", "note": "boundary sanity: last array element, both algorithms agree" },
+        { "method": "f", "args": [2.5], "expected": 35, "tol": 0.0, "mode": "abs", "note": "insertion-point sanity just above the duplicate run -- same insertion point either way" },
+        { "method": "f", "args": [1.5], "expected": 15, "tol": 0.0, "mode": "abs", "note": "insertion-point sanity just below the duplicate run -- same insertion point either way" }
+      ]
+    },
+    {
+      "name": "duplicate_x_start_f",
+      "construct": { "xs": [1, 1, 1, 2, 3], "ys": [5, 10, 15, 20, 30] },
+      "assertions": [
+        { "method": "f", "args": [1],   "expected": 15, "tol": 0.0, "mode": "abs", "note": "exact match on a duplicate run starting at index 0 -- Array.BinarySearch's midpoint lands on index 2 (y=15), std::lower_bound would return index 0 (y=5)" },
+        { "method": "f", "args": [2],   "expected": 20, "tol": 0.0, "mode": "abs", "note": "exact match on a non-duplicate value after the run -- both algorithms agree" },
+        { "method": "f", "args": [0.5], "expected": 5,  "tol": 0.0, "mode": "abs", "note": "below the curve -- clamps to first y" },
+        { "method": "f", "args": [1.5], "expected": 17.5, "tol": 0.0, "mode": "abs", "note": "insertion point between the duplicate run and the next value -- same insertion point either way" }
+      ]
+    },
+    {
+      "name": "duplicate_y_middle_f_inverse",
+      "construct": { "xs": [1, 2, 3, 4, 5], "ys": [10, 20, 20, 20, 40] },
+      "assertions": [
+        { "method": "f_inverse", "args": [20], "expected": 3,   "tol": 0.0, "mode": "abs", "note": "exact match inside a 3-wide duplicate y run (flat damage segment) -- Array.BinarySearch's midpoint lands on the MIDDLE duplicate (index 2, x=3), std::lower_bound would return the FIRST duplicate (index 1, x=2)" },
+        { "method": "f_inverse", "args": [10], "expected": 1,   "tol": 0.0, "mode": "abs", "note": "boundary sanity: first array element, both algorithms agree" },
+        { "method": "f_inverse", "args": [40], "expected": 5,   "tol": 0.0, "mode": "abs", "note": "boundary sanity: last array element, both algorithms agree" },
+        { "method": "f_inverse", "args": [30], "expected": 4.5, "tol": 0.0, "mode": "abs", "note": "insertion-point sanity just above the duplicate run -- same insertion point either way" },
+        { "method": "f_inverse", "args": [15], "expected": 1.5, "tol": 0.0, "mode": "abs", "note": "insertion-point sanity just below the duplicate run -- same insertion point either way" }
+      ]
+    }
+  ]
+}

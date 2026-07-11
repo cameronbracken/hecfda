@@ -649,6 +649,30 @@ TEST_CASE("paired_data fixture") {
     }
 }
 
+// Regression coverage for the .NET Array.BinarySearch fidelity fix (dotnet_binary_search.hpp):
+// exercises PairedData::f/f_inverse on curves with duplicate x (flat frequency) / duplicate y
+// (flat damage) segments, where std::lower_bound (first equal element) and Array.BinarySearch
+// (midpoint-driven match) can pick different indices. Values pinned from the real C# gate.
+TEST_CASE("paired_data duplicate_values fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/duplicate_values.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_paired_data(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
 static double run_special_functions(const std::string& method, const json& args) {
     using SF = hecfda::statistics::SpecialFunctions;
     if (method == "log_gamma") return SF::log_gamma(args[0].get<double>());

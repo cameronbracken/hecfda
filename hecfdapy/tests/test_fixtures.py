@@ -61,6 +61,13 @@ def test_paired_data():
             got = bf.paired_f(c["construct"]["xs"], c["construct"]["ys"], a["method"], a["args"][0])
             _close(got, a["expected"], a["tol"], a["mode"])
 
+def test_paired_data_duplicate_values():
+    fx = _read("paired_data/duplicate_values.json")
+    for c in fx["cases"]:
+        for a in c["assertions"]:
+            got = bf.paired_f(c["construct"]["xs"], c["construct"]["ys"], a["method"], a["args"][0])
+            _close(got, a["expected"], a["tol"], a["mode"])
+
 def test_uncertain_paired_data():
     fx = _read("paired_data/uncertain_paired_data.json")
     for c in fx["cases"]:
