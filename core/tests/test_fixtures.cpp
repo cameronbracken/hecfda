@@ -12,7 +12,9 @@
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/model/structures/deterministic_occupancy_type.hpp"
 #include "hecfda/model/structures/first_floor_elevation_uncertainty.hpp"
+#include "hecfda/model/structures/occupancy_type.hpp"
 #include "hecfda/model/structures/value_ratio_with_uncertainty.hpp"
 #include "hecfda/model/structures/value_uncertainty.hpp"
 #include "hecfda/model/utilities/graphical_frequency_uncertainty_calculators.hpp"
@@ -1330,6 +1332,113 @@ TEST_CASE("value_ratio_with_uncertainty fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for OccupancyType + DeterministicOccupancyType (Phase 3 Task 4): the
+// integration class that binds the three leaf samplers (ValueUncertainty,
+// ValueRatioWithUncertainty, FirstFloorElevationUncertainty) to the Phase-2 UncertainPairedData
+// via OccupancyType::builder(). `construct` is {name, damage_category, depths,
+// struct_damages:[{type,params}], content_damages:[{type,params}], ffe:{dist,std_or_min,[max]},
+// structure_value:{dist,std_or_min,[max]}, csvr:{dist,std_or_min,central,[max]}} -- the "max"
+// fields are optional, matching the C# ctors' default-max-parameter convention (each type's
+// default max is used when omitted). `sample_iteration_*` methods dispatch
+// Sample(iteration, computeIsDeterministic) and pull one field off the resulting
+// DeterministicOccupancyType; `generate_then_sample_iteration_struct_yvals` additionally reads a
+// "size" field off the assertion itself and calls GenerateRandomNumbers(size) before sampling
+// with computeIsDeterministic=false, exercising the per-category-seed RNG wiring end to end.
+static hecfda::model::paired_data::UncertainPairedData make_occupancy_type_upd(const json& xs_json,
+                                                                                const json& ys_json) {
+    std::vector<double> xs = xs_json.get<std::vector<double>>();
+    std::vector<std::unique_ptr<hecfda::statistics::distributions::IDistribution>> ys;
+    for (const auto& y : ys_json) {
+        ys.push_back(hecfda::statistics::distributions::IDistributionFactory::create(
+            hecfda::statistics::distributions::distribution_type_from_name(y["type"].get<std::string>()),
+            y["params"].get<std::vector<double>>()));
+    }
+    return hecfda::model::paired_data::UncertainPairedData(std::move(xs), std::move(ys));
+}
+
+static hecfda::model::structures::OccupancyType make_occupancy_type(const json& ctor) {
+    using namespace hecfda::model::structures;
+    using hecfda::statistics::distributions::distribution_type_from_name;
+
+    auto struct_upd = make_occupancy_type_upd(ctor["depths"], ctor["struct_damages"]);
+    auto content_upd = make_occupancy_type_upd(ctor["depths"], ctor["content_damages"]);
+
+    const auto& ffe_c = ctor["ffe"];
+    auto ffe_dist = distribution_type_from_name(ffe_c["dist"].get<std::string>());
+    FirstFloorElevationUncertainty ffe = ffe_c.contains("max")
+        ? FirstFloorElevationUncertainty(ffe_dist, ffe_c["std_or_min"].get<double>(), ffe_c["max"].get<double>())
+        : FirstFloorElevationUncertainty(ffe_dist, ffe_c["std_or_min"].get<double>());
+
+    const auto& sv_c = ctor["structure_value"];
+    auto sv_dist = distribution_type_from_name(sv_c["dist"].get<std::string>());
+    ValueUncertainty structure_value = sv_c.contains("max")
+        ? ValueUncertainty(sv_dist, sv_c["std_or_min"].get<double>(), sv_c["max"].get<double>())
+        : ValueUncertainty(sv_dist, sv_c["std_or_min"].get<double>());
+
+    const auto& csvr_c = ctor["csvr"];
+    auto csvr_dist = distribution_type_from_name(csvr_c["dist"].get<std::string>());
+    ValueRatioWithUncertainty csvr = csvr_c.contains("max")
+        ? ValueRatioWithUncertainty(csvr_dist, csvr_c["std_or_min"].get<double>(),
+                                     csvr_c["central"].get<double>(), csvr_c["max"].get<double>())
+        : ValueRatioWithUncertainty(csvr_dist, csvr_c["std_or_min"].get<double>(),
+                                     csvr_c["central"].get<double>());
+
+    return OccupancyType::builder()
+        .with_name(ctor["name"].get<std::string>())
+        .with_damage_category(ctor["damage_category"].get<std::string>())
+        .with_structure_depth_percent_damage(std::move(struct_upd))
+        .with_content_depth_percent_damage(std::move(content_upd))
+        .with_first_floor_elevation_uncertainty(ffe)
+        .with_structure_value_uncertainty(structure_value)
+        .with_content_to_structure_value_ratio(csvr)
+        .build();
+}
+
+static std::vector<double> run_occupancy_type(const json& c, const json& a) {
+    auto occ = make_occupancy_type(c["construct"]);
+    std::string method = a["method"].get<std::string>();
+    const auto& args = a["args"];
+    if (method == "generate_then_sample_iteration_struct_yvals") {
+        occ.generate_random_numbers(a["size"].get<long>());
+        auto sampled = occ.sample(args[0].get<long>(), args[1].get<double>() != 0.0);
+        return sampled.struct_percent_damage_paired_data().yvals();
+    }
+    auto sampled = occ.sample(args[0].get<long>(), args[1].get<double>() != 0.0);
+    if (method == "sample_iteration_struct_yvals") return sampled.struct_percent_damage_paired_data().yvals();
+    if (method == "sample_iteration_content_yvals") return sampled.content_percent_damage_paired_data().yvals();
+    if (method == "sample_iteration_structure_value_offset") return {sampled.structure_value_offset()};
+    if (method == "sample_iteration_ffe_offset") return {sampled.first_floor_elevation_offset()};
+    if (method == "sample_iteration_csvr") return {sampled.content_to_structure_value_ratio()};
+    auto msg = std::string("unknown occupancy_type method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("occupancy_type fixture") {
+    std::ifstream f(fixtures_dir() + "/structures/occupancy_type.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "occupancy_type");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_occupancy_type(c, a);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());

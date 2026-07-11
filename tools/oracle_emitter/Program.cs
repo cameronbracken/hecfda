@@ -435,6 +435,75 @@ namespace oracle_emitter {
       throw new Exception("unknown first_floor_elevation_uncertainty method: " + method);
     }
 
+    // OccupancyType + DeterministicOccupancyType (Phase 3 Task 4) -- the integration class binding
+    // the three leaf samplers to UncertainPairedData via OccupancyType.Builder(). `construct` is
+    // {name, damage_category, depths, struct_damages:[{type,params}],
+    // content_damages:[{type,params}], ffe:{dist,std_or_min,[max]},
+    // structure_value:{dist,std_or_min,[max]}, csvr:{dist,std_or_min,central,[max]}} -- same shape
+    // the C++ test_fixtures.cpp dispatch uses. `sample_iteration_*` methods dispatch
+    // Sample(iteration, computeIsDeterministic) and read one field off the resulting
+    // DeterministicOccupancyType; `generate_then_sample_iteration_struct_yvals` additionally reads
+    // a "size" field off the assertion and calls GenerateRandomNumbers(size) first.
+    static IDistribution[] DistArray(JsonElement ys) =>
+      ys.EnumerateArray().Select(y => (IDistribution)DistFactory(y.GetProperty("type").GetString(), DA(y.GetProperty("params")))).ToArray();
+    static OccupancyType MakeOccupancyType(JsonElement c) {
+      double[] depths = DA(c.GetProperty("depths"));
+      IDistribution[] structDamages = DistArray(c.GetProperty("struct_damages"));
+      IDistribution[] contentDamages = DistArray(c.GetProperty("content_damages"));
+      var md = new CurveMetaData("x", "y", "oracle");
+      var structUpd = new UncertainPairedData(depths, structDamages, md);
+      var contentUpd = new UncertainPairedData(depths, contentDamages, md);
+
+      var ffeC = c.GetProperty("ffe");
+      var ffeDist = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), ffeC.GetProperty("dist").GetString());
+      double ffeStdOrMin = ffeC.GetProperty("std_or_min").GetDouble();
+      var ffe = ffeC.TryGetProperty("max", out var ffeMax)
+        ? new FirstFloorElevationUncertainty(ffeDist, ffeStdOrMin, ffeMax.GetDouble())
+        : new FirstFloorElevationUncertainty(ffeDist, ffeStdOrMin);
+
+      var svC = c.GetProperty("structure_value");
+      var svDist = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), svC.GetProperty("dist").GetString());
+      double svStdOrMin = svC.GetProperty("std_or_min").GetDouble();
+      var sv = svC.TryGetProperty("max", out var svMax)
+        ? new ValueUncertainty(svDist, svStdOrMin, svMax.GetDouble())
+        : new ValueUncertainty(svDist, svStdOrMin);
+
+      var csvrC = c.GetProperty("csvr");
+      var csvrDist = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), csvrC.GetProperty("dist").GetString());
+      double csvrStdOrMin = csvrC.GetProperty("std_or_min").GetDouble();
+      double csvrCentral = csvrC.GetProperty("central").GetDouble();
+      var csvr = csvrC.TryGetProperty("max", out var csvrMax)
+        ? new ValueRatioWithUncertainty(csvrDist, csvrStdOrMin, csvrCentral, csvrMax.GetDouble())
+        : new ValueRatioWithUncertainty(csvrDist, csvrStdOrMin, csvrCentral);
+
+      return OccupancyType.Builder()
+        .WithName(c.GetProperty("name").GetString())
+        .WithDamageCategory(c.GetProperty("damage_category").GetString())
+        .WithStructureDepthPercentDamage(structUpd)
+        .WithContentDepthPercentDamage(contentUpd)
+        .WithFirstFloorElevationUncertainty(ffe)
+        .WithStructureValueUncertainty(sv)
+        .WithContentToStructureValueRatio(csvr)
+        .Build();
+    }
+    static object EvalOccupancyType(JsonElement caseEl, JsonElement assertionEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var occ = MakeOccupancyType(c);
+      if (method == "generate_then_sample_iteration_struct_yvals") {
+        long size = (long)assertionEl.GetProperty("size").GetDouble();
+        occ.GenerateRandomNumbers(size);
+        var sampled = occ.Sample((long)D(argsEl[0]), D(argsEl[1]) != 0.0);
+        return sampled.StructPercentDamagePairedData.Yvals.ToArray();
+      }
+      var sampledDet = occ.Sample((long)D(argsEl[0]), D(argsEl[1]) != 0.0);
+      if (method == "sample_iteration_struct_yvals") return sampledDet.StructPercentDamagePairedData.Yvals.ToArray();
+      if (method == "sample_iteration_content_yvals") return sampledDet.ContentPercentDamagePairedData.Yvals.ToArray();
+      if (method == "sample_iteration_structure_value_offset") return sampledDet.StructureValueOffset;
+      if (method == "sample_iteration_ffe_offset") return sampledDet.FirstFloorElevationOffset;
+      if (method == "sample_iteration_csvr") return sampledDet.ContentToStructureValueRatio;
+      throw new Exception("unknown occupancy_type method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -479,6 +548,7 @@ namespace oracle_emitter {
               case "value_uncertainty": val = EvalValueUncertainty(c, method, argsEl); break;
               case "value_ratio_with_uncertainty": val = EvalValueRatioWithUncertainty(c, method, argsEl); break;
               case "first_floor_elevation_uncertainty": val = EvalFirstFloorElevationUncertainty(c, method, argsEl); break;
+              case "occupancy_type": val = EvalOccupancyType(c, a, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

@@ -47,5 +47,22 @@
     <!-- Task Phase3T3: FirstFloorElevationUncertainty extends Validation directly, same MVVM
          closure already reachable transitively above, so it compiles unpatched. -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/FirstFloorElevationUncertainty.cs" />
+    <!-- Task Phase3T4: DeterministicOccupancyType is a plain data holder with no MVVM/messaging
+         dependency, so it compiles unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/DeterministicOccupancyType.cs" />
+    <!-- Task Phase3T4: PropertyValidationHelper (HasErrors/ErrorLevel + ValidateProperty/
+         ResetErrors) is OccupancyType's base class; a plain helper over Validation with no
+         messaging dependency, so it compiles unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/PropertyValidationHelper.cs" />
+    <!-- Task Phase3T4: OccupancyType uses MessageHub/MessageReportedEventHandler/
+         IDontImplementValidationButMyPropertiesDo (MVVM messaging), but unlike
+         CurveMetaData/GraphicalUncertainPairedData's WriteToXML/ReadFromXML, which pull in the
+         H5Assist.Chunking-dependent Serialization class and so needed patched/ stub copies,
+         these messaging types are all reachable transitively through the existing
+         HEC.FDA.Statistics ProjectReference (HEC.FDA.Statistics to HEC.MVVMFramework.Model to
+         HEC.MVVMFramework.Base, already a plain project-reference chain with no RAS/NuGet feed
+         dependency). Verified by direct `dotnet build`: compiles clean, unpatched, 0
+         errors/warnings. No patched/OccupancyType.cs copy was needed. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/OccupancyType.cs" />
   </ItemGroup>
 </Project>
