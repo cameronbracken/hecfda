@@ -1,0 +1,61 @@
+{
+  "target": "empirical",
+  "kind": "empirical",
+  "source_test": "hand-specified (no dedicated upstream EmpiricalTests.cs exists); construct.probabilities/values are two strictly-increasing, parallel (cumulative probability, value) coordinate arrays matching the Empirical(double[] probabilities, double[] observationValues) ctor. Expected values are COMPUTE-THEN-PIN: computed by the C++ port, then confirmed reproduced by the real C# Empirical via tools/oracle_emitter / tools/verify_oracles.py -- no value here is invented independently of either implementation.",
+  "note": "PDF is a genuine upstream quirk (see empirical.hpp's class comment): it returns 0.0 for any x that is not an EXACT match to a Quantiles entry (the 'interpolate' branch is dead code), so the non-exact-x pdf cases below intentionally assert 0.0, not an interpolated density.",
+  "cases": [
+    {
+      "name": "four_point_b",
+      "construct": {
+        "probabilities": [0.05, 0.35, 0.65, 0.95],
+        "values": [10, 20, 30, 40]
+      },
+      "assertions": [
+        { "method": "mean", "args": [], "expected": 24.75, "tol": 1e-9, "mode": "abs" },
+        { "method": "median", "args": [], "expected": 25.0, "tol": 1e-9, "mode": "abs", "note": "even sample_size branch: (Quantiles[2]+Quantiles[1])/2" },
+        { "method": "min", "args": [], "expected": 10.0, "tol": 1e-9, "mode": "abs" },
+        { "method": "max", "args": [], "expected": 40.0, "tol": 1e-9, "mode": "abs" },
+        { "method": "standard_deviation", "args": [], "expected": 4.9434299833212973, "tol": 1e-9, "mode": "abs" },
+        { "method": "cdf", "args": [5], "expected": 0.0, "tol": 1e-9, "mode": "abs", "note": "below min -> 0" },
+        { "method": "cdf", "args": [10], "expected": 0.05, "tol": 1e-9, "mode": "abs", "note": "exact Quantiles hit" },
+        { "method": "cdf", "args": [15], "expected": 0.19999999999999998, "tol": 1e-9, "mode": "abs", "note": "interpolated, weight 0.5 between 10 and 20" },
+        { "method": "cdf", "args": [25], "expected": 0.5, "tol": 1e-9, "mode": "abs" },
+        { "method": "cdf", "args": [40], "expected": 0.94999999999999996, "tol": 1e-9, "mode": "abs" },
+        { "method": "cdf", "args": [50], "expected": 1.0, "tol": 1e-9, "mode": "abs", "note": "above max -> 1" },
+        { "method": "pdf", "args": [10], "expected": 0.014999999999999999, "tol": 1e-9, "mode": "abs", "note": "exact hit, first value (pdf_left=0)" },
+        { "method": "pdf", "args": [20], "expected": 0.030000000000000002, "tol": 1e-9, "mode": "abs", "note": "exact hit, interior" },
+        { "method": "pdf", "args": [40], "expected": 0.014999999999999996, "tol": 1e-9, "mode": "abs", "note": "exact hit, last value (pdf_right=0)" },
+        { "method": "pdf", "args": [15], "expected": 0.0, "tol": 1e-9, "mode": "abs", "note": "non-exact x -- upstream quirk always returns 0.0, see class comment" },
+        { "method": "pdf", "args": [5], "expected": 0.0, "tol": 1e-9, "mode": "abs", "note": "non-exact, below range -- also 0.0" },
+        { "method": "inverse_cdf", "args": [0.02], "expected": 10.0, "tol": 1e-9, "mode": "abs", "note": "p <= cumulativeProbsMin -> Min" },
+        { "method": "inverse_cdf", "args": [0.05], "expected": 10.0, "tol": 1e-9, "mode": "abs", "note": "exact CumulativeProbabilities hit" },
+        { "method": "inverse_cdf", "args": [0.2], "expected": 15.0, "tol": 1e-9, "mode": "abs", "note": "interpolated, weight 0.5 between 0.05 and 0.35" },
+        { "method": "inverse_cdf", "args": [0.5], "expected": 25.0, "tol": 1e-9, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.8], "expected": 35.0, "tol": 1e-9, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.99], "expected": 40.0, "tol": 1e-9, "mode": "abs", "note": "p >= cumulativeProbsMax -> Max" }
+      ]
+    },
+    {
+      "name": "three_point_c",
+      "construct": {
+        "probabilities": [0.05, 0.5, 0.95],
+        "values": [10, 25, 40]
+      },
+      "assertions": [
+        { "method": "mean", "args": [], "expected": 24.75, "tol": 1e-9, "mode": "abs" },
+        { "method": "median", "args": [], "expected": 25.0, "tol": 1e-9, "mode": "abs", "note": "odd sample_size branch: Quantiles[(SampleSize-1)/2]" },
+        { "method": "min", "args": [], "expected": 10.0, "tol": 1e-9, "mode": "abs" },
+        { "method": "max", "args": [], "expected": 40.0, "tol": 1e-9, "mode": "abs" },
+        { "method": "standard_deviation", "args": [], "expected": 4.9434299833212973, "tol": 1e-9, "mode": "abs" },
+        { "method": "cdf", "args": [17.5], "expected": 0.27500000000000002, "tol": 1e-9, "mode": "abs", "note": "interpolated between 10 and 25" },
+        { "method": "cdf", "args": [25], "expected": 0.5, "tol": 1e-9, "mode": "abs", "note": "exact Quantiles hit" },
+        { "method": "cdf", "args": [32.5], "expected": 0.72499999999999998, "tol": 1e-9, "mode": "abs", "note": "interpolated between 25 and 40" },
+        { "method": "pdf", "args": [25], "expected": 0.029999999999999999, "tol": 1e-9, "mode": "abs", "note": "exact hit, interior" },
+        { "method": "pdf", "args": [17.5], "expected": 0.0, "tol": 1e-9, "mode": "abs", "note": "non-exact x -- upstream quirk always returns 0.0" },
+        { "method": "inverse_cdf", "args": [0.275], "expected": 17.500000000000004, "tol": 1e-9, "mode": "abs", "note": "interpolated between p=0.05 and p=0.5" },
+        { "method": "inverse_cdf", "args": [0.5], "expected": 25.0, "tol": 1e-9, "mode": "abs", "note": "exact CumulativeProbabilities hit" },
+        { "method": "inverse_cdf", "args": [0.725], "expected": 32.5, "tol": 1e-9, "mode": "abs", "note": "interpolated between p=0.5 and p=0.95" }
+      ]
+    }
+  ]
+}

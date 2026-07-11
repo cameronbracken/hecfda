@@ -125,6 +125,22 @@ namespace oracle_emitter {
       if (method == "inverse_cdf") return dist.InverseCDF(D(argsEl[0]));
       throw new Exception("unknown pearson3 method: " + method);
     }
+    // Empirical (Task B11) takes TWO parallel arrays (cumulative probabilities + values), so it
+    // doesn't fit DistFactory's scalar-`params` shape -- constructed directly here, like
+    // ShiftedGamma/PearsonIII. `construct` is `{"probabilities": [...], "values": [...]}`.
+    static object EvalEmpirical(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var dist = new Empirical(DA(c.GetProperty("probabilities")), DA(c.GetProperty("values")));
+      if (method == "pdf") return dist.PDF(D(argsEl[0]));
+      if (method == "cdf") return dist.CDF(D(argsEl[0]));
+      if (method == "inverse_cdf") return dist.InverseCDF(D(argsEl[0]));
+      if (method == "mean") return dist.Mean;
+      if (method == "median") return dist.Median;
+      if (method == "min") return dist.Min;
+      if (method == "max") return dist.Max;
+      if (method == "standard_deviation") return dist.StandardDeviation;
+      throw new Exception("unknown empirical method: " + method);
+    }
     static object EvalPaired(JsonElement c, string method, JsonElement args) {
       var pd = new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
       return method switch {
@@ -206,6 +222,7 @@ namespace oracle_emitter {
               case "distribution": val = EvalDistribution(c, method, argsEl); break;
               case "shifted_gamma": val = EvalShiftedGamma(c, method, argsEl); break;
               case "pearson3": val = EvalPearson3(c, method, argsEl); break;
+              case "empirical": val = EvalEmpirical(c, method, argsEl); break;
               case "paired_data": val = EvalPaired(c.GetProperty("construct"), method, argsEl); break;
               case "special_functions": val = EvalSpecial(method, argsEl); break;
               case "sample_statistics": val = EvalSampleStatistics(c.GetProperty("construct"), method); break;

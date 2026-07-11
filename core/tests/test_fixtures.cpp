@@ -8,6 +8,7 @@
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/statistics/distributions/empirical.hpp"
 #include "hecfda/statistics/distributions/i_distribution_factory.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 #include "hecfda/statistics/distributions/pearson3.hpp"
@@ -364,6 +365,48 @@ TEST_CASE("pearson3 fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_pearson3(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for Empirical (Task B11): Empirical takes TWO parallel arrays (cumulative
+// probabilities + values), which doesn't fit the scalar-`params` factory `create()` shape every
+// other run_distribution fixture uses -- so, like ShiftedGamma/PearsonIII, it is constructed
+// directly here. `construct` is `{"probabilities": [...], "values": [...]}` rather than a `params`
+// array. `mean`/`median`/`min`/`max`/`standard_deviation` take no args (dispatch ignores `args`).
+static double run_empirical(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    hecfda::statistics::distributions::Empirical dist(ctor["probabilities"].get<std::vector<double>>(),
+                                                        ctor["values"].get<std::vector<double>>());
+    if (method == "pdf") return dist.pdf(args[0].get<double>());
+    if (method == "cdf") return dist.cdf(args[0].get<double>());
+    if (method == "inverse_cdf") return dist.inverse_cdf(args[0].get<double>());
+    if (method == "mean") return dist.mean();
+    if (method == "median") return dist.median();
+    if (method == "min") return dist.min();
+    if (method == "max") return dist.max();
+    if (method == "standard_deviation") return dist.standard_deviation();
+    auto msg = std::string("unknown empirical method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("empirical fixture") {
+    std::ifstream f(fixtures_dir() + "/distributions/empirical.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "empirical");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_empirical(c, a["method"], a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
