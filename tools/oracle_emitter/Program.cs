@@ -272,17 +272,33 @@ namespace oracle_emitter {
         "sample_size" => (double)stats.SampleSize,
         _ => throw new Exception("unknown sample_statistics method: " + method) };
     }
+    // ys is now built from the generalized `{type, params}` distribution specs via the shared
+    // DistFactory (same param order as the C++ IDistributionFactory), matching UncertainPairedData's
+    // generalization from Normal to IDistribution. `metadata` is optional (xlabel/ylabel/name),
+    // defaulting to CurveMetaData("x","y","oracle") -- irrelevant to the sampled yvals, kept only for
+    // faithful construction. sample_and_integrate reads the case-level `seed`; the iteration overload
+    // reads construct-level `seed`/`size` for GenerateRandomNumbers.
     static object EvalUpd(JsonElement caseEl, string method, JsonElement args) {
       var c = caseEl.GetProperty("construct");
       double[] xs = DA(c.GetProperty("xs"));
       var ys = c.GetProperty("ys").EnumerateArray()
-        .Select(y => (IDistribution)new Normal(D(y.GetProperty("mean")), D(y.GetProperty("sd")))).ToArray();
-      var upd = new UncertainPairedData(xs, ys, new CurveMetaData("x","y","oracle"));
+        .Select(y => (IDistribution)DistFactory(y.GetProperty("type").GetString(), DA(y.GetProperty("params")))).ToArray();
+      CurveMetaData md = c.TryGetProperty("metadata", out var m)
+        ? new CurveMetaData(m.GetProperty("xlabel").GetString(), m.GetProperty("ylabel").GetString(), m.GetProperty("name").GetString())
+        : new CurveMetaData("x","y","oracle");
+      var upd = new UncertainPairedData(xs, ys, md);
       if (method == "sample_and_integrate") {
         int seed = caseEl.GetProperty("seed").GetInt32();
         double p = new RandomProvider(seed).NextRandom();
         return upd.SamplePairedDataRaw(p).Integrate();
       }
+      if (c.TryGetProperty("seed", out var s) && c.TryGetProperty("size", out var sz)) {
+        upd.GenerateRandomNumbers(s.GetInt32(), (long)sz.GetDouble());
+      }
+      if (method == "sample_paired_data") return upd.SamplePairedData(D(args[0])).Yvals.ToArray();
+      if (method == "sample_paired_data_raw") return upd.SamplePairedDataRaw(D(args[0])).Yvals.ToArray();
+      if (method == "sample_paired_data_raw_deterministic") return upd.SamplePairedDataRawDeterministic().Yvals.ToArray();
+      if (method == "sample_paired_data_iteration") return upd.SamplePairedData((long)D(args[0]), D(args[1]) != 0.0).Yvals.ToArray();
       throw new Exception("unknown uncertain_paired_data method: " + method);
     }
 

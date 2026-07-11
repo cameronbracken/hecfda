@@ -72,7 +72,10 @@ test_that("paired_data duplicate_values fixture", {
 test_that("uncertain_paired_data fixture", {
   fx <- read_fx("paired_data/uncertain_paired_data.json")
   for (c in fx$cases) for (a in c$assertions) {
-    means <- as.double(sapply(c$construct$ys, `[[`, "mean")); sds <- as.double(sapply(c$construct$ys, `[[`, "sd"))
+    # ys migrated to {type:"Normal", params:[mean, sd, sampleSize]}; the binding still takes
+    # parallel means/sds (Normal-only Phase-0 convenience path), so pull params[[1]]/params[[2]].
+    means <- as.double(sapply(c$construct$ys, function(y) y$params[[1]]))
+    sds <- as.double(sapply(c$construct$ys, function(y) y$params[[2]]))
     got <- ns$hecfda_upd_sample_integrate(as.double(unlist(c$construct$xs)), means, sds, c$seed)
     cmp(got, a$expected, a$tol, a$mode)
   }

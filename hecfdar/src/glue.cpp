@@ -1,4 +1,5 @@
 #include <cpp11.hpp>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 #include <string>
@@ -45,8 +46,8 @@ namespace pd = hecfda::model::paired_data;
     return p.f(x);
 }
 [[cpp11::register]] double hecfda_upd_sample_integrate(cpp11::doubles xs, cpp11::doubles means, cpp11::doubles sds, int seed) {
-    std::vector<nd::Normal> ys;
-    for (R_xlen_t i = 0; i < means.size(); ++i) ys.emplace_back(means[i], sds[i], 1);
-    pd::UncertainPairedData upd(std::vector<double>(xs.begin(), xs.end()), ys);
+    std::vector<std::unique_ptr<nd::IDistribution>> ys;
+    for (R_xlen_t i = 0; i < means.size(); ++i) ys.push_back(std::make_unique<nd::Normal>(means[i], sds[i], 1));
+    pd::UncertainPairedData upd(std::vector<double>(xs.begin(), xs.end()), std::move(ys));
     return upd.sample_and_integrate(seed);
 }

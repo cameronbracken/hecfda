@@ -7,8 +7,9 @@
       "name": "seeded_sample_integrate",
       "construct": {
         "xs": [1, 2, 3, 4, 5],
-        "ys": [ {"mean": 2, "sd": 0.5}, {"mean": 4, "sd": 0.5}, {"mean": 6, "sd": 0.5},
-                {"mean": 8, "sd": 0.5}, {"mean": 10, "sd": 0.5} ]
+        "ys": [ {"type": "Normal", "params": [2, 0.5, 1]}, {"type": "Normal", "params": [4, 0.5, 1]},
+                {"type": "Normal", "params": [6, 0.5, 1]}, {"type": "Normal", "params": [8, 0.5, 1]},
+                {"type": "Normal", "params": [10, 0.5, 1]} ]
       },
       "seed": 1234,
       "assertions": [

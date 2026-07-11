@@ -831,14 +831,22 @@ TEST_CASE("sample_statistics fixture") {
     }
 }
 
-static double run_uncertain_paired_data(const json& c, const std::string& method) {
-    const auto& ctor = c["construct"];
+// Builds the ys array from the fixture's `{type, params}` distribution specs via the shared
+// IDistributionFactory (same construct shape every distribution fixture uses), generalizing the
+// old Normal-only `{mean, sd}` shape. Returns a fresh, move-only UncertainPairedData.
+static hecfda::model::paired_data::UncertainPairedData make_upd(const json& ctor) {
     std::vector<double> xs = ctor["xs"].get<std::vector<double>>();
-    std::vector<hecfda::statistics::distributions::Normal> ys;
+    std::vector<std::unique_ptr<hecfda::statistics::distributions::IDistribution>> ys;
     for (const auto& y : ctor["ys"]) {
-        ys.emplace_back(y["mean"].get<double>(), y["sd"].get<double>(), 1);
+        ys.push_back(hecfda::statistics::distributions::IDistributionFactory::create(
+            hecfda::statistics::distributions::distribution_type_from_name(y["type"].get<std::string>()),
+            y["params"].get<std::vector<double>>()));
     }
-    hecfda::model::paired_data::UncertainPairedData upd(xs, ys);
+    return hecfda::model::paired_data::UncertainPairedData(std::move(xs), std::move(ys));
+}
+
+static double run_uncertain_paired_data(const json& c, const std::string& method) {
+    auto upd = make_upd(c["construct"]);
     if (method == "sample_and_integrate") return upd.sample_and_integrate(c["seed"].get<int>());
     auto msg = std::string("unknown uncertain_paired_data method: ") + method;
     FAIL(msg.c_str());
@@ -858,6 +866,56 @@ TEST_CASE("uncertain_paired_data fixture") {
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for mode: ") + mode;
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Dispatch for the generalized sample-path surface added on top of the scalar sample_and_integrate
+// above (uncertain_paired_data_ops.json). Each case builds a fresh, move-only UncertainPairedData
+// from `construct` (an `{xs, ys:[{type,params}], seed?, size?}` bag); the iteration-number overload
+// needs generate_random_numbers(seed, size) first, encoded in the construct's `seed`/`size` fields.
+// Always returns the produced curve's yvals as a vector so compare_by_mode's "vector" dispatch
+// applies uniformly (mirrors run_paired_data_ops). Fresh construction per assertion.
+static std::vector<double> run_uncertain_paired_data_ops(const json& c, const std::string& method,
+                                                         const json& args) {
+    const auto& ctor = c["construct"];
+    auto upd = make_upd(ctor);
+    if (ctor.contains("seed") && ctor.contains("size")) {
+        upd.generate_random_numbers(ctor["seed"].get<int>(), ctor["size"].get<long>());
+    }
+    if (method == "sample_paired_data") return upd.sample_paired_data(args[0].get<double>()).yvals();
+    if (method == "sample_paired_data_raw")
+        return upd.sample_paired_data_raw(args[0].get<double>()).yvals();
+    if (method == "sample_paired_data_raw_deterministic")
+        return upd.sample_paired_data_raw_deterministic().yvals();
+    if (method == "sample_paired_data_iteration")
+        return upd.sample_paired_data(args[0].get<long>(), args[1].get<double>() != 0.0).yvals();
+    auto msg = std::string("unknown uncertain_paired_data_ops method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("uncertain_paired_data_ops fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/uncertain_paired_data_ops.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "uncertain_paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_uncertain_paired_data_ops(c, a["method"], a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());
             }
         }
