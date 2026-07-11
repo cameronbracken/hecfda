@@ -504,6 +504,90 @@ namespace oracle_emitter {
       throw new Exception("unknown occupancy_type method: " + method);
     }
 
+    // Structure (Phase 3 Task 5) -- the per-structure numeric depth-damage compute, built from
+    // patched/Structure.cs (see that file's header for why it's a patched local copy). `construct`
+    // is {occupancy_type: {name, damage_category, struct_depths, struct_damages:[{type,params}],
+    // content_depths, content_damages:[{type,params}], ffe:{...}, structure_value:{...},
+    // csvr:{...}}, sample:[iteration, computeIsDeterministic], structure:{fid,
+    // first_floor_elevation, val_struct, st_damcat, occtype, impact_area_id, [val_cont],
+    // [val_vehic], [val_other], [ground_elevation]}}. Unlike MakeOccupancyType (which shares one
+    // "depths" array between struct/content), struct_depths/content_depths are separate here
+    // because the SELA case's structure and content curves have different lengths -- see
+    // fixtures/structures/structure.json's note. Each assertion builds the occupancy type +
+    // structure fresh, samples once via Sample(iteration, computeIsDeterministic), and dispatches
+    // compute_damage_{struct,content,vehicle,other} = the four tuple items of
+    // Structure.ComputeDamage(wse, sampled, priceIndex=1, analysisYear=9999); `args` is [wse].
+    static OccupancyType MakeStructureOccupancyType(JsonElement c) {
+      IDistribution[] structDamages = DistArray(c.GetProperty("struct_damages"));
+      IDistribution[] contentDamages = DistArray(c.GetProperty("content_damages"));
+      var md = new CurveMetaData("x", "y", "oracle");
+      var structUpd = new UncertainPairedData(DA(c.GetProperty("struct_depths")), structDamages, md);
+      var contentUpd = new UncertainPairedData(DA(c.GetProperty("content_depths")), contentDamages, md);
+
+      var ffeC = c.GetProperty("ffe");
+      var ffeDist = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), ffeC.GetProperty("dist").GetString());
+      double ffeStdOrMin = ffeC.GetProperty("std_or_min").GetDouble();
+      var ffe = ffeC.TryGetProperty("max", out var ffeMax)
+        ? new FirstFloorElevationUncertainty(ffeDist, ffeStdOrMin, ffeMax.GetDouble())
+        : new FirstFloorElevationUncertainty(ffeDist, ffeStdOrMin);
+
+      var svC = c.GetProperty("structure_value");
+      var svDist = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), svC.GetProperty("dist").GetString());
+      double svStdOrMin = svC.GetProperty("std_or_min").GetDouble();
+      var sv = svC.TryGetProperty("max", out var svMax)
+        ? new ValueUncertainty(svDist, svStdOrMin, svMax.GetDouble())
+        : new ValueUncertainty(svDist, svStdOrMin);
+
+      var csvrC = c.GetProperty("csvr");
+      var csvrDist = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), csvrC.GetProperty("dist").GetString());
+      double csvrStdOrMin = csvrC.GetProperty("std_or_min").GetDouble();
+      double csvrCentral = csvrC.GetProperty("central").GetDouble();
+      var csvr = csvrC.TryGetProperty("max", out var csvrMax)
+        ? new ValueRatioWithUncertainty(csvrDist, csvrStdOrMin, csvrCentral, csvrMax.GetDouble())
+        : new ValueRatioWithUncertainty(csvrDist, csvrStdOrMin, csvrCentral);
+
+      return OccupancyType.Builder()
+        .WithName(c.GetProperty("name").GetString())
+        .WithDamageCategory(c.GetProperty("damage_category").GetString())
+        .WithStructureDepthPercentDamage(structUpd)
+        .WithContentDepthPercentDamage(contentUpd)
+        .WithFirstFloorElevationUncertainty(ffe)
+        .WithStructureValueUncertainty(sv)
+        .WithContentToStructureValueRatio(csvr)
+        .Build();
+    }
+    static Structure MakeStructure(JsonElement c) {
+      double valCont = c.TryGetProperty("val_cont", out var vc) ? vc.GetDouble() : 0;
+      double valVehic = c.TryGetProperty("val_vehic", out var vv) ? vv.GetDouble() : 0;
+      double valOther = c.TryGetProperty("val_other", out var vo) ? vo.GetDouble() : 0;
+      double groundElevation = c.TryGetProperty("ground_elevation", out var ge) ? ge.GetDouble() : IntegerGlobalConstants.DEFAULT_MISSING_VALUE;
+      return new Structure(
+        c.GetProperty("fid").GetString(),
+        c.GetProperty("first_floor_elevation").GetDouble(),
+        c.GetProperty("val_struct").GetDouble(),
+        c.GetProperty("st_damcat").GetString(),
+        c.GetProperty("occtype").GetString(),
+        c.GetProperty("impact_area_id").GetInt32(),
+        val_cont: valCont,
+        val_vehic: valVehic,
+        val_other: valOther,
+        groundElevation: groundElevation);
+    }
+    static object EvalStructure(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var occ = MakeStructureOccupancyType(c.GetProperty("occupancy_type"));
+      var sampleArgs = c.GetProperty("sample");
+      var sampled = occ.Sample(sampleArgs[0].GetInt64(), sampleArgs[1].GetDouble() != 0.0);
+      var structure = MakeStructure(c.GetProperty("structure"));
+      float wse = (float)D(argsEl[0]);
+      var (structDamage, contDamage, vehicleDamage, otherDamage) = structure.ComputeDamage(wse, sampled);
+      if (method == "compute_damage_struct") return structDamage;
+      if (method == "compute_damage_content") return contDamage;
+      if (method == "compute_damage_vehicle") return vehicleDamage;
+      if (method == "compute_damage_other") return otherDamage;
+      throw new Exception("unknown structure method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -549,6 +633,7 @@ namespace oracle_emitter {
               case "value_ratio_with_uncertainty": val = EvalValueRatioWithUncertainty(c, method, argsEl); break;
               case "first_floor_elevation_uncertainty": val = EvalFirstFloorElevationUncertainty(c, method, argsEl); break;
               case "occupancy_type": val = EvalOccupancyType(c, a, method, argsEl); break;
+              case "structure": val = EvalStructure(c, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

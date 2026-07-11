@@ -64,5 +64,22 @@
          dependency). Verified by direct `dotnet build`: compiles clean, unpatched, 0
          errors/warnings. No patched/OccupancyType.cs copy was needed. -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/OccupancyType.cs" />
+    <!-- Task Phase3T5: IntegerGlobalConstants is a single-constant plain class (DEFAULT_MISSING_VALUE
+         = -999), no dependency of its own, needed for Structure's numeric ctor default args. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/IntegerGlobalConstants.cs" />
+    <!-- Task Phase3T5: Structure extends Validation directly (same reachable MVVM closure as
+         ValueUncertainty/ValueRatioWithUncertainty/FirstFloorElevationUncertainty above), but its
+         real source pulls in RasMapperLib (PointM ctor + Point property), Geospatial.Vectors (the
+         second ctor), and HEC.FDA.Model.metrics (the ConsequenceResult ComputeDamage overload),
+         none of which are reachable from this subset-compiled project (same rationale as
+         CurveMetaData.cs/GraphicalUncertainPairedData.cs's WriteToXML/ReadFromXML patches).
+         patched/Structure.cs is a numeric-only local copy: one ctor (no point parameter), no
+         ConsequenceResult overload, no ProduceDetails*/CalculateDepthZeroDamage/
+         FindHighestDepthZeroPercentDamage (CSV + f_inverse). The tuple ComputeDamage, FindOccType/
+         FindOccTypeIndex, AddRules, ResetIndexTracking, and the four LastWSP index fields are kept
+         verbatim; see that file's header for the full patch rationale. patched/Structure.cs needs
+         no explicit Compile Include: EnableDefaultCompileItems (set above) already picks up every
+         *.cs file under the project directory, including patched/, the same way
+         patched/CurveMetaData.cs and patched/GraphicalDistribution.cs are already picked up. -->
   </ItemGroup>
 </Project>

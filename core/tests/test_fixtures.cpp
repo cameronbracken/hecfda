@@ -15,6 +15,7 @@
 #include "hecfda/model/structures/deterministic_occupancy_type.hpp"
 #include "hecfda/model/structures/first_floor_elevation_uncertainty.hpp"
 #include "hecfda/model/structures/occupancy_type.hpp"
+#include "hecfda/model/structures/structure.hpp"
 #include "hecfda/model/structures/value_ratio_with_uncertainty.hpp"
 #include "hecfda/model/structures/value_uncertainty.hpp"
 #include "hecfda/model/utilities/graphical_frequency_uncertainty_calculators.hpp"
@@ -1439,6 +1440,109 @@ TEST_CASE("occupancy_type fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for Structure (Phase 3 Task 5): the per-structure numeric depth-damage compute.
+// `construct` is {occupancy_type: {name, damage_category, struct_depths,
+// struct_damages:[{type,params}], content_depths, content_damages:[{type,params}], ffe:{...},
+// structure_value:{...}, csvr:{...}}, sample:[iteration, computeIsDeterministic],
+// structure:{fid, first_floor_elevation, val_struct, st_damcat, occtype, impact_area_id,
+// [val_cont], [val_vehic], [val_other], [ground_elevation]}}. Unlike make_occupancy_type (which
+// shares one "depths" array between struct/content), struct_depths/content_depths are separate
+// here because the SELA fixture case's structure and content curves have different lengths -- see
+// fixtures/structures/structure.json's note. compute_damage is non-const and mutates the segment
+// indices (see structure.hpp), so `structure` below is a fresh, non-const local per assertion,
+// matching the fixture's "fresh per assertion" convention used throughout this file.
+static hecfda::model::structures::OccupancyType make_structure_occupancy_type(const json& ctor) {
+    using namespace hecfda::model::structures;
+    using hecfda::statistics::distributions::distribution_type_from_name;
+
+    auto struct_upd = make_occupancy_type_upd(ctor["struct_depths"], ctor["struct_damages"]);
+    auto content_upd = make_occupancy_type_upd(ctor["content_depths"], ctor["content_damages"]);
+
+    const auto& ffe_c = ctor["ffe"];
+    auto ffe_dist = distribution_type_from_name(ffe_c["dist"].get<std::string>());
+    FirstFloorElevationUncertainty ffe = ffe_c.contains("max")
+        ? FirstFloorElevationUncertainty(ffe_dist, ffe_c["std_or_min"].get<double>(), ffe_c["max"].get<double>())
+        : FirstFloorElevationUncertainty(ffe_dist, ffe_c["std_or_min"].get<double>());
+
+    const auto& sv_c = ctor["structure_value"];
+    auto sv_dist = distribution_type_from_name(sv_c["dist"].get<std::string>());
+    ValueUncertainty structure_value = sv_c.contains("max")
+        ? ValueUncertainty(sv_dist, sv_c["std_or_min"].get<double>(), sv_c["max"].get<double>())
+        : ValueUncertainty(sv_dist, sv_c["std_or_min"].get<double>());
+
+    const auto& csvr_c = ctor["csvr"];
+    auto csvr_dist = distribution_type_from_name(csvr_c["dist"].get<std::string>());
+    ValueRatioWithUncertainty csvr = csvr_c.contains("max")
+        ? ValueRatioWithUncertainty(csvr_dist, csvr_c["std_or_min"].get<double>(),
+                                     csvr_c["central"].get<double>(), csvr_c["max"].get<double>())
+        : ValueRatioWithUncertainty(csvr_dist, csvr_c["std_or_min"].get<double>(),
+                                     csvr_c["central"].get<double>());
+
+    return OccupancyType::builder()
+        .with_name(ctor["name"].get<std::string>())
+        .with_damage_category(ctor["damage_category"].get<std::string>())
+        .with_structure_depth_percent_damage(std::move(struct_upd))
+        .with_content_depth_percent_damage(std::move(content_upd))
+        .with_first_floor_elevation_uncertainty(ffe)
+        .with_structure_value_uncertainty(structure_value)
+        .with_content_to_structure_value_ratio(csvr)
+        .build();
+}
+
+static hecfda::model::structures::Structure make_structure(const json& ctor) {
+    using hecfda::model::structures::Structure;
+    double val_cont = ctor.contains("val_cont") ? ctor["val_cont"].get<double>() : 0;
+    double val_vehic = ctor.contains("val_vehic") ? ctor["val_vehic"].get<double>() : 0;
+    double val_other = ctor.contains("val_other") ? ctor["val_other"].get<double>() : 0;
+    double ground_elevation = ctor.contains("ground_elevation") ? ctor["ground_elevation"].get<double>()
+                                                                 : Structure::kDefaultMissingValue;
+    return Structure(ctor["fid"].get<std::string>(), ctor["first_floor_elevation"].get<double>(),
+                      ctor["val_struct"].get<double>(), ctor["st_damcat"].get<std::string>(),
+                      ctor["occtype"].get<std::string>(), ctor["impact_area_id"].get<int>(), val_cont,
+                      val_vehic, val_other, "unassigned", Structure::kDefaultMissingValue, ground_elevation);
+}
+
+static double run_structure(const json& c, const json& a) {
+    const auto& ctor = c["construct"];
+    auto occ = make_structure_occupancy_type(ctor["occupancy_type"]);
+    const auto& sample = ctor["sample"];
+    auto sampled = occ.sample(sample[0].get<long>(), sample[1].get<double>() != 0.0);
+    auto structure = make_structure(ctor["structure"]);
+    std::string method = a["method"].get<std::string>();
+    const auto& args = a["args"];
+    float wse = static_cast<float>(args[0].get<double>());
+    auto [struct_damage, cont_damage, vehicle_damage, other_damage] = structure.compute_damage(wse, sampled);
+    if (method == "compute_damage_struct") return struct_damage;
+    if (method == "compute_damage_content") return cont_damage;
+    if (method == "compute_damage_vehicle") return vehicle_damage;
+    if (method == "compute_damage_other") return other_damage;
+    auto msg = std::string("unknown structure method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("structure fixture") {
+    std::ifstream f(fixtures_dir() + "/structures/structure.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "structure");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_structure(c, a);
+            double exp = a["expected"].get<double>();
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            bool ok = mode == "rel" ? (std::abs(got - exp) / (std::abs(exp) > 0 ? std::abs(exp) : 1.0)) <= tol
+                                     : std::abs(got - exp) <= tol;
+            if (!ok) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());
