@@ -1,0 +1,75 @@
+{
+  "target": "inventory_compute_damages",
+  "kind": "inventory_compute_damages",
+  "source_test": "bespoke (Phase 4 Task 2) -- ComputeDamages/AggregateResults were severed from the Phase 3 Inventory port pending HEC.FDA.Model.metrics.ConsequenceResult (Phase 4 Task 1), so there is no direct upstream unit test to reproduce; this fixture is designed from Inventory.ComputeDamages/AggregateResults's own source to lock the faithful other/vehicle store-swap documented in inventory.hpp's compute_damages doc comment.",
+  "note": "construct is {occ_types: [<occupancy_type construct, same shape as structures/occupancy_type.json's 'construct', plus OPTIONAL vehicle_damages/other_damages (paired-data yvals over the shared 'depths' array) and vehicle_value/other_value (ValueUncertainty construct, same shape as structure_value)>, ...], structures: [<structure construct, same shape as structures/structure.json's 'construct.structure', with val_vehic/val_other set>, ...], wses: [[<per-structure WSE for profile 0>, ...], ...] ([profile][structure], a value of -9999 skips that structure/profile per the faithful C# 'wse != -9999' guard), analysis_year, damage_category, sample: [iteration, computeIsDeterministic], [price_index]}. The single case below uses one occupancy type ('MyOccupancyType') shared by all 3 structures, with DISTINCT struct/content/vehicle/other depth-percent-damage curves (percentages 10x/10x/4x/nonlinear-per-depth respectively) and distinct val_vehic/val_other per structure, so that a wiring mistake in compute_damages/aggregate_results's other/vehicle argument order would change the emitted vehicle_damage/other_damage arrays (unlike an all-zero or identical-curve fixture, which the swap-then-swap-back identity would pass trivially either way -- see inventory.hpp for the algebraic proof that the two swaps compose to the identity in CORRECTLY-wired code). Profile 1's structure '2' uses wse=-9999 to also exercise the skip guard (contributes 0 to every profile-1 total). Sample uses iteration=1, computeIsDeterministic=true (matching structures/occupancy_type.json's 'sample_deterministic' case), so struct/content/vehicle/other percent-damage curves and all four value-uncertainty offsets resolve to their curve/distribution means deterministically -- avoiding any RNG-seed dependency in this fixture. csvr (central=90) drives content damage (sampled_structure_value * csvr/100), so val_cont is unset (unused). All four `compute_damages_struct/_content/_vehicle/_other` expected arrays are gate-pinned ('PIN' until captured against the real C#), one value per wses profile.",
+  "cases": [
+    {
+      "name": "three_structures_two_profiles",
+      "construct": {
+        "occ_types": [
+          {
+            "name": "MyOccupancyType",
+            "damage_category": "DamageCategory",
+            "depths": [0, 1, 2, 3, 4, 5],
+            "struct_damages": [
+              { "type": "Normal", "params": [0, 0, 1] },
+              { "type": "Normal", "params": [10, 5, 1] },
+              { "type": "Normal", "params": [20, 6, 1] },
+              { "type": "Normal", "params": [30, 7, 1] },
+              { "type": "Normal", "params": [40, 8, 1] },
+              { "type": "Normal", "params": [50, 9, 1] }
+            ],
+            "content_damages": [
+              { "type": "Normal", "params": [0, 0, 1] },
+              { "type": "Normal", "params": [10, 5, 1] },
+              { "type": "Normal", "params": [20, 6, 1] },
+              { "type": "Normal", "params": [30, 7, 1] },
+              { "type": "Normal", "params": [40, 8, 1] },
+              { "type": "Normal", "params": [50, 9, 1] }
+            ],
+            "vehicle_damages": [
+              { "type": "Normal", "params": [0, 0, 1] },
+              { "type": "Normal", "params": [4, 2, 1] },
+              { "type": "Normal", "params": [8, 2, 1] },
+              { "type": "Normal", "params": [12, 2, 1] },
+              { "type": "Normal", "params": [16, 2, 1] },
+              { "type": "Normal", "params": [20, 2, 1] }
+            ],
+            "other_damages": [
+              { "type": "Normal", "params": [0, 0, 1] },
+              { "type": "Normal", "params": [1, 1, 1] },
+              { "type": "Normal", "params": [3, 1, 1] },
+              { "type": "Normal", "params": [6, 1, 1] },
+              { "type": "Normal", "params": [9, 1, 1] },
+              { "type": "Normal", "params": [12, 1, 1] }
+            ],
+            "ffe": { "dist": "Normal", "std_or_min": 0.5 },
+            "structure_value": { "dist": "Normal", "std_or_min": 0.1 },
+            "csvr": { "dist": "Normal", "std_or_min": 10, "central": 90 },
+            "vehicle_value": { "dist": "Normal", "std_or_min": 0.1 },
+            "other_value": { "dist": "Normal", "std_or_min": 0.1 }
+          }
+        ],
+        "structures": [
+          { "fid": "1", "first_floor_elevation": 10, "val_struct": 1000, "val_vehic": 500, "val_other": 300, "st_damcat": "Residential", "occtype": "MyOccupancyType", "impact_area_id": 1 },
+          { "fid": "2", "first_floor_elevation": 8, "val_struct": 2000, "val_vehic": 400, "val_other": 200, "st_damcat": "Residential", "occtype": "MyOccupancyType", "impact_area_id": 1 },
+          { "fid": "3", "first_floor_elevation": 15, "val_struct": 1500, "val_vehic": 600, "val_other": 250, "st_damcat": "Residential", "occtype": "MyOccupancyType", "impact_area_id": 1 }
+        ],
+        "wses": [
+          [12, 10, 17],
+          [13, -9999, 18]
+        ],
+        "analysis_year": 9999,
+        "damage_category": "Residential",
+        "sample": [1, 1]
+      },
+      "assertions": [
+        { "method": "compute_damages_struct", "args": [], "expected": [900, 750], "tol": 1e-9, "mode": "vector" },
+        { "method": "compute_damages_content", "args": [], "expected": [810.0000000000002, 675], "tol": 1e-9, "mode": "vector" },
+        { "method": "compute_damages_vehicle", "args": [], "expected": [120, 132], "tol": 1e-9, "mode": "vector" },
+        { "method": "compute_damages_other", "args": [], "expected": [22.5, 33], "tol": 1e-9, "mode": "vector" }
+      ]
+    }
+  ]
+}

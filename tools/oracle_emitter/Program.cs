@@ -477,15 +477,45 @@ namespace oracle_emitter {
         ? new ValueRatioWithUncertainty(csvrDist, csvrStdOrMin, csvrCentral, csvrMax.GetDouble())
         : new ValueRatioWithUncertainty(csvrDist, csvrStdOrMin, csvrCentral);
 
-      return OccupancyType.Builder()
+      var builder = OccupancyType.Builder()
         .WithName(c.GetProperty("name").GetString())
         .WithDamageCategory(c.GetProperty("damage_category").GetString())
         .WithStructureDepthPercentDamage(structUpd)
         .WithContentDepthPercentDamage(contentUpd)
         .WithFirstFloorElevationUncertainty(ffe)
         .WithStructureValueUncertainty(sv)
-        .WithContentToStructureValueRatio(csvr)
-        .Build();
+        .WithContentToStructureValueRatio(csvr);
+
+      // Optional: vehicle/other depth-percent-damage + value uncertainty (Phase 4 Task 2's
+      // inventory_compute_damages fixture is the first construct to use these; occupancy_type.json
+      // and inventory.json's existing cases omit them, matching OccupancyType's C# default of
+      // ComputeVehicleDamage/ComputeOtherDamage == false until the corresponding With* is called).
+      if (c.TryGetProperty("vehicle_damages", out var vehicleDamagesEl)) {
+        IDistribution[] vehicleDamages = DistArray(vehicleDamagesEl);
+        builder = builder.WithVehicleDepthPercentDamage(new UncertainPairedData(depths, vehicleDamages, md));
+      }
+      if (c.TryGetProperty("other_damages", out var otherDamagesEl)) {
+        IDistribution[] otherDamages = DistArray(otherDamagesEl);
+        builder = builder.WithOtherDepthPercentDamage(new UncertainPairedData(depths, otherDamages, md));
+      }
+      if (c.TryGetProperty("vehicle_value", out var vvC)) {
+        var vvDist = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), vvC.GetProperty("dist").GetString());
+        double vvStdOrMin = vvC.GetProperty("std_or_min").GetDouble();
+        var vv = vvC.TryGetProperty("max", out var vvMax)
+          ? new ValueUncertainty(vvDist, vvStdOrMin, vvMax.GetDouble())
+          : new ValueUncertainty(vvDist, vvStdOrMin);
+        builder = builder.WithVehicleValueUncertainty(vv);
+      }
+      if (c.TryGetProperty("other_value", out var ovC)) {
+        var ovDist = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), ovC.GetProperty("dist").GetString());
+        double ovStdOrMin = ovC.GetProperty("std_or_min").GetDouble();
+        var ov = ovC.TryGetProperty("max", out var ovMax)
+          ? new ValueUncertainty(ovDist, ovStdOrMin, ovMax.GetDouble())
+          : new ValueUncertainty(ovDist, ovStdOrMin);
+        builder = builder.WithOtherValueUncertainty(ov);
+      }
+
+      return builder.Build();
     }
     static object EvalOccupancyType(JsonElement caseEl, JsonElement assertionEl, string method, JsonElement argsEl) {
       var c = caseEl.GetProperty("construct");
@@ -641,6 +671,35 @@ namespace oracle_emitter {
       throw new Exception("unknown inventory method: " + method);
     }
 
+    // Inventory.ComputeDamages/AggregateResults (Phase 4 Task 2): re-added to patched/Inventory.cs
+    // (Phase 3 severed them, pending ConsequenceResult -- Task 1). `construct` extends MakeInventory's
+    // shape (occ_types/structures/[price_index]) with `wses` ([profile][structure] float matrix),
+    // `analysis_year`, `damage_category`, and `sample` ([iteration, computeIsDeterministic] fed to
+    // SampleOccupancyTypes). Every assertion for a case builds a fresh Inventory + samples once, then
+    // calls ComputeDamages(wses, analysisYear, damageCategory, det) and returns one of the four
+    // per-profile damage arrays (`compute_damages_struct/_content/_vehicle/_other`) -- the true
+    // struct/content/vehicle/other totals per ConsequenceResult, in that semantic order (see
+    // patched/Inventory.cs's ComputeDamages for the faithful store/AggregateResults-argument swap
+    // this fixture is designed to lock).
+    static object EvalInventoryComputeDamages(JsonElement caseEl, string method) {
+      var c = caseEl.GetProperty("construct");
+      var inv = MakeInventory(c);
+      var sampleArgs = c.GetProperty("sample");
+      var det = inv.SampleOccupancyTypes(sampleArgs[0].GetInt64(), sampleArgs[1].GetDouble() != 0.0);
+      var wses = new List<float[]>();
+      foreach (var pf in c.GetProperty("wses").EnumerateArray()) {
+        wses.Add(pf.EnumerateArray().Select(x => (float)x.GetDouble()).ToArray());
+      }
+      int analysisYear = c.GetProperty("analysis_year").GetInt32();
+      string damageCategory = c.GetProperty("damage_category").GetString();
+      var results = inv.ComputeDamages(wses, analysisYear, damageCategory, det);
+      if (method == "compute_damages_struct") return results.Select(r => r.StructureDamage).ToArray();
+      if (method == "compute_damages_content") return results.Select(r => r.ContentDamage).ToArray();
+      if (method == "compute_damages_vehicle") return results.Select(r => r.VehicleDamage).ToArray();
+      if (method == "compute_damages_other") return results.Select(r => r.OtherDamage).ToArray();
+      throw new Exception("unknown inventory_compute_damages method: " + method);
+    }
+
     // ConsequenceResult (Phase 4 Task 1) is a plain per-structure damage accumulator, not an
     // IDistribution, constructed directly here like ValueUncertainty/Structure above. `construct`
     // is {"damage_category": "<name>"}; `increments` is a list of [structureDamage, contentDamage,
@@ -723,6 +782,7 @@ namespace oracle_emitter {
               case "occupancy_type": val = EvalOccupancyType(c, a, method, argsEl); break;
               case "structure": val = EvalStructure(c, method, argsEl); break;
               case "inventory": val = EvalInventory(c, a, method, argsEl); break;
+              case "inventory_compute_damages": val = EvalInventoryComputeDamages(c, method); break;
               case "consequence_result": val = EvalConsequenceResult(c, method); break;
               default: continue;
             }

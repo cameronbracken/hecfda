@@ -1394,15 +1394,49 @@ static hecfda::model::structures::OccupancyType make_occupancy_type(const json& 
         : ValueRatioWithUncertainty(csvr_dist, csvr_c["std_or_min"].get<double>(),
                                      csvr_c["central"].get<double>());
 
-    return OccupancyType::builder()
-        .with_name(ctor["name"].get<std::string>())
-        .with_damage_category(ctor["damage_category"].get<std::string>())
-        .with_structure_depth_percent_damage(std::move(struct_upd))
-        .with_content_depth_percent_damage(std::move(content_upd))
-        .with_first_floor_elevation_uncertainty(ffe)
-        .with_structure_value_uncertainty(structure_value)
-        .with_content_to_structure_value_ratio(csvr)
-        .build();
+    auto builder = OccupancyType::builder()
+                       .with_name(ctor["name"].get<std::string>())
+                       .with_damage_category(ctor["damage_category"].get<std::string>())
+                       .with_structure_depth_percent_damage(std::move(struct_upd))
+                       .with_content_depth_percent_damage(std::move(content_upd))
+                       .with_first_floor_elevation_uncertainty(ffe)
+                       .with_structure_value_uncertainty(structure_value)
+                       .with_content_to_structure_value_ratio(csvr);
+
+    // Optional: vehicle/other depth-percent-damage + value uncertainty (Phase 4 Task 2's
+    // inventory_compute_damages fixture is the first construct to use these; existing
+    // occupancy_type.json/inventory.json cases omit them, leaving compute_vehicle_damage()/
+    // compute_other_damage() false, same as the emitter's MakeOccupancyType). Each `with_*` mutates
+    // `builder`'s internal OccupancyType in place and returns an (unused, here) rvalue reference to
+    // the same object -- called as a plain statement on the `builder` lvalue rather than
+    // reassigned, to avoid a self-move-assignment (`builder = std::move(builder).with_x(...)` would
+    // move-assign `builder` from a reference to itself).
+    if (ctor.contains("vehicle_damages")) {
+        auto vehicle_upd = make_occupancy_type_upd(ctor["depths"], ctor["vehicle_damages"]);
+        builder.with_vehicle_depth_percent_damage(std::move(vehicle_upd));
+    }
+    if (ctor.contains("other_damages")) {
+        auto other_upd = make_occupancy_type_upd(ctor["depths"], ctor["other_damages"]);
+        builder.with_other_depth_percent_damage(std::move(other_upd));
+    }
+    if (ctor.contains("vehicle_value")) {
+        const auto& vv_c = ctor["vehicle_value"];
+        auto vv_dist = distribution_type_from_name(vv_c["dist"].get<std::string>());
+        ValueUncertainty vehicle_value = vv_c.contains("max")
+            ? ValueUncertainty(vv_dist, vv_c["std_or_min"].get<double>(), vv_c["max"].get<double>())
+            : ValueUncertainty(vv_dist, vv_c["std_or_min"].get<double>());
+        builder.with_vehicle_value_uncertainty(vehicle_value);
+    }
+    if (ctor.contains("other_value")) {
+        const auto& ov_c = ctor["other_value"];
+        auto ov_dist = distribution_type_from_name(ov_c["dist"].get<std::string>());
+        ValueUncertainty other_value = ov_c.contains("max")
+            ? ValueUncertainty(ov_dist, ov_c["std_or_min"].get<double>(), ov_c["max"].get<double>())
+            : ValueUncertainty(ov_dist, ov_c["std_or_min"].get<double>());
+        builder.with_other_value_uncertainty(other_value);
+    }
+
+    return builder.build();
 }
 
 static std::vector<double> run_occupancy_type(const json& c, const json& a) {
@@ -1699,6 +1733,68 @@ TEST_CASE("consequence_result fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for Inventory::compute_damages/aggregate_results (Phase 4 Task 2): the parallel
+// damage collection severed from the Phase 3 Inventory port pending ConsequenceResult (Task 1).
+// `construct` extends make_inventory's shape (occ_types/structures/[price_index]) with `wses`
+// ([profile][structure] float matrix), `analysis_year`, `damage_category`, and `sample`
+// ([iteration, computeIsDeterministic] fed to sample_occupancy_types). Every assertion builds a
+// fresh Inventory + samples once, then calls compute_damages(wses, analysisYear, damageCategory,
+// det) and returns one of the four per-profile damage arrays (`compute_damages_struct/_content/
+// _vehicle/_other`) -- see inventory.hpp's compute_damages doc comment for the faithful
+// store/aggregate_results-argument swap this fixture locks (the occ_types construct below uses
+// DISTINCT nonzero vehicle/other depth-percent-damage curves so the wiring is actually observed).
+static std::vector<double> run_inventory_compute_damages(const json& c, const std::string& method) {
+    using namespace hecfda::model::structures;
+    const auto& ctor = c["construct"];
+    auto inv = make_inventory(ctor);
+    const auto& sample = ctor["sample"];
+    auto det = inv.sample_occupancy_types(sample[0].get<long>(), sample[1].get<double>() != 0.0);
+
+    std::vector<std::vector<float>> wses;
+    for (const auto& pf : ctor["wses"]) {
+        wses.push_back(pf.get<std::vector<float>>());
+    }
+    int analysis_year = ctor["analysis_year"].get<int>();
+    std::string damage_category = ctor["damage_category"].get<std::string>();
+    auto results = inv.compute_damages(wses, analysis_year, damage_category, det);
+
+    std::vector<double> out;
+    out.reserve(results.size());
+    if (method == "compute_damages_struct") {
+        for (const auto& r : results) out.push_back(r.structure_damage());
+    } else if (method == "compute_damages_content") {
+        for (const auto& r : results) out.push_back(r.content_damage());
+    } else if (method == "compute_damages_vehicle") {
+        for (const auto& r : results) out.push_back(r.vehicle_damage());
+    } else if (method == "compute_damages_other") {
+        for (const auto& r : results) out.push_back(r.other_damage());
+    } else {
+        auto msg = std::string("unknown inventory_compute_damages method: ") + method;
+        FAIL(msg.c_str());
+    }
+    return out;
+}
+
+TEST_CASE("inventory_compute_damages fixture") {
+    std::ifstream f(fixtures_dir() + "/stage_damage/inventory_compute_damages.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "inventory_compute_damages");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_inventory_compute_damages(c, a["method"].get<std::string>());
+            std::vector<double> exp = a["expected"].get<std::vector<double>>();
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());
