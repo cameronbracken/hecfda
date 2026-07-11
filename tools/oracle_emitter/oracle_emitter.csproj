@@ -35,5 +35,10 @@
          FillInputExceedanceProbabilitiesWithRequiredPoints). -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/GraphicalFrequencyUncertaintyCalculators.cs" />
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/DoubleGlobalStatics.cs" />
+    <!-- Task Phase3T1: ValueUncertainty extends ValidationErrorLogger (MVVM), which is already
+         reachable transitively through the HEC.FDA.Statistics ProjectReference above
+         (HEC.FDA.Statistics to HEC.MVVMFramework.Model to HEC.MVVMFramework.Base, both plain
+         project references with no RAS/NuGet feed dependency), so it compiles unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/ValueUncertainty.cs" />
   </ItemGroup>
 </Project>

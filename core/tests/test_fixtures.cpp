@@ -12,6 +12,7 @@
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/model/structures/value_uncertainty.hpp"
 #include "hecfda/model/utilities/graphical_frequency_uncertainty_calculators.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/histograms/dynamic_histogram.hpp"
@@ -1204,6 +1205,47 @@ TEST_CASE("graphical_uncertain_paired_data fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for ValueUncertainty (Phase 3 Task 1): a plain Validation-derived
+// per-structure uncertainty sampler, not an IDistribution, so it is constructed directly here
+// like ShiftedGamma/PearsonIII/ConvergenceCriteria. `construct` is {"dist": "<name>",
+// "std_or_min": ..., "max": ...}, `dist` mapped via the shared distribution_type_from_name()
+// already used by run_distribution. `sample` takes [probability]; `sample_iteration` takes
+// [iteration, computeIsDeterministic] (both encoded as JSON numbers; the flag is interpreted via
+// != 0).
+static double run_value_uncertainty(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    auto dist_type = hecfda::statistics::distributions::distribution_type_from_name(
+        ctor["dist"].get<std::string>());
+    hecfda::model::structures::ValueUncertainty vu(dist_type, ctor["std_or_min"].get<double>(),
+                                                     ctor["max"].get<double>());
+    if (method == "sample") return vu.sample(args[0].get<double>());
+    if (method == "sample_iteration")
+        return vu.sample(args[0].get<long>(), args[1].get<double>() != 0.0);
+    auto msg = std::string("unknown value_uncertainty method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("value_uncertainty fixture") {
+    std::ifstream f(fixtures_dir() + "/structures/value_uncertainty.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "value_uncertainty");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_value_uncertainty(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());

@@ -1,0 +1,57 @@
+{
+  "target": "value_uncertainty",
+  "kind": "value_uncertainty",
+  "source_test": "HEC.FDA.ModelTest/structures/ValueUncertaintyShould.cs (Theory rows)",
+  "note": "construct = {dist, std_or_min, max}, matching ValueUncertainty(IDistributionEnum, double percentOfInventoryValueStandardDeviationOrMin, double percentOfInventoryMax = 100). `sample` asserts the raw ValueUncertainty.Sample(probability) offset (the C# test post-processes this into a damage/value adjustment; that post-processing is out of scope here -- the offset itself is the numeric unit under test). `sample_iteration` asserts Sample(iteration, computeIsDeterministic).",
+  "cases": [
+    {
+      "name": "normal_std10_default_max",
+      "construct": { "dist": "Normal", "std_or_min": 10, "max": 100 },
+      "assertions": [
+        { "method": "sample", "args": [0.2], "expected": 0.9158543282645216, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "lognormal_std20_3852",
+      "construct": { "dist": "LogNormal", "std_or_min": 20.3852, "max": 100 },
+      "assertions": [
+        { "method": "sample", "args": [0.8], "expected": 1.1871228835541578, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "triangular_min90_max120",
+      "construct": { "dist": "Triangular", "std_or_min": 90, "max": 120 },
+      "assertions": [
+        { "method": "sample", "args": [0.95], "expected": 1.1452277442494834, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "uniform_min80_max130",
+      "construct": { "dist": "Uniform", "std_or_min": 80, "max": 130 },
+      "assertions": [
+        { "method": "sample", "args": [0.05], "expected": 0.8250000000000001, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "deterministic_ignores_probability",
+      "construct": { "dist": "Deterministic", "std_or_min": 98.349, "max": 100 },
+      "assertions": [
+        { "method": "sample", "args": [0.593497], "expected": 1, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "normal_std150_negative_clamp",
+      "construct": { "dist": "Normal", "std_or_min": 150, "max": 100 },
+      "assertions": [
+        { "method": "sample", "args": [0.01], "expected": 0, "tol": 1e-9, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "normal_std10_deterministic_iteration",
+      "construct": { "dist": "Normal", "std_or_min": 10, "max": 100 },
+      "assertions": [
+        { "method": "sample_iteration", "args": [1, 1], "expected": 1, "tol": 0.0, "mode": "exact" }
+      ]
+    }
+  ]
+}

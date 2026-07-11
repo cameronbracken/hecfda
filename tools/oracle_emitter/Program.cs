@@ -15,6 +15,7 @@ using HEC.FDA.Model.paireddata;
 using HEC.FDA.Model.compute;
 using HEC.FDA.Model.utilities;
 using HEC.FDA.Model.extensions;
+using HEC.FDA.Model.structures;
 
 namespace oracle_emitter {
   class Program {
@@ -384,6 +385,23 @@ namespace oracle_emitter {
       throw new Exception("unknown graphical_uncertain_paired_data method: " + method);
     }
 
+    // ValueUncertainty (Phase 3 Task 1) is a plain Validation-derived (via ValidationErrorLogger)
+    // per-structure uncertainty sampler, not an IDistribution, so it's constructed directly here
+    // like ShiftedGamma/PearsonIII/ConvergenceCriteria. `construct` is {"dist": "<name>",
+    // "std_or_min": ..., "max": ...}; `dist` parsed via Enum.Parse against IDistributionEnum
+    // (same string set DistFactory's `type` switch uses). `sample` dispatches Sample(double);
+    // `sample_iteration` dispatches Sample(long, bool) with args [iteration, computeIsDeterministic].
+    static object EvalValueUncertainty(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var distType = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), c.GetProperty("dist").GetString());
+      double stdOrMin = c.GetProperty("std_or_min").GetDouble();
+      double max = c.GetProperty("max").GetDouble();
+      var vu = new ValueUncertainty(distType, stdOrMin, max);
+      if (method == "sample") return vu.Sample(D(argsEl[0]));
+      if (method == "sample_iteration") return vu.Sample((long)D(argsEl[0]), D(argsEl[1]) != 0.0);
+      throw new Exception("unknown value_uncertainty method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -425,6 +443,7 @@ namespace oracle_emitter {
               case "interpolate_quantiles": val = EvalInterpolateQuantiles(c, method, argsEl); break;
               case "graphical_calculators": val = EvalGraphicalCalculators(c, method, argsEl); break;
               case "graphical_uncertain_paired_data": val = EvalGupd(c, method, argsEl); break;
+              case "value_uncertainty": val = EvalValueUncertainty(c, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{
