@@ -60,6 +60,12 @@ namespace oracle_emitter {
         if (method == "has_errors") return dist.HasErrors ? 1.0 : 0.0;
         return (double)(byte)dist.ErrorLevel;
       }
+      // Task D1: UncertainToDeterministicDistributionConverter, called against the REAL C#
+      // distribution/converter -- this is what gates the port's converter, including the
+      // LogPearsonIII Math.Pow(Mean, 10) bug, against real upstream behavior.
+      if (method == "convert_to_deterministic") {
+        return UncertainToDeterministicDistributionConverter.ConvertDistributionToDeterministic(dist).Value;
+      }
       if (method.StartsWith("fit_")) {
         double[] data = DA(argsEl);
         IDistribution fitted = dist.Fit(data);
@@ -140,6 +146,11 @@ namespace oracle_emitter {
       if (method == "min") return dist.Min;
       if (method == "max") return dist.Max;
       if (method == "standard_deviation") return dist.StandardDeviation;
+      // Task D1: UncertainToDeterministicDistributionConverter's Empirical case, against the real
+      // C# Empirical + converter (SampleMean defaults to 0.0 for a freshly-constructed instance).
+      if (method == "convert_to_deterministic") {
+        return UncertainToDeterministicDistributionConverter.ConvertDistributionToDeterministic(dist).Value;
+      }
       throw new Exception("unknown empirical method: " + method);
     }
     // ConvergenceCriteria (Task C1) is a plain Validation-derived parameter holder, not an

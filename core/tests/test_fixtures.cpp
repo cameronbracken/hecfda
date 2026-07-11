@@ -16,6 +16,7 @@
 #include "hecfda/statistics/distributions/pearson3.hpp"
 #include "hecfda/statistics/distributions/shifted_gamma.hpp"
 #include "hecfda/statistics/distributions/triangular.hpp"
+#include "hecfda/statistics/distributions/uncertain_to_deterministic_converter.hpp"
 #include "hecfda/statistics/distributions/uniform.hpp"
 #include "hecfda/statistics/sample_statistics.hpp"
 #include "hecfda/statistics/special_functions.hpp"
@@ -112,6 +113,14 @@ static double run_distribution(const json& c, const std::string& method, const j
     if (method == "pdf") return dist->pdf(args[0].get<double>());
     if (method == "cdf") return dist->cdf(args[0].get<double>());
     if (method == "inverse_cdf") return dist->inverse_cdf(args[0].get<double>());
+
+    // Task D1: UncertainToDeterministicDistributionConverter. `args` is unused (matches the C#
+    // method's single-argument `IDistribution` signature); returns the resulting Deterministic's
+    // Value as the dispatched scalar result.
+    if (method == "convert_to_deterministic") {
+        auto det = hecfda::statistics::distributions::convert_distribution_to_deterministic(*dist);
+        return det.value();
+    }
 
     if (method == "has_errors" || method == "error_level") {
         auto* validation = dynamic_cast<hecfda::statistics::Validation*>(dist.get());
@@ -306,6 +315,33 @@ TEST_CASE("truncated_logpearson3 fixture") {
     }
 }
 
+// Task D1: UncertainToDeterministicDistributionConverter. Reuses the generic `distribution`
+// target/run_distribution dispatch (construct is `{type, params}`, same as normal.json/
+// uniform.json/etc.) via the `convert_to_deterministic` method added above -- one case each for
+// Normal/Uniform/Triangular/LogPearsonIII/LogNormal/Deterministic. Empirical's converter case is
+// NOT here -- Empirical takes the bespoke two-array construct, which doesn't fit this generic
+// `{type, params}` shape -- it is instead covered by run_empirical's own `convert_to_deterministic`
+// branch + a case in fixtures/distributions/empirical.json.
+TEST_CASE("converter fixture") {
+    std::ifstream f(fixtures_dir() + "/distributions/converter.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "distribution");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_distribution(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
 // Bespoke dispatch for ShiftedGamma (Task B9+B10): unlike run_distribution, ShiftedGamma is a
 // plain helper class -- not an IDistribution -- so it is constructed directly rather than via
 // IDistributionFactory::create. `construct.params` is [alpha, beta, shift] matching the
@@ -396,6 +432,14 @@ static double run_empirical(const json& c, const std::string& method, const json
     if (method == "min") return dist.min();
     if (method == "max") return dist.max();
     if (method == "standard_deviation") return dist.standard_deviation();
+    // Task D1: UncertainToDeterministicDistributionConverter's Empirical case (`Deterministic
+    // (SampleMean)`). SampleMean is a settable property that both C# ctors leave at its default
+    // (0.0) -- neither Empirical(probs, values) ctor overload assigns it -- so this always
+    // reproduces Deterministic(0.0) for a freshly-constructed instance, matching real C# exactly.
+    if (method == "convert_to_deterministic") {
+        auto det = hecfda::statistics::distributions::convert_distribution_to_deterministic(dist);
+        return det.value();
+    }
     auto msg = std::string("unknown empirical method: ") + method;
     FAIL(msg.c_str());
     return 0.0;

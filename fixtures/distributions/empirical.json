@@ -56,6 +56,16 @@
         { "method": "inverse_cdf", "args": [0.5], "expected": 25.0, "tol": 1e-9, "mode": "abs", "note": "exact CumulativeProbabilities hit" },
         { "method": "inverse_cdf", "args": [0.725], "expected": 32.5, "tol": 1e-9, "mode": "abs", "note": "interpolated between p=0.5 and p=0.95" }
       ]
+    },
+    {
+      "name": "four_point_b_convert_to_deterministic",
+      "construct": {
+        "probabilities": [0.05, 0.35, 0.65, 0.95],
+        "values": [10, 20, 30, 40]
+      },
+      "assertions": [
+        { "method": "convert_to_deterministic", "args": [], "expected": 0.0, "tol": 0.0, "mode": "abs", "note": "Task D1: UncertainToDeterministicDistributionConverter's Empirical case is Deterministic(SampleMean); SampleMean is a settable property neither Empirical ctor assigns, so it is 0.0 for a freshly-constructed instance in both this port and real C#." }
+      ]
     }
   ]
 }
