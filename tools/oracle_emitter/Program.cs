@@ -588,6 +588,50 @@ namespace oracle_emitter {
       throw new Exception("unknown structure method: " + method);
     }
 
+    // Inventory (Phase 3 Task 6, the last core-code task of the phase) -- built from
+    // patched/Inventory.cs (see that file's header for why it's a patched local copy). `construct`
+    // is {occ_types: [<occupancy_type construct>, ...], structures: [<structure construct>, ...],
+    // [price_index]}; reuses MakeOccupancyType/MakeStructure directly (same construct shapes as the
+    // occupancy_type/structure dispatch targets above). See fixtures/structures/inventory.json's
+    // note for the method list and why validate_* cases use an empty occ_types list.
+    static Inventory MakeInventory(JsonElement c) {
+      var occTypes = new Dictionary<string, OccupancyType>();
+      foreach (var occCtor in c.GetProperty("occ_types").EnumerateArray()) {
+        occTypes[occCtor.GetProperty("name").GetString()] = MakeOccupancyType(occCtor);
+      }
+      var structures = new List<Structure>();
+      foreach (var structCtor in c.GetProperty("structures").EnumerateArray()) {
+        structures.Add(MakeStructure(structCtor));
+      }
+      double priceIndex = c.TryGetProperty("price_index", out var pi) ? pi.GetDouble() : 1.0;
+      return new Inventory(occTypes, structures, priceIndex);
+    }
+    static object EvalInventory(JsonElement caseEl, JsonElement assertionEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var inv = MakeInventory(c);
+      if (method == "damage_category_count") return (double)inv.GetDamageCategories().Count;
+      if (method == "trim_to_impact_area_count") {
+        var trimmed = inv.GetInventoryTrimmedToImpactArea(argsEl[0].GetInt32());
+        return (double)trimmed.Structures.Count;
+      }
+      if (method == "generate_then_sample_struct_yvals") {
+        var conv = assertionEl.GetProperty("convergence");
+        var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+        inv.GenerateRandomNumbers(cc);
+        var sampled = inv.SampleOccupancyTypes((long)D(argsEl[0]), D(argsEl[1]) != 0.0);
+        return sampled[0].StructPercentDamagePairedData.Yvals.ToArray();
+      }
+      if (method == "validate_error_level") {
+        inv.Validate();
+        return (double)(byte)inv.ErrorLevel;
+      }
+      if (method == "validate_has_errors") {
+        inv.Validate();
+        return inv.HasErrors ? 1.0 : 0.0;
+      }
+      throw new Exception("unknown inventory method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -634,6 +678,7 @@ namespace oracle_emitter {
               case "first_floor_elevation_uncertainty": val = EvalFirstFloorElevationUncertainty(c, method, argsEl); break;
               case "occupancy_type": val = EvalOccupancyType(c, a, method, argsEl); break;
               case "structure": val = EvalStructure(c, method, argsEl); break;
+              case "inventory": val = EvalInventory(c, a, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

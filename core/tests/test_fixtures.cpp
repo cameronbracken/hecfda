@@ -14,6 +14,7 @@
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/model/structures/deterministic_occupancy_type.hpp"
 #include "hecfda/model/structures/first_floor_elevation_uncertainty.hpp"
+#include "hecfda/model/structures/inventory.hpp"
 #include "hecfda/model/structures/occupancy_type.hpp"
 #include "hecfda/model/structures/structure.hpp"
 #include "hecfda/model/structures/value_ratio_with_uncertainty.hpp"
@@ -1543,6 +1544,85 @@ TEST_CASE("structure fixture") {
             bool ok = mode == "rel" ? (std::abs(got - exp) / (std::abs(exp) > 0 ? std::abs(exp) : 1.0)) <= tol
                                      : std::abs(got - exp) <= tol;
             if (!ok) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for Inventory (Phase 3 Task 6, the last core-code task of the phase): the
+// numeric subset (in-memory ctor, damage-category enumeration, impact-area trim, per-occ-type RNG
+// generation + sampling, ground elevations, Validate aggregation). `construct` is {occ_types:
+// [<occupancy_type construct>, ...], structures: [<structure construct>, ...], [price_index]} --
+// see fixtures/structures/inventory.json's note and inventory.hpp's class comment for the full
+// design rationale (why occ_types is a shared_ptr<map>, why Structure needed its this-capture
+// bugfix, and why the validate_* cases use an empty occ_types list).
+static hecfda::model::structures::Inventory make_inventory(const json& ctor) {
+    using namespace hecfda::model::structures;
+    std::map<std::string, OccupancyType> occ_types;
+    for (const auto& occ_ctor : ctor["occ_types"]) {
+        occ_types.emplace(occ_ctor["name"].get<std::string>(), make_occupancy_type(occ_ctor));
+    }
+    std::vector<Structure> structures;
+    structures.reserve(ctor["structures"].size());
+    for (const auto& struct_ctor : ctor["structures"]) {
+        structures.push_back(make_structure(struct_ctor));
+    }
+    double price_index = ctor.contains("price_index") ? ctor["price_index"].get<double>() : 1.0;
+    return Inventory(std::move(occ_types), std::move(structures), price_index);
+}
+
+static std::vector<double> run_inventory(const json& c, const json& a) {
+    using namespace hecfda::model::structures;
+    auto inv = make_inventory(c["construct"]);
+    std::string method = a["method"].get<std::string>();
+    const auto& args = a["args"];
+    if (method == "damage_category_count") {
+        return {static_cast<double>(inv.get_damage_categories().size())};
+    }
+    if (method == "trim_to_impact_area_count") {
+        auto trimmed = inv.get_inventory_trimmed_to_impact_area(args[0].get<int>());
+        return {static_cast<double>(trimmed.structures().size())};
+    }
+    if (method == "generate_then_sample_struct_yvals") {
+        const auto& conv = a["convergence"];
+        hecfda::statistics::ConvergenceCriteria cc(conv["min_iterations"].get<int>(), conv["max_iterations"].get<int>());
+        inv.generate_random_numbers(cc);
+        auto sampled = inv.sample_occupancy_types(args[0].get<long>(), args[1].get<double>() != 0.0);
+        return sampled[0].struct_percent_damage_paired_data().yvals();
+    }
+    if (method == "validate_error_level") {
+        inv.validate();
+        return {static_cast<double>(static_cast<unsigned char>(inv.error_level()))};
+    }
+    if (method == "validate_has_errors") {
+        inv.validate();
+        return {inv.has_errors() ? 1.0 : 0.0};
+    }
+    auto msg = std::string("unknown inventory method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("inventory fixture") {
+    std::ifstream f(fixtures_dir() + "/structures/inventory.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "inventory");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_inventory(c, a);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());

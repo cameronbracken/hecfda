@@ -266,38 +266,53 @@ class Structure : public hecfda::statistics::Validation {
    private:
     // ported from: Structure.cs private void AddRules() -- seven Fatal rules, messages transcribed
     // verbatim (substituting Fid the way the C# string interpolation does).
+    //
+    // BUGFIX (not a C# transcription issue -- a C++-port-only memory-safety defect found and fixed
+    // during Task 6/Inventory): the predicates below capture the checked fields BY VALUE
+    // (`[value = first_floor_elevation_]`), not `[this]`. Structure has no deleted copy/move ops
+    // (unlike OccupancyType, it is an ordinary copyable/movable value type), and every field
+    // checked here is set once in the ctor and never mutated after -- so a by-value capture is
+    // behaviorally identical to reading `this->field_` at validate()-time, for the lifetime of the
+    // object. A `[this]` capture is NOT safe here: any relocation of a Structure after
+    // construction (e.g. `std::vector<Structure>::push_back(Structure(...))`, which move-
+    // constructs the vector's element from a short-lived temporary, or any vector growth/
+    // reallocation) leaves these closures holding a dangling pointer to the temporary's destroyed
+    // storage -- confirmed via ASan (stack-use-after-scope) while building Inventory, whose
+    // trim/validate methods are the first callers to store multiple Structures in a
+    // `std::vector<Structure>` and then call `validate()` on them. See inventory.hpp for the
+    // storage discussion this fix unblocks.
     void add_rules() {
         add_single_property_rule(
-            "FirstFloorElevation", [this]() { return first_floor_elevation_ > -300; },
+            "FirstFloorElevation", [value = first_floor_elevation_]() { return value > -300; },
             "First floor elevation must be greater than -300, but is " +
                 std::to_string(first_floor_elevation_) + " for Structure " + fid_,
             hecfda::statistics::ErrorLevel::Fatal);
         add_single_property_rule(
-            "InventoriedStructureValue", [this]() { return inventoried_structure_value_ >= 0; },
+            "InventoriedStructureValue", [value = inventoried_structure_value_]() { return value >= 0; },
             "The inventoried structure value must be greater than or equal to 0, but is " +
                 std::to_string(inventoried_structure_value_) + " for Structure " + fid_,
             hecfda::statistics::ErrorLevel::Fatal);
         add_single_property_rule(
-            "InventoriedContentValue", [this]() { return inventoried_content_value_ >= 0; },
+            "InventoriedContentValue", [value = inventoried_content_value_]() { return value >= 0; },
             "The inventoried content value must be greater than or equal to 0, but is " +
                 std::to_string(inventoried_content_value_) + " for Structure " + fid_,
             hecfda::statistics::ErrorLevel::Fatal);
         add_single_property_rule(
-            "InventoriedOtherValue", [this]() { return inventoried_other_value_ >= 0; },
+            "InventoriedOtherValue", [value = inventoried_other_value_]() { return value >= 0; },
             "The inventoried other value must be greater than or equal to 0, but is " +
                 std::to_string(inventoried_other_value_) + " for Structure " + fid_,
             hecfda::statistics::ErrorLevel::Fatal);
         add_single_property_rule(
-            "InventoriedVehicleValue", [this]() { return inventoried_vehicle_value_ >= 0; },
+            "InventoriedVehicleValue", [value = inventoried_vehicle_value_]() { return value >= 0; },
             "The inventoried vehicle value must be greater than or equal to 0, but is " +
                 std::to_string(inventoried_vehicle_value_) + " for Structure " + fid_,
             hecfda::statistics::ErrorLevel::Fatal);
         add_single_property_rule(
-            "DamageCatagory", [this]() { return !damage_catagory_.empty(); },
+            "DamageCatagory", [value = damage_catagory_]() { return !value.empty(); },
             "Damage category should not be null but appears null for Structure " + fid_,
             hecfda::statistics::ErrorLevel::Fatal);
         add_single_property_rule(
-            "OccTypeName", [this]() { return !occ_type_name_.empty(); },
+            "OccTypeName", [value = occ_type_name_]() { return !value.empty(); },
             "The occupancy type should not be null but appears null for Structure " + fid_,
             hecfda::statistics::ErrorLevel::Fatal);
     }
