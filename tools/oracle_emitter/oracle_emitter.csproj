@@ -57,6 +57,11 @@
     <!-- Task Phase4T1: ConsequenceResult is a plain POCO with zero external deps (no MVVM base,
          no other HEC.FDA.Model types), so it compiles unpatched. -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/ConsequenceResult.cs" />
+    <!-- Task Phase4T3: ConsequenceType/RiskType are plain zero-dependency enums, needed by
+         AggregatedConsequencesBinned's ctor signature (patched/AggregatedConsequencesBinned.cs
+         below). Compiled unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/ConsequenceTypes.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/RiskType.cs" />
     <!-- Task Phase3T4: OccupancyType uses MessageHub/MessageReportedEventHandler/
          IDontImplementValidationButMyPropertiesDo (MVVM messaging), but unlike
          CurveMetaData/GraphicalUncertainPairedData's WriteToXML/ReadFromXML, which pull in the
@@ -84,5 +89,12 @@
          no explicit Compile Include: EnableDefaultCompileItems (set above) already picks up every
          *.cs file under the project directory, including patched/, the same way
          patched/CurveMetaData.cs and patched/GraphicalDistribution.cs are already picked up. -->
+    <!-- Task Phase4T3: AggregatedConsequencesBinned's real source pulls in System.Xml.Linq
+         (WriteToXML/ReadFromXML) and AggregatedConsequencesByQuantile/Empirical
+         (ConvertToSingleEmpiricalDistributionOfConsequences), neither reachable/needed by this
+         subset-compiled project. patched/AggregatedConsequencesBinned.cs drops exactly those three
+         members (and the now-unused System.Xml.Linq using); the ctors, PutDataIntoHistogram,
+         AddConsequenceRealization, the three accessor methods, and Equals are kept VERBATIM. Same
+         auto-pickup as patched/Structure.cs/Inventory.cs above, no explicit Compile Include. -->
   </ItemGroup>
 </Project>

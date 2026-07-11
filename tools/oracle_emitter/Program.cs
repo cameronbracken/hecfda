@@ -735,6 +735,39 @@ namespace oracle_emitter {
       throw new Exception("unknown consequence_result method: " + method);
     }
 
+    // AggregatedConsequencesBinned (Phase 4 Task 3) is the histogram-staging Monte Carlo
+    // accumulator -- built from patched/AggregatedConsequencesBinned.cs (see that file's header
+    // for why it's a patched local copy: WriteToXML/ReadFromXML/
+    // ConvertToSingleEmpiricalDistributionOfConsequences dropped, everything else verbatim).
+    // `construct` is {damage_category, asset_category, convergence: {min_iterations,
+    // max_iterations}, impact_area_id, consequence_type, risk_type}, matching the
+    // (string, string, ConvergenceCriteria, int, ConsequenceType, RiskType) compute ctor;
+    // ConvergenceCriteria uses the 2-arg (minIterations, maxIterations) ctor, same as
+    // EvalInventory's `generate_then_sample_struct_yvals` case. `realizations` is a list of
+    // {iteration, damage, count} applied in order via AddConsequenceRealization before a single
+    // PutDataIntoHistogram() call; one object is built and staged per case, shared across all of
+    // that case's assertions (mirrors run_aggregated_consequences_binned in test_fixtures.cpp).
+    // `method` dispatches SampleMeanExpectedAnnualConsequences (args []),
+    // ConsequenceExceededWithProbabilityQ (args [q]), or QuantityExceededWithProbabilityQ
+    // (args [q]) -- all three are `internal`, but Program.cs is compiled directly against
+    // patched/AggregatedConsequencesBinned.cs (not a built assembly), so no reflection is needed.
+    static object EvalAggregatedConsequencesBinned(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+      var consequenceType = Enum.Parse<ConsequenceType>(c.GetProperty("consequence_type").GetString());
+      var riskType = Enum.Parse<RiskType>(c.GetProperty("risk_type").GetString());
+      var acb = new AggregatedConsequencesBinned(c.GetProperty("damage_category").GetString(), c.GetProperty("asset_category").GetString(), cc, c.GetProperty("impact_area_id").GetInt32(), consequenceType, riskType);
+      foreach (var r in caseEl.GetProperty("realizations").EnumerateArray()) {
+        acb.AddConsequenceRealization(D(r.GetProperty("damage")), r.GetProperty("iteration").GetInt64(), r.GetProperty("count").GetInt32());
+      }
+      acb.PutDataIntoHistogram();
+      if (method == "sample_mean_expected_annual_consequences") return acb.SampleMeanExpectedAnnualConsequences();
+      if (method == "consequence_exceeded_with_probability_q") return acb.ConsequenceExceededWithProbabilityQ(D(argsEl[0]));
+      if (method == "quantity_exceeded_with_probability_q") return acb.QuantityExceededWithProbabilityQ(D(argsEl[0]));
+      throw new Exception("unknown aggregated_consequences_binned method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -784,6 +817,7 @@ namespace oracle_emitter {
               case "inventory": val = EvalInventory(c, a, method, argsEl); break;
               case "inventory_compute_damages": val = EvalInventoryComputeDamages(c, method); break;
               case "consequence_result": val = EvalConsequenceResult(c, method); break;
+              case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

@@ -8,6 +8,7 @@
 #include "check.hpp"
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/extensions/graphical_distribution.hpp"
+#include "hecfda/model/metrics/aggregated_consequences_binned.hpp"
 #include "hecfda/model/metrics/consequence_result.hpp"
 #include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
@@ -1795,6 +1796,93 @@ TEST_CASE("inventory_compute_damages fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for AggregatedConsequencesBinned (Phase 4 Task 3): the histogram-staging Monte
+// Carlo accumulator. `construct` is {damage_category, asset_category, convergence:
+// {min_iterations, max_iterations}, impact_area_id, consequence_type, risk_type} matching the
+// compute ctor; ConvergenceCriteria is built with the 2-arg (minIterations, maxIterations) ctor,
+// same as run_inventory's `generate_then_sample_struct_yvals` case. `realizations` is applied in
+// order via add_consequence_realization(damage, iteration, count) before a single
+// put_data_into_histogram() call -- ONE object per case, shared across all of the case's
+// assertions (not rebuilt per assertion, since PutDataIntoHistogram is only meaningful once per
+// staged batch). `method` dispatches sample_mean_expected_annual_consequences (args []),
+// consequence_exceeded_with_probability_q (args [q]), or quantity_exceeded_with_probability_q
+// (args [q]). See fixtures/metrics/aggregated_consequences_binned.json's note for what each case
+// exercises (the DEFAULT_BIN_WIDTH vs range/INITIAL_BIN_QUANTITY branches, and the staged-array
+// min/max quirk documented in aggregated_consequences_binned.hpp).
+static hecfda::model::metrics::ConsequenceType parse_consequence_type(const std::string& name) {
+    if (name == "UNASSIGNED") return hecfda::model::metrics::ConsequenceType::UNASSIGNED;
+    if (name == "Damage") return hecfda::model::metrics::ConsequenceType::Damage;
+    if (name == "LifeLoss") return hecfda::model::metrics::ConsequenceType::LifeLoss;
+    if (name == "All") return hecfda::model::metrics::ConsequenceType::All;
+    FAIL((std::string("unknown consequence_type: ") + name).c_str());
+    return hecfda::model::metrics::ConsequenceType::UNASSIGNED;
+}
+
+static hecfda::model::metrics::RiskType parse_risk_type(const std::string& name) {
+    if (name == "Fail") return hecfda::model::metrics::RiskType::Fail;
+    if (name == "Non_Fail") return hecfda::model::metrics::RiskType::Non_Fail;
+    if (name == "Total") return hecfda::model::metrics::RiskType::Total;
+    if (name == "Unassigned") return hecfda::model::metrics::RiskType::Unassigned;
+    FAIL((std::string("unknown risk_type: ") + name).c_str());
+    return hecfda::model::metrics::RiskType::Unassigned;
+}
+
+static hecfda::model::metrics::AggregatedConsequencesBinned make_aggregated_consequences_binned(
+    const json& ctor) {
+    using namespace hecfda::model::metrics;
+    const auto& conv = ctor["convergence"];
+    hecfda::statistics::ConvergenceCriteria cc(conv["min_iterations"].get<int>(),
+                                                conv["max_iterations"].get<int>());
+    return AggregatedConsequencesBinned(ctor["damage_category"].get<std::string>(),
+                                         ctor["asset_category"].get<std::string>(), cc,
+                                         ctor["impact_area_id"].get<int>(),
+                                         parse_consequence_type(ctor["consequence_type"].get<std::string>()),
+                                         parse_risk_type(ctor["risk_type"].get<std::string>()));
+}
+
+static double run_aggregated_consequences_binned(const json& c, const std::string& method,
+                                                   const json& args) {
+    auto acb = make_aggregated_consequences_binned(c["construct"]);
+    for (const auto& r : c["realizations"]) {
+        acb.add_consequence_realization(r["damage"].get<double>(), r["iteration"].get<std::int64_t>(),
+                                         r["count"].get<int>());
+    }
+    acb.put_data_into_histogram();
+    if (method == "sample_mean_expected_annual_consequences") {
+        return acb.sample_mean_expected_annual_consequences();
+    }
+    if (method == "consequence_exceeded_with_probability_q") {
+        return acb.consequence_exceeded_with_probability_q(args[0].get<double>());
+    }
+    if (method == "quantity_exceeded_with_probability_q") {
+        return acb.quantity_exceeded_with_probability_q(args[0].get<double>());
+    }
+    auto msg = std::string("unknown aggregated_consequences_binned method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("aggregated_consequences_binned fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/aggregated_consequences_binned.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "aggregated_consequences_binned");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_aggregated_consequences_binned(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());
