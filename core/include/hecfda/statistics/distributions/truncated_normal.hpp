@@ -89,9 +89,9 @@ class TruncatedNormal : public ContinuousDistribution {
     // to the same trailing `return true`). Reproduced by omitting the unreachable comparisons
     // rather than writing branches that can never evaluate false.
     bool equals(const IDistribution& distribution) const override {
-        if (type() != distribution.type()) return false;
-        const auto& other = static_cast<const TruncatedNormal&>(distribution);
-        return sample_size() == other.sample_size() && mean_ == other.mean_ && sd_ == other.sd_;
+        const auto* other = dynamic_cast<const TruncatedNormal*>(&distribution);
+        if (other == nullptr) return false;
+        return sample_size() == other->sample_size() && mean_ == other->mean_ && sd_ == other->sd_;
     }
 
     // ported from: TruncatedNormal.cs Fit(double[] sample) -> `new TruncatedNormal(stats.Mean,

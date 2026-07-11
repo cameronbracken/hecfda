@@ -42,9 +42,9 @@ class Deterministic : public ContinuousDistribution {
 
     // ported from: Deterministic.cs Equals(IDistribution distribution)
     bool equals(const IDistribution& distribution) const override {
-        if (type() != distribution.type()) return false;
-        const auto& other = static_cast<const Deterministic&>(distribution);
-        return value_ == other.value_;
+        const auto* other = dynamic_cast<const Deterministic*>(&distribution);
+        if (other == nullptr) return false;
+        return value_ == other->value_;
     }
 
     // ported from: Deterministic.cs Fit(double[] sample) -> `new Deterministic(stats.Mean)`.

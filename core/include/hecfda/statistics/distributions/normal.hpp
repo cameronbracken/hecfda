@@ -76,9 +76,9 @@ class Normal : public ContinuousDistribution {
 
     // ported from: Normal.cs Equals(IDistribution distribution)
     bool equals(const IDistribution& distribution) const override {
-        if (type() != distribution.type()) return false;
-        const auto& other = static_cast<const Normal&>(distribution);
-        return sample_size() == other.sample_size() && mean_ == other.mean_ && sd_ == other.sd_;
+        const auto* other = dynamic_cast<const Normal*>(&distribution);
+        if (other == nullptr) return false;
+        return sample_size() == other->sample_size() && mean_ == other->mean_ && sd_ == other->sd_;
     }
 
     // ported from: Normal.cs Fit(double[] sample) -> `new Normal(stats.Mean, stats.StandardDeviation,

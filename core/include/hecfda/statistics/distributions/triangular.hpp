@@ -88,10 +88,10 @@ class Triangular : public ContinuousDistribution {
 
     // ported from: Triangular.cs Equals(IDistribution distribution)
     bool equals(const IDistribution& distribution) const override {
-        if (type() != distribution.type()) return false;
-        const auto& other = static_cast<const Triangular&>(distribution);
-        return min_ == other.min_ && max_ == other.max_ && sample_size() == other.sample_size() &&
-               most_likely_ == other.most_likely_;
+        const auto* other = dynamic_cast<const Triangular*>(&distribution);
+        if (other == nullptr) return false;
+        return min_ == other->min_ && max_ == other->max_ && sample_size() == other->sample_size() &&
+               most_likely_ == other->most_likely_;
     }
 
     // ported from: Triangular.cs Fit(double[] sample) -> `new Triangular(stats.Min, stats.Mean,

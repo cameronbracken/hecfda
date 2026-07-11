@@ -56,9 +56,9 @@ class Uniform : public ContinuousDistribution {
 
     // ported from: Uniform.cs Equals(IDistribution distribution)
     bool equals(const IDistribution& distribution) const override {
-        if (type() != distribution.type()) return false;
-        const auto& other = static_cast<const Uniform&>(distribution);
-        return min_ == other.min_ && max_ == other.max_ && sample_size() == other.sample_size();
+        const auto* other = dynamic_cast<const Uniform*>(&distribution);
+        if (other == nullptr) return false;
+        return min_ == other->min_ && max_ == other->max_ && sample_size() == other->sample_size();
     }
 
     // ported from: Uniform.cs Fit(double[] sample) -> `new Uniform(stats.Min, stats.Max,

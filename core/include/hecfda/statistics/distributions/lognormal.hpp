@@ -65,9 +65,9 @@ class LogNormal : public ContinuousDistribution {
 
     // ported from: LogNormal.cs Equals(IDistribution distribution)
     bool equals(const IDistribution& distribution) const override {
-        if (type() != distribution.type()) return false;
-        const auto& other = static_cast<const LogNormal&>(distribution);
-        return mean_ == other.mean_ && sd_ == other.sd_ && sample_size() == other.sample_size();
+        const auto* other = dynamic_cast<const LogNormal*>(&distribution);
+        if (other == nullptr) return false;
+        return mean_ == other->mean_ && sd_ == other->sd_ && sample_size() == other->sample_size();
     }
 
     // ported from: LogNormal.cs Fit(double[] sample): logs the sample with Math.Log10 (LOG BASE
