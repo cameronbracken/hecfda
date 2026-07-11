@@ -283,6 +283,26 @@ TEST_CASE("logpearson3 fixture") {
     }
 }
 
+TEST_CASE("truncated_logpearson3 fixture") {
+    std::ifstream f(fixtures_dir() + "/distributions/truncated_logpearson3.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "distribution");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_distribution(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
 // Bespoke dispatch for ShiftedGamma (Task B9+B10): unlike run_distribution, ShiftedGamma is a
 // plain helper class -- not an IDistribution -- so it is constructed directly rather than via
 // IDistributionFactory::create. `construct.params` is [alpha, beta, shift] matching the

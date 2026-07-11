@@ -35,9 +35,12 @@ enum class DistributionType {
     // distribution_type_from_name + IDistributionFactory::create to construct distributions whose
     // C# `Type` property aliases an existing enum value. The instance type() returns the faithful
     // C# value (e.g. TruncatedLogNormal::type() returns DistributionType::Normal), never one of
-    // these. Reserve 1006+ for later enum-less distributions (PearsonIII, Gamma, ShiftedGamma,
-    // TruncatedLogPearson3).
+    // these.
     TruncatedLogNormal = 1005,
+    // TruncatedLogPearson3.cs `Type => IDistributionEnum.LogPearsonIII` -- see
+    // truncated_logpearson3.hpp. type() returns the real DistributionType::LogPearsonIII (=4),
+    // never this key.
+    TruncatedLogPearson3 = 1006,
 };
 
 // Centralized string -> DistributionType mapping. Maps name (e.g. "Normal", "Uniform") to the
@@ -52,6 +55,7 @@ inline DistributionType distribution_type_from_name(const std::string& name) {
     if (name == "TruncatedNormal") return DistributionType::TruncatedNormal;
     if (name == "TruncatedLogNormal") return DistributionType::TruncatedLogNormal;
     if (name == "LogPearsonIII") return DistributionType::LogPearsonIII;
+    if (name == "TruncatedLogPearson3") return DistributionType::TruncatedLogPearson3;
     throw std::invalid_argument("distribution_type_from_name: unknown distribution type: " + name);
 }
 

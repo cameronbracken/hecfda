@@ -44,6 +44,7 @@ namespace oracle_emitter {
         "TruncatedNormal" => new TruncatedNormal(p[0], p[1], p[2], p[3], (long)p[4]),
         "TruncatedLogNormal" => new TruncatedLogNormal(p[0], p[1], p[2], p[3], (int)p[4]),
         "LogPearsonIII" => new LogPearson3(p[0], p[1], p[2], (int)p[3]),
+        "TruncatedLogPearson3" => new TruncatedLogPearson3(p[0], p[1], p[2], p[3], p[4], (int)p[5]),
         _ => throw new Exception("unknown distribution type: " + type) };
     }
     static object EvalDistribution(JsonElement caseEl, string method, JsonElement argsEl) {
