@@ -8,9 +8,12 @@
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/statistics/distributions/i_distribution_factory.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
+#include "hecfda/statistics/distributions/uniform.hpp"
 #include "hecfda/statistics/sample_statistics.hpp"
 #include "hecfda/statistics/special_functions.hpp"
+#include "hecfda/statistics/validation.hpp"
 
 using json = nlohmann::json;
 
@@ -79,14 +82,66 @@ TEST_CASE("rng_digest fixture") {
     }
 }
 
-static double run_normal(const json& c, const std::string& method, const json& args) {
+// Generic distribution dispatch (Task A4): maps the fixture's `construct: {type, params}` to a
+// DistributionType, constructs via IDistributionFactory::create, and dispatches
+// pdf|cdf|inverse_cdf|has_errors|error_level|fit_<param>. This is the "enabling" dispatch every
+// later distribution task's fixture reuses -- adding a distribution is "add a factory case + a
+// fixture", not a new dispatch function.
+static hecfda::statistics::distributions::DistributionType distribution_type_from_name(
+    const std::string& name) {
+    using DT = hecfda::statistics::distributions::DistributionType;
+    if (name == "Normal") return DT::Normal;
+    if (name == "Uniform") return DT::Uniform;
+    auto msg = std::string("unknown distribution type: ") + name;
+    FAIL(msg.c_str());
+    return DT::NotSupported;
+}
+
+// `error_level` is returned as the raw ErrorLevel byte value (e.g. Minor == 2), not a string --
+// see fixtures/distributions/uniform.json / README.md for the numeric convention. `fit_<param>`
+// methods treat `args` as the raw data array to fit against (rather than args[0] == x, used by
+// pdf/cdf/inverse_cdf), and dispatch the fitted parameter by the *original* type name since
+// IDistribution::fit's return type varies by concrete distribution.
+static double run_distribution(const json& c, const std::string& method, const json& args) {
     const auto& ctor = c["construct"];
-    hecfda::statistics::distributions::Normal dist(ctor["mean"].get<double>(), ctor["sd"].get<double>(),
-                                                     ctor["sample_size"].get<long>());
-    double x = args[0].get<double>();
-    if (method == "pdf") return dist.pdf(x);
-    if (method == "cdf") return dist.cdf(x);
-    if (method == "inverse_cdf") return dist.inverse_cdf(x);
+    std::string type_name = ctor["type"].get<std::string>();
+    std::vector<double> params = ctor["params"].get<std::vector<double>>();
+    auto dist = hecfda::statistics::distributions::IDistributionFactory::create(
+        distribution_type_from_name(type_name), params);
+
+    if (method == "pdf") return dist->pdf(args[0].get<double>());
+    if (method == "cdf") return dist->cdf(args[0].get<double>());
+    if (method == "inverse_cdf") return dist->inverse_cdf(args[0].get<double>());
+
+    if (method == "has_errors" || method == "error_level") {
+        auto* validation = dynamic_cast<hecfda::statistics::Validation*>(dist.get());
+        REQUIRE(validation != nullptr);
+        validation->validate();
+        if (method == "has_errors") return validation->has_errors() ? 1.0 : 0.0;
+        return static_cast<double>(static_cast<unsigned char>(validation->error_level()));
+    }
+
+    if (method.rfind("fit_", 0) == 0) {
+        std::vector<double> data = args.get<std::vector<double>>();
+        auto fitted = dist->fit(data);
+        std::string param = method.substr(4);
+        if (param == "sample_size") return static_cast<double>(fitted->sample_size());
+        if (type_name == "Normal") {
+            auto* n = dynamic_cast<hecfda::statistics::distributions::Normal*>(fitted.get());
+            REQUIRE(n != nullptr);
+            if (param == "mean") return n->mean();
+            if (param == "standard_deviation") return n->standard_deviation();
+        } else if (type_name == "Uniform") {
+            auto* u = dynamic_cast<hecfda::statistics::distributions::Uniform*>(fitted.get());
+            REQUIRE(u != nullptr);
+            if (param == "min") return u->min();
+            if (param == "max") return u->max();
+        }
+        auto msg = std::string("unknown fit param: ") + param + " for type " + type_name;
+        FAIL(msg.c_str());
+        return 0.0;
+    }
+
     auto msg = std::string("unknown distribution method: ") + method;
     FAIL(msg.c_str());
     return 0.0;
@@ -96,15 +151,35 @@ TEST_CASE("normal fixture") {
     std::ifstream f(fixtures_dir() + "/distributions/normal.json");
     REQUIRE(f.good());
     json fx; f >> fx;
-    CHECK(fx["target"] == "normal");
+    CHECK(fx["target"] == "distribution");
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
-            double got = run_normal(c, a["method"], a["args"]);
+            double got = run_distribution(c, a["method"], a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for mode: ") + mode;
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+TEST_CASE("uniform fixture") {
+    std::ifstream f(fixtures_dir() + "/distributions/uniform.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "distribution");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_distribution(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());
             }
         }

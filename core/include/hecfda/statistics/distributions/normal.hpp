@@ -3,6 +3,7 @@
 #define HECFDA_STATISTICS_DISTRIBUTIONS_NORMAL_HPP
 #include <cmath>
 #include <cstddef>
+#include <memory>
 #include <vector>
 #include "hecfda/constants.hpp"
 #include "hecfda/statistics/distributions/continuous_distribution.hpp"
@@ -15,6 +16,7 @@ class Normal : public ContinuousDistribution {
    public:
     Normal(double mean, double sd, long sample_size = 1) : mean_(mean), sd_(sd) {
         this->sample_size_ = sample_size;
+        add_rules();
     }
 
     DistributionType type() const override { return DistributionType::Normal; }
@@ -72,16 +74,39 @@ class Normal : public ContinuousDistribution {
         return (x * sd_) + mean_;
     }
 
+    // ported from: Normal.cs Equals(IDistribution distribution)
+    bool equals(const IDistribution& distribution) const override {
+        if (type() != distribution.type()) return false;
+        const auto& other = static_cast<const Normal&>(distribution);
+        return sample_size() == other.sample_size() && mean_ == other.mean_ && sd_ == other.sd_;
+    }
+
     // ported from: Normal.cs Fit(double[] sample) -> `new Normal(stats.Mean, stats.StandardDeviation,
     // stats.SampleSize)`. Phase 1 builds the real SampleStatistics (Welford-style running variance,
     // rescaled to the population/divide-by-n moment on the Variance getter -- see
-    // sample_statistics.hpp) rather than Phase 0's thin inline population mean/sd stub.
-    Normal fit(const std::vector<double>& sample) const {
+    // sample_statistics.hpp) rather than Phase 0's thin inline population mean/sd stub. Now returns
+    // `unique_ptr<IDistribution>`, matching IDistribution::fit's polymorphic signature (Task A4).
+    std::unique_ptr<IDistribution> fit(const std::vector<double>& sample) const override {
         hecfda::statistics::SampleStatistics stats(sample);
-        return Normal(stats.mean(), stats.standard_deviation(), stats.sample_size());
+        return std::make_unique<Normal>(stats.mean(), stats.standard_deviation(), stats.sample_size());
     }
 
    private:
+    // ported from: Normal.cs AddRules(). Registered but not auto-evaluated: matching C#, a
+    // caller must invoke validate() (Validation::validate) before has_errors()/error_level() are
+    // meaningful -- neither Normal's nor Uniform's C# ctor calls Validate() itself.
+    void add_rules() {
+        add_single_property_rule(
+            "StandardDeviation", [this]() { return sd_ >= 0; },
+            "Standard Deviation must be greater than or equal to 0.", ErrorLevel::Fatal);
+        add_single_property_rule(
+            "StandardDeviation", [this]() { return sd_ > 0; }, "Standard Deviation shouldnt be 0.",
+            ErrorLevel::Minor);
+        add_single_property_rule(
+            "SampleSize", [this]() { return sample_size_ > 0; }, "SampleSize must be greater than 0.",
+            ErrorLevel::Fatal);
+    }
+
     double mean_, sd_;
 };
 }  // namespace distributions

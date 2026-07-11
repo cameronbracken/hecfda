@@ -1,0 +1,89 @@
+{
+  "target": "distribution",
+  "kind": "distribution",
+  "source_test": "HEC.FDA.StatisticsTests/Distributions/UniformTests.cs",
+  "cases": [
+    {
+      "name": "uniform_0_1_inverse_cdf",
+      "construct": { "type": "Uniform", "params": [0, 1, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 0.5, "tol": 1e-5, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.25], "expected": 0.25, "tol": 1e-5, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.75], "expected": 0.75, "tol": 1e-5, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.95], "expected": 0.95, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "uniform_1_2_inverse_cdf",
+      "construct": { "type": "Uniform", "params": [1, 2, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 1.5, "tol": 1e-5, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.25], "expected": 1.25, "tol": 1e-5, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.75], "expected": 1.75, "tol": 1e-5, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.95], "expected": 1.95, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "uniform_1_3_inverse_cdf",
+      "construct": { "type": "Uniform", "params": [1, 3, 1] },
+      "assertions": [
+        { "method": "inverse_cdf", "args": [0.5], "expected": 2.0, "tol": 1e-5, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.25], "expected": 1.5, "tol": 1e-5, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.75], "expected": 2.5, "tol": 1e-5, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.95], "expected": 2.90, "tol": 1e-5, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "uniform_bad_min_gt_max",
+      "construct": { "type": "Uniform", "params": [0, -1, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "uniform_bad_min_gt_max_2",
+      "construct": { "type": "Uniform", "params": [-1, -2, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "uniform_bad_sample_size",
+      "construct": { "type": "Uniform", "params": [-1, 1, -1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "uniform_minor_min_eq_max",
+      "construct": { "type": "Uniform", "params": [0, 0, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" },
+        { "method": "error_level", "args": [], "expected": 2, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "uniform_good_0_1",
+      "construct": { "type": "Uniform", "params": [0, 1, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "uniform_good_neg1_2",
+      "construct": { "type": "Uniform", "params": [-1, 2, 1] },
+      "assertions": [
+        { "method": "has_errors", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "uniform_fit",
+      "construct": { "type": "Uniform", "params": [0, 1, 1] },
+      "assertions": [
+        { "method": "fit_min", "args": [2, 5, 3, 8, 1, 9, 4], "expected": 1.0, "tol": 1e-12, "mode": "rel" },
+        { "method": "fit_max", "args": [2, 5, 3, 8, 1, 9, 4], "expected": 9.0, "tol": 1e-12, "mode": "rel" },
+        { "method": "fit_sample_size", "args": [2, 5, 3, 8, 1, 9, 4], "expected": 7, "tol": 0.0, "mode": "exact" }
+      ]
+    }
+  ]
+}

@@ -13,10 +13,10 @@ extern "C" SEXP _hecfdar_hecfda_rng_sequence(SEXP seed, SEXP n) {
   END_CPP11
 }
 // glue.cpp
-double hecfda_normal_eval(double mean, double sd, std::string method, double x);
-extern "C" SEXP _hecfdar_hecfda_normal_eval(SEXP mean, SEXP sd, SEXP method, SEXP x) {
+double hecfda_dist_eval(std::string type, cpp11::doubles params, std::string method, double x);
+extern "C" SEXP _hecfdar_hecfda_dist_eval(SEXP type, SEXP params, SEXP method, SEXP x) {
   BEGIN_CPP11
-    return cpp11::as_sexp(hecfda_normal_eval(cpp11::as_cpp<cpp11::decay_t<double>>(mean), cpp11::as_cpp<cpp11::decay_t<double>>(sd), cpp11::as_cpp<cpp11::decay_t<std::string>>(method), cpp11::as_cpp<cpp11::decay_t<double>>(x)));
+    return cpp11::as_sexp(hecfda_dist_eval(cpp11::as_cpp<cpp11::decay_t<std::string>>(type), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(params), cpp11::as_cpp<cpp11::decay_t<std::string>>(method), cpp11::as_cpp<cpp11::decay_t<double>>(x)));
   END_CPP11
 }
 // glue.cpp
@@ -36,7 +36,7 @@ extern "C" SEXP _hecfdar_hecfda_upd_sample_integrate(SEXP xs, SEXP means, SEXP s
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
-    {"_hecfdar_hecfda_normal_eval",          (DL_FUNC) &_hecfdar_hecfda_normal_eval,          4},
+    {"_hecfdar_hecfda_dist_eval",            (DL_FUNC) &_hecfdar_hecfda_dist_eval,            4},
     {"_hecfdar_hecfda_paired_f",             (DL_FUNC) &_hecfdar_hecfda_paired_f,             4},
     {"_hecfdar_hecfda_rng_sequence",         (DL_FUNC) &_hecfdar_hecfda_rng_sequence,         2},
     {"_hecfdar_hecfda_upd_sample_integrate", (DL_FUNC) &_hecfdar_hecfda_upd_sample_integrate, 4},

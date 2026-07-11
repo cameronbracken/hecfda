@@ -29,12 +29,45 @@ namespace oracle_emitter {
       }
       throw new Exception("unknown rng method: " + method);
     }
-    static object EvalNormal(JsonElement c, string method, JsonElement args) {
-      var d = new Normal(D(c.GetProperty("mean")), D(c.GetProperty("sd")));
-      double x = D(args[0]);
-      return method switch {
-        "pdf" => d.PDF(x), "cdf" => d.CDF(x), "inverse_cdf" => d.InverseCDF(x),
-        _ => throw new Exception("unknown normal method: " + method) };
+    // Generic factory-based distribution dispatch (Task A4), mirroring IDistributionFactory's
+    // Factory* param order per type: Normal(mean, stDev, sampleSize), Uniform(min, max, sampleSize).
+    // Returns Statistics.ContinuousDistribution (not the IDistribution interface) so Validate()/
+    // HasErrors/ErrorLevel (inherited via ValidationErrorLogger : Validation) are directly
+    // reachable without a cast, alongside the IDistribution PDF/CDF/InverseCDF/Fit surface.
+    static ContinuousDistribution DistFactory(string type, double[] p) {
+      return type switch {
+        "Normal" => new Normal(p[0], p[1], (int)p[2]),
+        "Uniform" => new Uniform(p[0], p[1], (int)p[2]),
+        _ => throw new Exception("unknown distribution type: " + type) };
+    }
+    static object EvalDistribution(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      string type = c.GetProperty("type").GetString();
+      var dist = DistFactory(type, DA(c.GetProperty("params")));
+      if (method == "pdf") return dist.PDF(D(argsEl[0]));
+      if (method == "cdf") return dist.CDF(D(argsEl[0]));
+      if (method == "inverse_cdf") return dist.InverseCDF(D(argsEl[0]));
+      if (method == "has_errors" || method == "error_level") {
+        dist.Validate();
+        if (method == "has_errors") return dist.HasErrors ? 1.0 : 0.0;
+        return (double)(byte)dist.ErrorLevel;
+      }
+      if (method.StartsWith("fit_")) {
+        double[] data = DA(argsEl);
+        IDistribution fitted = dist.Fit(data);
+        string param = method.Substring(4);
+        if (param == "sample_size") return (double)fitted.SampleSize;
+        if (fitted is Normal n) {
+          if (param == "mean") return n.Mean;
+          if (param == "standard_deviation") return n.StandardDeviation;
+        }
+        if (fitted is Uniform u) {
+          if (param == "min") return u.Min;
+          if (param == "max") return u.Max;
+        }
+        throw new Exception("unknown fit param: " + param + " for type " + type);
+      }
+      throw new Exception("unknown distribution method: " + method);
     }
     static object EvalPaired(JsonElement c, string method, JsonElement args) {
       var pd = new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
@@ -114,7 +147,7 @@ namespace oracle_emitter {
               case "dotnet_random":
               case "rng_digest":
                 val = EvalRng(method, c.GetProperty("construct").GetProperty("seed").GetInt32(), argsEl); break;
-              case "normal": val = EvalNormal(c.GetProperty("construct"), method, argsEl); break;
+              case "distribution": val = EvalDistribution(c, method, argsEl); break;
               case "paired_data": val = EvalPaired(c.GetProperty("construct"), method, argsEl); break;
               case "special_functions": val = EvalSpecial(method, argsEl); break;
               case "sample_statistics": val = EvalSampleStatistics(c.GetProperty("construct"), method); break;
