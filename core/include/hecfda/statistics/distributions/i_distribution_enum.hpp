@@ -16,7 +16,9 @@ namespace distributions {
 // value (e.g. `TruncatedLogNormal.Type => IDistributionEnum.Normal`,
 // `TruncatedLogPearson3.Type => IDistributionEnum.LogPearsonIII`) are NOT separate enum members
 // upstream -- confirmed by grep across every `Distributions/*.cs` file's `Type` getter, only the
-// 9 values below are ever returned. No additional internal-only enum values are invented here.
+// 9 values below (NotSupported..TruncatedNormal) are ever returned by any type() override in this
+// port. Those 9 are transcribed verbatim, including the numeric gap between Empirical=8 and
+// TruncatedNormal=101.
 enum class DistributionType {
     NotSupported = 0,
     Normal = 1,
@@ -28,6 +30,14 @@ enum class DistributionType {
     IHistogram = 7,
     Empirical = 8,
     TruncatedNormal = 101,
+
+    // Port-internal factory keys (NOT in C# IDistributionEnum). Used only by
+    // distribution_type_from_name + IDistributionFactory::create to construct distributions whose
+    // C# `Type` property aliases an existing enum value. The instance type() returns the faithful
+    // C# value (e.g. TruncatedLogNormal::type() returns DistributionType::Normal), never one of
+    // these. Reserve 1006+ for later enum-less distributions (PearsonIII, Gamma, ShiftedGamma,
+    // TruncatedLogPearson3).
+    TruncatedLogNormal = 1005,
 };
 
 // Centralized string -> DistributionType mapping. Maps name (e.g. "Normal", "Uniform") to the
@@ -40,6 +50,7 @@ inline DistributionType distribution_type_from_name(const std::string& name) {
     if (name == "Deterministic") return DistributionType::Deterministic;
     if (name == "LogNormal") return DistributionType::LogNormal;
     if (name == "TruncatedNormal") return DistributionType::TruncatedNormal;
+    if (name == "TruncatedLogNormal") return DistributionType::TruncatedLogNormal;
     throw std::invalid_argument("distribution_type_from_name: unknown distribution type: " + name);
 }
 

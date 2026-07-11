@@ -10,6 +10,7 @@
 #include "hecfda/statistics/distributions/lognormal.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 #include "hecfda/statistics/distributions/triangular.hpp"
+#include "hecfda/statistics/distributions/truncated_lognormal.hpp"
 #include "hecfda/statistics/distributions/truncated_normal.hpp"
 #include "hecfda/statistics/distributions/uniform.hpp"
 namespace hecfda {
@@ -33,6 +34,12 @@ namespace distributions {
 //                                    NATURAL-log-scale data -- see lognormal.hpp)
 //   DistributionType::TruncatedNormal -> FactoryTruncatedNormal(mean, stDev, min, max, sampleSize)
 //                                    params = [mean, stDev, min, max, sampleSize]
+//   DistributionType::TruncatedLogNormal (PORT-INTERNAL key, 1005 -- see i_distribution_enum.hpp;
+//                                    instance type() still returns DistributionType::Normal, per
+//                                    the real C# `TruncatedLogNormal.Type => IDistributionEnum.
+//                                    Normal`) -> params = [mean, stDev, min, max, sampleSize]
+//                                    (moments of the NATURAL-log-scale data, matching
+//                                    TruncatedLogNormal.cs's ctor -- see truncated_lognormal.hpp)
 //
 // Later distribution tasks add one `case` each (LogPearsonIII,
 // IHistogram, Empirical), documenting their own params order here in the same style.
@@ -54,6 +61,9 @@ class IDistributionFactory {
             case DistributionType::TruncatedNormal:
                 return std::make_unique<TruncatedNormal>(params.at(0), params.at(1), params.at(2), params.at(3),
                                                            static_cast<long>(params.at(4)));
+            case DistributionType::TruncatedLogNormal:
+                return std::make_unique<TruncatedLogNormal>(params.at(0), params.at(1), params.at(2),
+                                                              params.at(3), static_cast<long>(params.at(4)));
             case DistributionType::NotSupported:
             case DistributionType::LogPearsonIII:
             case DistributionType::IHistogram:

@@ -241,6 +241,26 @@ TEST_CASE("truncated_normal fixture") {
     }
 }
 
+TEST_CASE("truncated_lognormal fixture") {
+    std::ifstream f(fixtures_dir() + "/distributions/truncated_lognormal.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "distribution");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_distribution(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
 static double run_paired_data(const json& c, const std::string& method, const json& args) {
     const auto& ctor = c["construct"];
     hecfda::model::paired_data::PairedData pd(ctor["xs"].get<std::vector<double>>(),
