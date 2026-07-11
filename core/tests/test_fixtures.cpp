@@ -673,6 +673,84 @@ TEST_CASE("paired_data duplicate_values fixture") {
     }
 }
 
+// Dispatch for the compose/SumYsForGivenX/multiply/monotonicity/sort/f(x,ref) surface added on
+// top of the scalar-returning run_paired_data() above (paired_data_ops.json). Every case
+// constructs a fresh PairedData from `construct`, and -- for the two-curve ops -- a fresh second
+// PairedData from `input`; mutation methods (force_*/sort_to_increasing_x_vals) act on that fresh
+// `pd` and read back xvals()/yvals() afterward, matching the fresh-construction-per-assertion
+// pattern the emitter uses. Always returns a vector so compare_by_mode's "vector"/"abs" dispatch
+// (driven by the fixture's own "mode" field) applies uniformly.
+static std::vector<double> run_paired_data_ops(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    hecfda::model::paired_data::PairedData pd(ctor["xs"].get<std::vector<double>>(),
+                                               ctor["ys"].get<std::vector<double>>());
+    auto make_input = [&]() {
+        const auto& in = c["input"];
+        return hecfda::model::paired_data::PairedData(in["xs"].get<std::vector<double>>(),
+                                                        in["ys"].get<std::vector<double>>());
+    };
+    if (method == "compose_xvals" || method == "compose_yvals") {
+        auto result = pd.compose(make_input());
+        return method == "compose_xvals" ? result.xvals() : result.yvals();
+    }
+    if (method == "sum_ys_for_given_x_xvals" || method == "sum_ys_for_given_x_yvals") {
+        auto result = pd.sum_ys_for_given_x(make_input());
+        return method == "sum_ys_for_given_x_xvals" ? result.xvals() : result.yvals();
+    }
+    if (method == "multiply_xvals" || method == "multiply_yvals") {
+        auto result = pd.multiply(make_input());
+        return method == "multiply_xvals" ? result.xvals() : result.yvals();
+    }
+    if (method == "force_weak_monotonicity_bottom_up_yvals") {
+        pd.force_weak_monotonicity_bottom_up();
+        return pd.yvals();
+    }
+    if (method == "force_strict_monotonicity_top_down_yvals") {
+        pd.force_strict_monotonicity_top_down();
+        return pd.yvals();
+    }
+    if (method == "force_strict_monotonicity_bottom_up_yvals") {
+        pd.force_strict_monotonicity_bottom_up();
+        return pd.yvals();
+    }
+    if (method == "sort_to_increasing_x_vals_xvals" || method == "sort_to_increasing_x_vals_yvals") {
+        pd.sort_to_increasing_x_vals();
+        return method == "sort_to_increasing_x_vals_xvals" ? pd.xvals() : pd.yvals();
+    }
+    if (method == "f_ref_index") {
+        int index = 0;
+        return {pd.f(args[0].get<double>(), index)};
+    }
+    auto msg = std::string("unknown paired_data_ops method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("paired_data_ops fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/paired_data_ops.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_paired_data_ops(c, a["method"], a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
 static double run_special_functions(const std::string& method, const json& args) {
     using SF = hecfda::statistics::SpecialFunctions;
     if (method == "log_gamma") return SF::log_gamma(args[0].get<double>());

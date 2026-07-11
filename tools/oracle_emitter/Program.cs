@@ -198,12 +198,50 @@ namespace oracle_emitter {
       if (method == "inverse_cdf") return hist.InverseCDF(D(argsEl[0]));
       throw new Exception("unknown histogram method: " + method);
     }
-    static object EvalPaired(JsonElement c, string method, JsonElement args) {
-      var pd = new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
-      return method switch {
-        "f" => pd.f(D(args[0])), "f_inverse" => pd.f_inverse(D(args[0])),
-        "integrate" => pd.Integrate(),
-        _ => throw new Exception("unknown paired_data method: " + method) };
+    static PairedData MakePaired(JsonElement c) => new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
+    // Extended (Task P2T2) beyond f/f_inverse/Integrate: compose/SumYsForGivenX/multiply (each
+    // needs a second curve, from the case's "input" property) and the monotonicity-forcing +
+    // SortToIncreasingXVals mutators (act on a fresh `pd`, then read Xvals/Yvals back) and the
+    // f(x, ref index) overload (fresh `indexOfPreviousTopOfSegment = 0` per call, matching
+    // test_fixtures.cpp's per-assertion fresh-construction convention).
+    static object EvalPaired(JsonElement caseEl, string method, JsonElement args) {
+      var pd = MakePaired(caseEl.GetProperty("construct"));
+      if (method == "f") return pd.f(D(args[0]));
+      if (method == "f_inverse") return pd.f_inverse(D(args[0]));
+      if (method == "integrate") return pd.Integrate();
+      if (method == "compose_xvals" || method == "compose_yvals") {
+        PairedData r = pd.compose(MakePaired(caseEl.GetProperty("input")));
+        return method == "compose_xvals" ? r.Xvals.ToArray() : r.Yvals.ToArray();
+      }
+      if (method == "sum_ys_for_given_x_xvals" || method == "sum_ys_for_given_x_yvals") {
+        PairedData r = pd.SumYsForGivenX(MakePaired(caseEl.GetProperty("input")));
+        return method == "sum_ys_for_given_x_xvals" ? r.Xvals.ToArray() : r.Yvals.ToArray();
+      }
+      if (method == "multiply_xvals" || method == "multiply_yvals") {
+        PairedData r = (PairedData)pd.multiply(MakePaired(caseEl.GetProperty("input")));
+        return method == "multiply_xvals" ? r.Xvals.ToArray() : r.Yvals.ToArray();
+      }
+      if (method == "force_weak_monotonicity_bottom_up_yvals") {
+        pd.ForceWeakMonotonicityBottomUp();
+        return pd.Yvals.ToArray();
+      }
+      if (method == "force_strict_monotonicity_top_down_yvals") {
+        pd.ForceStrictMonotonicityTopDown();
+        return pd.Yvals.ToArray();
+      }
+      if (method == "force_strict_monotonicity_bottom_up_yvals") {
+        pd.ForceStrictMonotonicityBottomUp();
+        return pd.Yvals.ToArray();
+      }
+      if (method == "sort_to_increasing_x_vals_xvals" || method == "sort_to_increasing_x_vals_yvals") {
+        pd.SortToIncreasingXVals();
+        return method == "sort_to_increasing_x_vals_xvals" ? pd.Xvals.ToArray() : pd.Yvals.ToArray();
+      }
+      if (method == "f_ref_index") {
+        int index = 0;
+        return pd.f(D(args[0]), ref index);
+      }
+      throw new Exception("unknown paired_data method: " + method);
     }
     static object EvalSpecial(string method, JsonElement args) {
       // Static SpecialFunctions surface; args is a flat array of scalars.
@@ -282,7 +320,7 @@ namespace oracle_emitter {
               case "empirical": val = EvalEmpirical(c, method, argsEl); break;
               case "convergence_criteria": val = EvalConvergenceCriteria(c, method, argsEl); break;
               case "histogram": val = EvalHistogram(c, method, argsEl); break;
-              case "paired_data": val = EvalPaired(c.GetProperty("construct"), method, argsEl); break;
+              case "paired_data": val = EvalPaired(c, method, argsEl); break;
               case "special_functions": val = EvalSpecial(method, argsEl); break;
               case "sample_statistics": val = EvalSampleStatistics(c.GetProperty("construct"), method); break;
               case "uncertain_paired_data": val = EvalUpd(c, method, argsEl); break;
