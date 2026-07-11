@@ -8,6 +8,7 @@
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/distributions/empirical.hpp"
 #include "hecfda/statistics/distributions/i_distribution_factory.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
@@ -407,6 +408,54 @@ TEST_CASE("empirical fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_empirical(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for ConvergenceCriteria (Task C1): a plain Validation-derived parameter
+// holder, not an IDistribution, so it is constructed directly here rather than via
+// IDistributionFactory::create -- same bespoke-target pattern as ShiftedGamma/PearsonIII/
+// Empirical. `construct.params` is [minIterations, maxIterations, zAlpha, tolerance] matching
+// the ConvergenceCriteria(minIterations, maxIterations, zAlpha, tolerance) ctor; the first two
+// are passed as doubles in the fixture (JSON has no int type) and truncated to int here. The
+// scalar accessors take no args; has_errors/error_level call validate() first, same convention
+// as run_distribution's has_errors/error_level branch.
+static double run_convergence_criteria(const json& c, const std::string& method, const json& args) {
+    (void)args;
+    std::vector<double> params = c["construct"]["params"].get<std::vector<double>>();
+    hecfda::statistics::ConvergenceCriteria cc(static_cast<int>(params[0]), static_cast<int>(params[1]),
+                                                params[2], params[3]);
+    if (method == "min_iterations") return cc.min_iterations();
+    if (method == "max_iterations") return cc.max_iterations();
+    if (method == "z_alpha") return cc.z_alpha();
+    if (method == "tolerance") return cc.tolerance();
+    if (method == "iteration_count") return cc.iteration_count();
+    if (method == "has_errors" || method == "error_level") {
+        cc.validate();
+        if (method == "has_errors") return cc.has_errors() ? 1.0 : 0.0;
+        return static_cast<double>(static_cast<unsigned char>(cc.error_level()));
+    }
+    auto msg = std::string("unknown convergence_criteria method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("convergence_criteria fixture") {
+    std::ifstream f(fixtures_dir() + "/convergence/convergence_criteria.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "convergence_criteria");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_convergence_criteria(c, a["method"], a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();

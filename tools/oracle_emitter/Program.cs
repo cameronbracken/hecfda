@@ -141,6 +141,25 @@ namespace oracle_emitter {
       if (method == "standard_deviation") return dist.StandardDeviation;
       throw new Exception("unknown empirical method: " + method);
     }
+    // ConvergenceCriteria (Task C1) is a plain Validation-derived parameter holder, not an
+    // IDistribution, so it is constructed directly here, like ShiftedGamma/PearsonIII/Empirical.
+    // `construct.params` is [minIterations, maxIterations, zAlpha, tolerance].
+    static object EvalConvergenceCriteria(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      double[] p = DA(c.GetProperty("params"));
+      var cc = new ConvergenceCriteria((int)p[0], (int)p[1], p[2], p[3]);
+      if (method == "min_iterations") return (double)cc.MinIterations;
+      if (method == "max_iterations") return (double)cc.MaxIterations;
+      if (method == "z_alpha") return cc.ZAlpha;
+      if (method == "tolerance") return cc.Tolerance;
+      if (method == "iteration_count") return (double)cc.IterationCount;
+      if (method == "has_errors" || method == "error_level") {
+        cc.Validate();
+        if (method == "has_errors") return cc.HasErrors ? 1.0 : 0.0;
+        return (double)(byte)cc.ErrorLevel;
+      }
+      throw new Exception("unknown convergence_criteria method: " + method);
+    }
     static object EvalPaired(JsonElement c, string method, JsonElement args) {
       var pd = new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
       return method switch {
@@ -223,6 +242,7 @@ namespace oracle_emitter {
               case "shifted_gamma": val = EvalShiftedGamma(c, method, argsEl); break;
               case "pearson3": val = EvalPearson3(c, method, argsEl); break;
               case "empirical": val = EvalEmpirical(c, method, argsEl); break;
+              case "convergence_criteria": val = EvalConvergenceCriteria(c, method, argsEl); break;
               case "paired_data": val = EvalPaired(c.GetProperty("construct"), method, argsEl); break;
               case "special_functions": val = EvalSpecial(method, argsEl); break;
               case "sample_statistics": val = EvalSampleStatistics(c.GetProperty("construct"), method); break;
