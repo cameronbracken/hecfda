@@ -14,6 +14,7 @@ using Statistics.Histograms;
 using HEC.FDA.Model.paireddata;
 using HEC.FDA.Model.compute;
 using HEC.FDA.Model.utilities;
+using HEC.FDA.Model.extensions;
 
 namespace oracle_emitter {
   class Program {
@@ -356,6 +357,33 @@ namespace oracle_emitter {
       throw new Exception("unknown graphical_calculators method: " + method);
     }
 
+    // GraphicalUncertainPairedData (Task P2T4b) is the non-parametric graphical-uncertainty
+    // frequency curve -- built from patched/GraphicalDistribution.cs +
+    // patched/GraphicalUncertainPairedData.cs (see those files' headers for why they're patched
+    // local copies rather than upstream Compile Includes: their WriteToXML/ReadFromXML are
+    // stubbed out to avoid the H5Assist.Chunking-dependent Serialization class, which is
+    // otherwise unreachable from this project). `construct` is {"exceedance_probabilities": [...],
+    // "flow_or_stage_values": [...], "equivalent_record_length": int, "using_stages_not_flows":
+    // bool, "seed": int?, "size": int?}; CurveMetaData is irrelevant to sampled yvals (same
+    // rationale as EvalUpd) so it's always a fixed CurveMetaData("hello") (matching
+    // GraphicalUncertaintyPairedDataTests.cs's SamplePairedDataShould fixture).
+    static object EvalGupd(JsonElement caseEl, string method, JsonElement args) {
+      var c = caseEl.GetProperty("construct");
+      double[] exceedanceProbabilities = DA(c.GetProperty("exceedance_probabilities"));
+      double[] flowOrStageValues = DA(c.GetProperty("flow_or_stage_values"));
+      int erl = c.GetProperty("equivalent_record_length").GetInt32();
+      bool usingStagesNotFlows = c.GetProperty("using_stages_not_flows").GetBoolean();
+      var gupd = new GraphicalUncertainPairedData(exceedanceProbabilities, flowOrStageValues, erl, new CurveMetaData("hello"), usingStagesNotFlows);
+      if (c.TryGetProperty("seed", out var s) && c.TryGetProperty("size", out var sz)) {
+        gupd.GenerateRandomNumbers(s.GetInt32(), sz.GetInt32());
+      }
+      if (method == "sample_paired_data") return gupd.SamplePairedData(D(args[0])).Yvals.ToArray();
+      if (method == "sample_paired_data_iteration") return gupd.SamplePairedData((long)D(args[0]), D(args[1]) != 0.0).Yvals.ToArray();
+      if (method == "sample_paired_data_f") return gupd.SamplePairedData(D(args[0])).f(D(args[1]));
+      if (method == "sample_paired_data_iteration_f") return gupd.SamplePairedData((long)D(args[0]), D(args[1]) != 0.0).f(D(args[2]));
+      throw new Exception("unknown graphical_uncertain_paired_data method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -396,6 +424,7 @@ namespace oracle_emitter {
               case "uncertain_paired_data": val = EvalUpd(c, method, argsEl); break;
               case "interpolate_quantiles": val = EvalInterpolateQuantiles(c, method, argsEl); break;
               case "graphical_calculators": val = EvalGraphicalCalculators(c, method, argsEl); break;
+              case "graphical_uncertain_paired_data": val = EvalGupd(c, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

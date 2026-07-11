@@ -1,4 +1,5 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -6,6 +7,8 @@
 #include "json.hpp"
 #include "check.hpp"
 #include "hecfda/model/compute/random_provider.hpp"
+#include "hecfda/model/extensions/graphical_distribution.hpp"
+#include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
@@ -1076,4 +1079,135 @@ TEST_CASE("graphical_calculators guard clauses") {
     CHECK_THROWS_AS(
         GraphicalFrequencyUncertaintyCalculators::less_simple_method(valid_probs, valid_flows, true, 0),
         std::invalid_argument);
+}
+
+// Direct property-based coverage transcribed from GraphicalTests.cs
+// (unittests/extensions/GraphicalTests.cs) -- GraphicalDistribution's ExceedanceProbabilities/
+// StageOrLogFlowDistributions surface, checked via CONTAINS-style assertions (not exact numeric
+// pins, matching the C# source's own Assert.Contains usage) rather than JSON fixture cases.
+TEST_CASE("graphical_distribution properties") {
+    using hecfda::model::extensions::GraphicalDistribution;
+    using hecfda::statistics::distributions::Normal;
+
+    std::vector<double> probs = {.99, .5, .1, .02, .01, .002};
+    std::vector<double> flows = {500, 2000, 34900, 66900, 86000, 146000};
+    GraphicalDistribution graphical(probs, flows, 10);
+
+    // ReturnDistributionsForInputProbabilities: every input probability survives into the
+    // expanded ExceedanceProbabilities.
+    const auto& output_probs = graphical.exceedance_probabilities();
+    for (double p : probs) {
+        CHECK(std::find(output_probs.begin(), output_probs.end(), p) != output_probs.end());
+    }
+
+    // ReturnDistributionsWithInputMeanValues: every input flow survives as some distribution's
+    // mean (usingStagesNotFlows defaults to true, so these are Normal, not LogNormal).
+    const auto& dists = graphical.stage_or_log_flow_distributions();
+    std::vector<double> means;
+    means.reserve(dists.size());
+    for (const auto& d : dists) {
+        auto* n = dynamic_cast<Normal*>(d.get());
+        REQUIRE(n != nullptr);
+        means.push_back(n->mean());
+    }
+    for (double flow : flows) {
+        CHECK(std::find(means.begin(), means.end(), flow) != means.end());
+    }
+
+    // ReturnSameNumberOfProbabilitesAsDistributions.
+    CHECK(dists.size() == output_probs.size());
+}
+
+// ported from: GraphicalUncertaintyPairedDataTests.cs
+// ReturnsDistributionsWhereMeanAndConfidenceLimitsAreMonotonicallyIncreasing -- for every
+// probability in the "required" exceedance-probability table (Task P2T4a's
+// required_exceedance_probabilities(), reused directly here), SamplePairedData(probability)'s
+// Yvals must be weakly increasing (every ForceStrictMonotonicity{TopDown,BottomUp} call this
+// class makes is expected to guarantee this, regardless of which branch is taken).
+TEST_CASE("graphical_uncertain_paired_data yvals monotonically increasing") {
+    using hecfda::model::paired_data::CurveMetaData;
+    using hecfda::model::paired_data::GraphicalUncertainPairedData;
+
+    std::vector<double> probs = {.99, .5, .1, .02, .01, .002};
+    std::vector<double> flows = {500, 2000, 34900, 66900, 86000, 146000};
+    CurveMetaData metadata("residential");
+    GraphicalUncertainPairedData graphical(probs, flows, 5, metadata, false);
+
+    for (double probability : hecfda::model::utilities::required_exceedance_probabilities()) {
+        auto sampled = graphical.sample_paired_data(probability);
+        const auto& yvals = sampled.yvals();
+        for (std::size_t j = 1; j < yvals.size(); ++j) {
+            CHECK(yvals[j] >= yvals[j - 1]);
+        }
+    }
+}
+
+// Bespoke dispatch for GraphicalUncertainPairedData (Task P2T4b): the non-parametric graphical-
+// uncertainty frequency curve, built from GraphicalDistribution (extensions/graphical_
+// distribution.hpp), which in turn wraps GraphicalFrequencyUncertaintyCalculators::
+// less_simple_method (Task P2T4a). `construct` is {"exceedance_probabilities": [...],
+// "flow_or_stage_values": [...], "equivalent_record_length": int, "using_stages_not_flows": bool,
+// "seed": int?, "size": int?} -- seed/size optional, wiring generate_random_numbers() when
+// present (mirrors run_uncertain_paired_data_ops's construct handling). CurveMetaData is
+// irrelevant to the sampled values (same rationale as UncertainPairedData's fixture dispatch), so
+// a fixed CurveMetaData("hello") is used, matching the emitter's EvalGupd. Fresh construction per
+// assertion (move-only type, same convention as UncertainPairedData/GraphicalDistribution).
+static hecfda::model::paired_data::GraphicalUncertainPairedData make_gupd(const json& ctor) {
+    std::vector<double> exceedance_probabilities = ctor["exceedance_probabilities"].get<std::vector<double>>();
+    std::vector<double> flow_or_stage_values = ctor["flow_or_stage_values"].get<std::vector<double>>();
+    int erl = ctor["equivalent_record_length"].get<int>();
+    bool using_stages_not_flows = ctor["using_stages_not_flows"].get<bool>();
+    hecfda::model::paired_data::CurveMetaData metadata("hello");
+    hecfda::model::paired_data::GraphicalUncertainPairedData gupd(exceedance_probabilities, flow_or_stage_values, erl,
+                                                                   metadata, using_stages_not_flows);
+    if (ctor.contains("seed") && ctor.contains("size")) {
+        gupd.generate_random_numbers(ctor["seed"].get<int>(), ctor["size"].get<long>());
+    }
+    return gupd;
+}
+
+// Dispatch methods: "sample_paired_data"/"sample_paired_data_iteration" return the sampled
+// curve's Yvals (vector mode, mirroring uncertain_paired_data_ops.json); "sample_paired_data_f"/
+// "sample_paired_data_iteration_f" additionally evaluate f() at a point on that sampled curve
+// (mirroring GraphicalUncertaintyPairedDataTests.cs's SamplePairedDataShould/
+// DeterministicSamplingShouldReturnInputRelationship, which both read `sampledCurve.f(x)` off the
+// result rather than the raw Yvals) -- wrapped in a single-element vector so compare_by_mode's
+// "abs" dispatch applies uniformly.
+static std::vector<double> run_gupd(const json& c, const std::string& method, const json& args) {
+    auto gupd = make_gupd(c["construct"]);
+    if (method == "sample_paired_data") return gupd.sample_paired_data(args[0].get<double>()).yvals();
+    if (method == "sample_paired_data_iteration")
+        return gupd.sample_paired_data(args[0].get<long>(), args[1].get<double>() != 0.0).yvals();
+    if (method == "sample_paired_data_f")
+        return {gupd.sample_paired_data(args[0].get<double>()).f(args[1].get<double>())};
+    if (method == "sample_paired_data_iteration_f")
+        return {gupd.sample_paired_data(args[0].get<long>(), args[1].get<double>() != 0.0).f(args[2].get<double>())};
+    auto msg = std::string("unknown graphical_uncertain_paired_data method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("graphical_uncertain_paired_data fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/graphical.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "graphical_uncertain_paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_gupd(c, a["method"], a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
 }

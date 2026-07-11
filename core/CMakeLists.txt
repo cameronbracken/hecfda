@@ -16,7 +16,15 @@ foreach(test_src ${HECFDA_TESTS})
     target_link_libraries(${test_name} PRIVATE hecfda_core)
     target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     if(NOT MSVC)
-        target_compile_options(${test_name} PRIVATE -Wall -Wextra)
+        # -ffp-contract=off: Clang defaults to fusing multiply-add expressions (FP_CONTRACT ON,
+        # even at -O0), which rounds differently than .NET's non-fused arithmetic. Found via Task
+        # P2T4b's seeded GraphicalUncertainPairedData fixture: GraphicalFrequencyUncertaintyCalcul
+        # ators::compute_slope's epsilon (1e-5) finite-difference division amplifies a single ULP
+        # of FMA-vs-non-fused divergence in interpolate_normally() by ~1e5x, breaking bit-for-bit
+        # reproduction at scattered indices for some (but not all) inputs. Disabling contraction
+        # project-wide matches .NET's strict left-to-right IEEE 754 evaluation and is required for
+        # every other fixture's "bit-for-bit" claim to actually hold, not just this one.
+        target_compile_options(${test_name} PRIVATE -Wall -Wextra -ffp-contract=off)
     endif()
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()

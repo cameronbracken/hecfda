@@ -2,9 +2,7 @@
 // UncertainPairedData.cs resolves without referencing the AWS SDK (no Amazon type is used).
 namespace Amazon.Runtime { }
 
-// Empty namespace stub (Task P2T4a) so the dead `using HEC.FDA.Model.extensions;` in the upstream
-// GraphicalFrequencyUncertaintyCalculators.cs resolves without pulling in
-// ContinuousDistributionExtensions.cs's own transitive deps (IProvideRandomNumbers,
-// Statistics.Histograms.DynamicHistogram) -- no type from that namespace is actually used by
-// GraphicalFrequencyUncertaintyCalculators.cs.
-namespace HEC.FDA.Model.extensions { }
+// NOTE (Task P2T4a): GraphicalFrequencyUncertaintyCalculators.cs has a dead `using
+// HEC.FDA.Model.extensions;` -- previously satisfied by an empty namespace stub here. As of Task
+// P2T4b, patched/GraphicalDistribution.cs genuinely populates HEC.FDA.Model.extensions, so the
+// stub is no longer needed and has been removed.
