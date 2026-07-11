@@ -13,6 +13,8 @@ using Statistics.Distributions;
 using Statistics.Histograms;
 using HEC.FDA.Model.paireddata;
 using HEC.FDA.Model.compute;
+using HEC.FDA.Model.utilities;
+using HEC.FDA.Model.extensions;
 
 namespace oracle_emitter {
   class Program {
@@ -198,12 +200,50 @@ namespace oracle_emitter {
       if (method == "inverse_cdf") return hist.InverseCDF(D(argsEl[0]));
       throw new Exception("unknown histogram method: " + method);
     }
-    static object EvalPaired(JsonElement c, string method, JsonElement args) {
-      var pd = new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
-      return method switch {
-        "f" => pd.f(D(args[0])), "f_inverse" => pd.f_inverse(D(args[0])),
-        "integrate" => pd.Integrate(),
-        _ => throw new Exception("unknown paired_data method: " + method) };
+    static PairedData MakePaired(JsonElement c) => new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
+    // Extended (Task P2T2) beyond f/f_inverse/Integrate: compose/SumYsForGivenX/multiply (each
+    // needs a second curve, from the case's "input" property) and the monotonicity-forcing +
+    // SortToIncreasingXVals mutators (act on a fresh `pd`, then read Xvals/Yvals back) and the
+    // f(x, ref index) overload (fresh `indexOfPreviousTopOfSegment = 0` per call, matching
+    // test_fixtures.cpp's per-assertion fresh-construction convention).
+    static object EvalPaired(JsonElement caseEl, string method, JsonElement args) {
+      var pd = MakePaired(caseEl.GetProperty("construct"));
+      if (method == "f") return pd.f(D(args[0]));
+      if (method == "f_inverse") return pd.f_inverse(D(args[0]));
+      if (method == "integrate") return pd.Integrate();
+      if (method == "compose_xvals" || method == "compose_yvals") {
+        PairedData r = pd.compose(MakePaired(caseEl.GetProperty("input")));
+        return method == "compose_xvals" ? r.Xvals.ToArray() : r.Yvals.ToArray();
+      }
+      if (method == "sum_ys_for_given_x_xvals" || method == "sum_ys_for_given_x_yvals") {
+        PairedData r = pd.SumYsForGivenX(MakePaired(caseEl.GetProperty("input")));
+        return method == "sum_ys_for_given_x_xvals" ? r.Xvals.ToArray() : r.Yvals.ToArray();
+      }
+      if (method == "multiply_xvals" || method == "multiply_yvals") {
+        PairedData r = (PairedData)pd.multiply(MakePaired(caseEl.GetProperty("input")));
+        return method == "multiply_xvals" ? r.Xvals.ToArray() : r.Yvals.ToArray();
+      }
+      if (method == "force_weak_monotonicity_bottom_up_yvals") {
+        pd.ForceWeakMonotonicityBottomUp();
+        return pd.Yvals.ToArray();
+      }
+      if (method == "force_strict_monotonicity_top_down_yvals") {
+        pd.ForceStrictMonotonicityTopDown();
+        return pd.Yvals.ToArray();
+      }
+      if (method == "force_strict_monotonicity_bottom_up_yvals") {
+        pd.ForceStrictMonotonicityBottomUp();
+        return pd.Yvals.ToArray();
+      }
+      if (method == "sort_to_increasing_x_vals_xvals" || method == "sort_to_increasing_x_vals_yvals") {
+        pd.SortToIncreasingXVals();
+        return method == "sort_to_increasing_x_vals_xvals" ? pd.Xvals.ToArray() : pd.Yvals.ToArray();
+      }
+      if (method == "f_ref_index") {
+        int index = 0;
+        return pd.f(D(args[0]), ref index);
+      }
+      throw new Exception("unknown paired_data method: " + method);
     }
     static object EvalSpecial(string method, JsonElement args) {
       // Static SpecialFunctions surface; args is a flat array of scalars.
@@ -234,18 +274,114 @@ namespace oracle_emitter {
         "sample_size" => (double)stats.SampleSize,
         _ => throw new Exception("unknown sample_statistics method: " + method) };
     }
+    // ys is now built from the generalized `{type, params}` distribution specs via the shared
+    // DistFactory (same param order as the C++ IDistributionFactory), matching UncertainPairedData's
+    // generalization from Normal to IDistribution. `metadata` is optional (xlabel/ylabel/name),
+    // defaulting to CurveMetaData("x","y","oracle") -- irrelevant to the sampled yvals, kept only for
+    // faithful construction. sample_and_integrate reads the case-level `seed`; the iteration overload
+    // reads construct-level `seed`/`size` for GenerateRandomNumbers.
     static object EvalUpd(JsonElement caseEl, string method, JsonElement args) {
       var c = caseEl.GetProperty("construct");
       double[] xs = DA(c.GetProperty("xs"));
       var ys = c.GetProperty("ys").EnumerateArray()
-        .Select(y => (IDistribution)new Normal(D(y.GetProperty("mean")), D(y.GetProperty("sd")))).ToArray();
-      var upd = new UncertainPairedData(xs, ys, new CurveMetaData("x","y","oracle"));
+        .Select(y => (IDistribution)DistFactory(y.GetProperty("type").GetString(), DA(y.GetProperty("params")))).ToArray();
+      CurveMetaData md = c.TryGetProperty("metadata", out var m)
+        ? new CurveMetaData(m.GetProperty("xlabel").GetString(), m.GetProperty("ylabel").GetString(), m.GetProperty("name").GetString())
+        : new CurveMetaData("x","y","oracle");
+      var upd = new UncertainPairedData(xs, ys, md);
       if (method == "sample_and_integrate") {
         int seed = caseEl.GetProperty("seed").GetInt32();
         double p = new RandomProvider(seed).NextRandom();
         return upd.SamplePairedDataRaw(p).Integrate();
       }
+      if (c.TryGetProperty("seed", out var s) && c.TryGetProperty("size", out var sz)) {
+        upd.GenerateRandomNumbers(s.GetInt32(), (long)sz.GetDouble());
+      }
+      if (method == "sample_paired_data") return upd.SamplePairedData(D(args[0])).Yvals.ToArray();
+      if (method == "sample_paired_data_raw") return upd.SamplePairedDataRaw(D(args[0])).Yvals.ToArray();
+      if (method == "sample_paired_data_raw_deterministic") return upd.SamplePairedDataRawDeterministic().Yvals.ToArray();
+      if (method == "sample_paired_data_iteration") return upd.SamplePairedData((long)D(args[0]), D(args[1]) != 0.0).Yvals.ToArray();
       throw new Exception("unknown uncertain_paired_data method: " + method);
+    }
+
+    // InterpolateQuantiles (Task P2T4a) is a public static helper in HEC.FDA.Model.paireddata --
+    // no null/RNG involved, so it's dispatched directly here like ShiftedGamma/PearsonIII/etc.
+    // `construct` is {"input_exceedance_probabilities": [...], "input_data_for_interpolation":
+    // [...]}; the single method `interpolate_on_x` takes the "required" exceedance probabilities
+    // as its (array-valued) `args`.
+    static object EvalInterpolateQuantiles(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      double[] inputExceedanceProbabilities = DA(c.GetProperty("input_exceedance_probabilities"));
+      double[] inputDataForInterpolation = DA(c.GetProperty("input_data_for_interpolation"));
+      if (method == "interpolate_on_x") {
+        double[] required = DA(argsEl);
+        return InterpolateQuantiles.InterpolateOnX(inputExceedanceProbabilities, required, inputDataForInterpolation);
+      }
+      throw new Exception("unknown interpolate_quantiles method: " + method);
+    }
+    // GraphicalFrequencyUncertaintyCalculators.LessSimpleMethod (Task P2T4a) is a public static
+    // method in HEC.FDA.Model.utilities returning `(double[], ContinuousDistribution[])`.
+    // `construct` is {"exceedance_probabilities": [...], "stages_or_flows": [...],
+    // "using_stages_not_flows": bool, "equivalent_record_length": int?} (ERL defaults to 10,
+    // matching the C# default parameter). Distribution mean/standard-deviation aren't exposed on
+    // IDistribution/ContinuousDistribution, so they're read via an `is Normal`/`is LogNormal`
+    // pattern match, mirroring EvalDistribution's fit_<param> demux above.
+    static object EvalGraphicalCalculators(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      double[] exceedanceProbabilities = DA(c.GetProperty("exceedance_probabilities"));
+      double[] stagesOrFlows = DA(c.GetProperty("stages_or_flows"));
+      bool usingStagesNotFlows = c.GetProperty("using_stages_not_flows").GetBoolean();
+      int erl = c.TryGetProperty("equivalent_record_length", out var erlEl) ? erlEl.GetInt32() : 10;
+      (double[] filledProbs, ContinuousDistribution[] dists) = GraphicalFrequencyUncertaintyCalculators.LessSimpleMethod(
+          exceedanceProbabilities, stagesOrFlows, usingStagesNotFlows, erl);
+      if (method == "filled_exceedance_probabilities") return filledProbs;
+      if (method == "distribution_means") {
+        return dists.Select(d => d switch {
+          Normal n => n.Mean,
+          LogNormal ln => ln.Mean,
+          _ => throw new Exception("unexpected distribution type: " + d.GetType().Name)
+        }).ToArray();
+      }
+      if (method == "distribution_standard_deviations") {
+        return dists.Select(d => d switch {
+          Normal n => n.StandardDeviation,
+          LogNormal ln => ln.StandardDeviation,
+          _ => throw new Exception("unexpected distribution type: " + d.GetType().Name)
+        }).ToArray();
+      }
+      if (method == "distribution_pdf_at") {
+        int index = (int)D(argsEl[0]);
+        double x = D(argsEl[1]);
+        return dists[index].PDF(x);
+      }
+      throw new Exception("unknown graphical_calculators method: " + method);
+    }
+
+    // GraphicalUncertainPairedData (Task P2T4b) is the non-parametric graphical-uncertainty
+    // frequency curve -- built from patched/GraphicalDistribution.cs +
+    // patched/GraphicalUncertainPairedData.cs (see those files' headers for why they're patched
+    // local copies rather than upstream Compile Includes: their WriteToXML/ReadFromXML are
+    // stubbed out to avoid the H5Assist.Chunking-dependent Serialization class, which is
+    // otherwise unreachable from this project). `construct` is {"exceedance_probabilities": [...],
+    // "flow_or_stage_values": [...], "equivalent_record_length": int, "using_stages_not_flows":
+    // bool, "seed": int?, "size": int?}; CurveMetaData is irrelevant to sampled yvals (same
+    // rationale as EvalUpd) so it's always a fixed CurveMetaData("hello") (matching
+    // GraphicalUncertaintyPairedDataTests.cs's SamplePairedDataShould fixture).
+    static object EvalGupd(JsonElement caseEl, string method, JsonElement args) {
+      var c = caseEl.GetProperty("construct");
+      double[] exceedanceProbabilities = DA(c.GetProperty("exceedance_probabilities"));
+      double[] flowOrStageValues = DA(c.GetProperty("flow_or_stage_values"));
+      int erl = c.GetProperty("equivalent_record_length").GetInt32();
+      bool usingStagesNotFlows = c.GetProperty("using_stages_not_flows").GetBoolean();
+      var gupd = new GraphicalUncertainPairedData(exceedanceProbabilities, flowOrStageValues, erl, new CurveMetaData("hello"), usingStagesNotFlows);
+      if (c.TryGetProperty("seed", out var s) && c.TryGetProperty("size", out var sz)) {
+        gupd.GenerateRandomNumbers(s.GetInt32(), sz.GetInt32());
+      }
+      if (method == "sample_paired_data") return gupd.SamplePairedData(D(args[0])).Yvals.ToArray();
+      if (method == "sample_paired_data_iteration") return gupd.SamplePairedData((long)D(args[0]), D(args[1]) != 0.0).Yvals.ToArray();
+      if (method == "sample_paired_data_f") return gupd.SamplePairedData(D(args[0])).f(D(args[1]));
+      if (method == "sample_paired_data_iteration_f") return gupd.SamplePairedData((long)D(args[0]), D(args[1]) != 0.0).f(D(args[2]));
+      throw new Exception("unknown graphical_uncertain_paired_data method: " + method);
     }
 
     static void Main() {
@@ -282,10 +418,13 @@ namespace oracle_emitter {
               case "empirical": val = EvalEmpirical(c, method, argsEl); break;
               case "convergence_criteria": val = EvalConvergenceCriteria(c, method, argsEl); break;
               case "histogram": val = EvalHistogram(c, method, argsEl); break;
-              case "paired_data": val = EvalPaired(c.GetProperty("construct"), method, argsEl); break;
+              case "paired_data": val = EvalPaired(c, method, argsEl); break;
               case "special_functions": val = EvalSpecial(method, argsEl); break;
               case "sample_statistics": val = EvalSampleStatistics(c.GetProperty("construct"), method); break;
               case "uncertain_paired_data": val = EvalUpd(c, method, argsEl); break;
+              case "interpolate_quantiles": val = EvalInterpolateQuantiles(c, method, argsEl); break;
+              case "graphical_calculators": val = EvalGraphicalCalculators(c, method, argsEl); break;
+              case "graphical_uncertain_paired_data": val = EvalGupd(c, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

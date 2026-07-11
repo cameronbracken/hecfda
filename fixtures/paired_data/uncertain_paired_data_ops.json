@@ -1,0 +1,402 @@
+{
+  "target": "uncertain_paired_data",
+  "kind": "mc_paired_data_ops",
+  "source_test": "HEC.FDA.ModelTest/unittests/UncertainPairedDataShould.cs (ProducePairedData, PairedDataSamplesCorrectly) + all sample-path overloads; expected values pinned from the real C# via tools/oracle_emitter",
+  "cases": [
+    {
+      "name": "produce_paired_data_slope_1_2",
+      "construct": {
+        "xs": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "ys": [
+          {
+            "type": "Uniform",
+            "params": [
+              1,
+              2,
+              10
+            ]
+          },
+          {
+            "type": "Uniform",
+            "params": [
+              2,
+              4,
+              10
+            ]
+          },
+          {
+            "type": "Uniform",
+            "params": [
+              3,
+              6,
+              10
+            ]
+          },
+          {
+            "type": "Uniform",
+            "params": [
+              4,
+              8,
+              10
+            ]
+          },
+          {
+            "type": "Uniform",
+            "params": [
+              5,
+              10,
+              10
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "sample_paired_data",
+          "args": [
+            0.5
+          ],
+          "expected": [
+            1.5,
+            3,
+            4.5,
+            6,
+            7.5
+          ],
+          "tol": 1e-09,
+          "mode": "vector"
+        }
+      ]
+    },
+    {
+      "name": "produce_paired_data_slope_1_3",
+      "construct": {
+        "xs": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "ys": [
+          {
+            "type": "Uniform",
+            "params": [
+              1,
+              3,
+              10
+            ]
+          },
+          {
+            "type": "Uniform",
+            "params": [
+              2,
+              6,
+              10
+            ]
+          },
+          {
+            "type": "Uniform",
+            "params": [
+              3,
+              9,
+              10
+            ]
+          },
+          {
+            "type": "Uniform",
+            "params": [
+              4,
+              12,
+              10
+            ]
+          },
+          {
+            "type": "Uniform",
+            "params": [
+              5,
+              15,
+              10
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "sample_paired_data",
+          "args": [
+            0.5
+          ],
+          "expected": [
+            2,
+            4,
+            6,
+            8,
+            10
+          ],
+          "tol": 1e-09,
+          "mode": "vector"
+        }
+      ]
+    },
+    {
+      "name": "paired_data_samples_correctly_forced",
+      "construct": {
+        "xs": [
+          0.0001,
+          0.5,
+          0.9999
+        ],
+        "ys": [
+          {
+            "type": "Normal",
+            "params": [
+              0,
+              2,
+              1
+            ]
+          },
+          {
+            "type": "Normal",
+            "params": [
+              -10,
+              2,
+              1
+            ]
+          },
+          {
+            "type": "Normal",
+            "params": [
+              100,
+              2,
+              1
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "sample_paired_data",
+          "args": [
+            0.5
+          ],
+          "expected": [
+            0,
+            0,
+            100
+          ],
+          "tol": 1e-09,
+          "mode": "vector"
+        }
+      ]
+    },
+    {
+      "name": "paired_data_samples_raw_unforced",
+      "construct": {
+        "xs": [
+          0.0001,
+          0.5,
+          0.9999
+        ],
+        "ys": [
+          {
+            "type": "Normal",
+            "params": [
+              0,
+              2,
+              1
+            ]
+          },
+          {
+            "type": "Normal",
+            "params": [
+              -10,
+              2,
+              1
+            ]
+          },
+          {
+            "type": "Normal",
+            "params": [
+              100,
+              2,
+              1
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "sample_paired_data_raw",
+          "args": [
+            0.5
+          ],
+          "expected": [
+            0,
+            -10,
+            100
+          ],
+          "tol": 1e-09,
+          "mode": "vector"
+        }
+      ]
+    },
+    {
+      "name": "raw_deterministic_mixed_types",
+      "construct": {
+        "xs": [
+          1,
+          2,
+          3
+        ],
+        "ys": [
+          {
+            "type": "Normal",
+            "params": [
+              5,
+              2,
+              1
+            ]
+          },
+          {
+            "type": "Uniform",
+            "params": [
+              2,
+              8,
+              10
+            ]
+          },
+          {
+            "type": "Deterministic",
+            "params": [
+              7
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "sample_paired_data_raw_deterministic",
+          "args": [],
+          "expected": [
+            5,
+            5,
+            7
+          ],
+          "tol": 1e-09,
+          "mode": "vector"
+        }
+      ]
+    },
+    {
+      "name": "iteration_stochastic_mixed_types",
+      "construct": {
+        "xs": [
+          1,
+          2,
+          3
+        ],
+        "ys": [
+          {
+            "type": "Normal",
+            "params": [
+              5,
+              2,
+              1
+            ]
+          },
+          {
+            "type": "Uniform",
+            "params": [
+              2,
+              8,
+              10
+            ]
+          },
+          {
+            "type": "Deterministic",
+            "params": [
+              7
+            ]
+          }
+        ],
+        "seed": 1234,
+        "size": 10
+      },
+      "assertions": [
+        {
+          "method": "sample_paired_data_iteration",
+          "args": [
+            3,
+            0
+          ],
+          "expected": [
+            8.228716303403926,
+            8.228716303403926,
+            8.228716303403926
+          ],
+          "tol": 1e-09,
+          "mode": "vector"
+        }
+      ]
+    },
+    {
+      "name": "iteration_deterministic_representation_mixed_types",
+      "construct": {
+        "xs": [
+          1,
+          2,
+          3
+        ],
+        "ys": [
+          {
+            "type": "Normal",
+            "params": [
+              5,
+              2,
+              1
+            ]
+          },
+          {
+            "type": "Uniform",
+            "params": [
+              2,
+              8,
+              10
+            ]
+          },
+          {
+            "type": "Deterministic",
+            "params": [
+              7
+            ]
+          }
+        ],
+        "seed": 1234,
+        "size": 10
+      },
+      "assertions": [
+        {
+          "method": "sample_paired_data_iteration",
+          "args": [
+            0,
+            1
+          ],
+          "expected": [
+            5,
+            5,
+            7
+          ],
+          "tol": 1e-09,
+          "mode": "vector"
+        }
+      ]
+    }
+  ]
+}

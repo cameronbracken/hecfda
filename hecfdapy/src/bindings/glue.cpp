@@ -1,5 +1,6 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -47,9 +48,9 @@ static double paired_f(std::vector<double> xs, std::vector<double> ys, const std
 }
 static double upd_sample_integrate(std::vector<double> xs, std::vector<double> means,
                                    std::vector<double> sds, int seed) {
-    std::vector<nd::Normal> ys;
-    for (size_t i = 0; i < means.size(); ++i) ys.emplace_back(means[i], sds[i], 1);
-    pd::UncertainPairedData upd(std::move(xs), ys);
+    std::vector<std::unique_ptr<nd::IDistribution>> ys;
+    for (size_t i = 0; i < means.size(); ++i) ys.push_back(std::make_unique<nd::Normal>(means[i], sds[i], 1));
+    pd::UncertainPairedData upd(std::move(xs), std::move(ys));
     return upd.sample_and_integrate(seed);
 }
 PYBIND11_MODULE(_core, mod) {

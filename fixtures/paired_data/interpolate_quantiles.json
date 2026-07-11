@@ -1,0 +1,46 @@
+{
+  "target": "interpolate_quantiles",
+  "kind": "interpolate_on_x",
+  "source_test": "no direct HEC.FDA.ModelTest coverage for InterpolateQuantiles.cs (used internally by GraphicalFrequencyUncertaintyCalculators.LessSimpleMethod, exercised transitively via GraphicalFrequencyUncertaintyCalculatorsTests.cs); this case is original, gated only by the oracle_emitter (real C#).",
+  "notes": "z-score normal-probability interpolation, no RNG. Reuses the same stage-frequency shape as the graphical_calculators.json cases (exceedance probabilities descending, values increasing) but calls InterpolateQuantiles.InterpolateOnX directly rather than through LessSimpleMethod.",
+  "cases": [
+    {
+      "name": "basic_stage_frequency",
+      "construct": {
+        "input_exceedance_probabilities": [
+          0.5,
+          0.2,
+          0.1,
+          0.02
+        ],
+        "input_data_for_interpolation": [
+          10.0,
+          15.0,
+          20.0,
+          30.0
+        ]
+      },
+      "assertions": [
+        {
+          "method": "interpolate_on_x",
+          "args": [
+            0.5,
+            0.3,
+            0.1,
+            0.05,
+            0.02
+          ],
+          "expected": [
+            10,
+            13.113659084153134,
+            20,
+            24.70552213177042,
+            30
+          ],
+          "tol": 1e-09,
+          "mode": "vector"
+        }
+      ]
+    }
+  ]
+}

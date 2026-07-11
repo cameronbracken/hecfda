@@ -1,0 +1,115 @@
+{
+  "target": "paired_data",
+  "kind": "paired_data_ops",
+  "source_test": "HEC.FDA.ModelTest/unittests/PairedDataShould.cs",
+  "notes": "compose/SumYsForGivenX oracle values are verbatim from PairedDataShould.cs (Compose, SumYsForGivenX_Test). multiply's xvals/yvals are computed by hand-tracing PairedData.cs's exact merge+Array.Sort(stages,damages) algorithm against the Multiply theory's inputs/subject curve (not the test's own literals, which are only asserted to 1-decimal precision via `Assert.Equal(expectedY, actualY, 1)` -- direct array comparison here is strictly tighter and is independently cross-checked by the oracle_emitter/verify_oracles.py gate against the real C#). Monotonicity oracle values are verbatim from PairedDataShould.cs; note ForceStrictMonotonicityTopDown/BottomUp's `double.Epsilon` nudge is a silent no-op at these y magnitudes (2.0 +/- ~5e-324 rounds back to 2.0 in IEEE754 double), so several 'nudged' entries below are literally unchanged from their pre-nudge value -- this is real upstream behavior, not a fixture bug. sort_to_increasing_x_vals and f(x, ref index) have no direct PairedDataShould.cs coverage; their cases are original, gated only by the oracle_emitter (real C#).",
+  "cases": [
+    {
+      "name": "compose_ones_by_tens",
+      "construct": { "xs": [1,2,3,4,5], "ys": [1,2,3,4,5] },
+      "input": { "xs": [10,20,30,40,50], "ys": [1,2,3,4,5] },
+      "assertions": [
+        { "method": "compose_xvals", "args": [], "expected": [10,20,30,40,50], "tol": 0.0, "mode": "vector" },
+        { "method": "compose_yvals", "args": [], "expected": [1,2,3,4,5], "tol": 0.0, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "sum_ys_for_given_x_basic",
+      "construct": { "xs": [2,3,4,5,6], "ys": [20,30,40,50,60] },
+      "input": { "xs": [1,2,3,4.5,5,6], "ys": [10,20,30,45,50,60] },
+      "assertions": [
+        { "method": "sum_ys_for_given_x_xvals", "args": [], "expected": [1,2,3,4,4.5,5,6], "tol": 0.0, "mode": "vector" },
+        { "method": "sum_ys_for_given_x_yvals", "args": [], "expected": [30,40,60,80,90,100,120], "tol": 0.0, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "multiply_identical_xvals",
+      "construct": { "xs": [1,2,3,4,5], "ys": [1,2,3,4,5] },
+      "input": { "xs": [1,2,3,4,5], "ys": [0.1,0.2,0.5,0.9,1] },
+      "assertions": [
+        { "method": "multiply_xvals", "args": [], "expected": [1,2,3,4,5], "tol": 0.0, "mode": "vector" },
+        { "method": "multiply_yvals", "args": [], "expected": [0.1,0.4,1.5,3.6,5], "tol": 1e-9, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "multiply_same_count_different_range",
+      "construct": { "xs": [1,2,3,4,5], "ys": [1,2,3,4,5] },
+      "input": { "xs": [2,3,4,5,6], "ys": [0.1,0.2,0.3,0.8,1] },
+      "assertions": [
+        { "method": "multiply_xvals", "args": [], "expected": [1,2,3,4,5,6], "tol": 0.0, "mode": "vector" },
+        { "method": "multiply_yvals", "args": [], "expected": [0.1,0.2,0.6000000000000001,1.2,4.0,5], "tol": 1e-9, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "multiply_fewer_xvals",
+      "construct": { "xs": [1,2,3,4,5], "ys": [1,2,3,4,5] },
+      "input": { "xs": [2,3,4], "ys": [0.5,0.5,0.5] },
+      "assertions": [
+        { "method": "multiply_xvals", "args": [], "expected": [1,2,3,4,5], "tol": 0.0, "mode": "vector" },
+        { "method": "multiply_yvals", "args": [], "expected": [0.5,1.0,1.5,2.0,2.5], "tol": 1e-9, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "multiply_more_xvals_greater_range",
+      "construct": { "xs": [1,2,3,4,5], "ys": [1,2,3,4,5] },
+      "input": { "xs": [0.5,1,1.5,2,2.5,3,3.5,4,4.5,5,5.5], "ys": [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95,1] },
+      "assertions": [
+        { "method": "multiply_xvals", "args": [], "expected": [0.5,1,1.5,2,2.5,3,3.5,4,4.5,5,5.5], "tol": 0.0, "mode": "vector" },
+        { "method": "multiply_yvals", "args": [], "expected": [0.1,0.2,0.44999999999999996,0.8,1.25,1.7999999999999998,2.4499999999999997,3.2,4.05,4.75,5], "tol": 1e-9, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "force_strict_monotonicity_top_down",
+      "construct": { "xs": [1,2,3,4,5], "ys": [5,4,4,3,2] },
+      "assertions": [
+        { "method": "force_strict_monotonicity_top_down_yvals", "args": [], "expected": [2.0,2.0,2.0,2.0,2], "tol": 0.0, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "force_strict_monotonicity_bottom_up",
+      "construct": { "xs": [1,2,3,4,5], "ys": [2,2,3,4,5] },
+      "assertions": [
+        { "method": "force_strict_monotonicity_bottom_up_yvals", "args": [], "expected": [2,2.0,3,4,5], "tol": 0.0, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "force_weak_monotonicity_bottom_up_decreasing",
+      "construct": { "xs": [1,2,3], "ys": [3,2,1] },
+      "assertions": [
+        { "method": "force_weak_monotonicity_bottom_up_yvals", "args": [], "expected": [3,3,3], "tol": 0.0, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "force_weak_monotonicity_bottom_up_increasing",
+      "construct": { "xs": [1,2,3], "ys": [1,2,3] },
+      "assertions": [
+        { "method": "force_weak_monotonicity_bottom_up_yvals", "args": [], "expected": [1,2,3], "tol": 0.0, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "force_weak_monotonicity_bottom_up_flat_then_drop",
+      "construct": { "xs": [1,2,3], "ys": [3,3,1] },
+      "assertions": [
+        { "method": "force_weak_monotonicity_bottom_up_yvals", "args": [], "expected": [3,3,3], "tol": 0.0, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "sort_to_increasing_x_vals_unsorted",
+      "construct": { "xs": [3,1,2], "ys": [30,10,20] },
+      "assertions": [
+        { "method": "sort_to_increasing_x_vals_xvals", "args": [], "expected": [1,2,3], "tol": 0.0, "mode": "vector" },
+        { "method": "sort_to_increasing_x_vals_yvals", "args": [], "expected": [10,20,30], "tol": 0.0, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "f_ref_index_below_at_above_curve",
+      "construct": { "xs": [2,3,4,5,6], "ys": [20,30,40,50,60] },
+      "assertions": [
+        { "method": "f_ref_index", "args": [1], "expected": 0, "tol": 0.0, "mode": "abs" },
+        { "method": "f_ref_index", "args": [4], "expected": 40, "tol": 0.0, "mode": "abs" },
+        { "method": "f_ref_index", "args": [2.5], "expected": 25, "tol": 0.0, "mode": "abs" },
+        { "method": "f_ref_index", "args": [7], "expected": 60, "tol": 0.0, "mode": "abs" }
+      ]
+    }
+  ]
+}

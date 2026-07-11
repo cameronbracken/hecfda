@@ -1,2 +1,8 @@
 CXX_STD = CXX17
 PKG_CPPFLAGS = -I./hecfda_core/include
+# -ffp-contract=off: matches core/CMakeLists.txt. Clang/GCC default to fusing
+# multiply-add expressions (FP_CONTRACT ON even at -O0), which rounds
+# differently than .NET's non-fused arithmetic. Required for bit-for-bit
+# cross-language reproduction on any FMA-sensitive path (e.g. the graphical
+# epsilon finite-difference in GraphicalFrequencyUncertaintyCalculators).
+PKG_CXXFLAGS = -ffp-contract=off

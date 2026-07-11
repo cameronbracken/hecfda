@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "hecfda/model/paired_data/dotnet_binary_search.hpp"
 #include "hecfda/statistics/distributions/continuous_distribution.hpp"
 #include "hecfda/statistics/mathematics.hpp"
 namespace hecfda {
@@ -106,7 +107,7 @@ class Empirical : public ContinuousDistribution {
     // relative to the two bracketing Quantiles). Below the first Quantile -> 0.0; above the last ->
     // 1.0.
     double cdf(double x) const override {
-        long index = binary_search(quantiles_, x);
+        long index = hecfda::model::paired_data::dotnet_binary_search(quantiles_, x);
         if (index >= 0) {
             return cumulative_probabilities_[static_cast<std::size_t>(index)];
         }
@@ -186,7 +187,7 @@ class Empirical : public ContinuousDistribution {
         } else if (p >= cumulative_probs_max) {
             return max_;
         } else {
-            long index = binary_search(cumulative_probabilities_, p);
+            long index = hecfda::model::paired_data::dotnet_binary_search(cumulative_probabilities_, p);
             if (index >= 0) {
                 return quantiles_[static_cast<std::size_t>(index)];
             }
@@ -234,28 +235,14 @@ class Empirical : public ContinuousDistribution {
     }
 
    private:
-    // ported from: Empirical.cs Array.BinarySearch(array, value). .NET semantics: if `value` is
-    // found, returns an index of a matching element; if not found, returns the insertion point `lo`
-    // encoded as `-(lo + 1)` (== `~lo`, C#'s one's-complement form -- both encodings are equivalent
-    // since `~lo == -lo - 1`), where `lo` is the index of the first element greater than `value`
-    // (or the array size, if `value` exceeds every element). Every call site recovers `lo` via
-    // `index = -(index + 1)`, matching the C# call sites exactly.
-    static long binary_search(const std::vector<double>& sorted, double value) {
-        long lo = 0;
-        long hi = static_cast<long>(sorted.size()) - 1;
-        while (lo <= hi) {
-            long mid = lo + (hi - lo) / 2;
-            double v = sorted[static_cast<std::size_t>(mid)];
-            if (v < value) {
-                lo = mid + 1;
-            } else if (v > value) {
-                hi = mid - 1;
-            } else {
-                return mid;
-            }
-        }
-        return -(lo + 1);
-    }
+    // ported from: Empirical.cs Array.BinarySearch(array, value), via the shared
+    // hecfda::model::paired_data::dotnet_binary_search (see that header for full .NET semantics /
+    // NaN-handling rationale). .NET semantics: if `value` is found, returns an index of a matching
+    // element; if not found, returns the insertion point `lo` encoded as `~lo` (dotnet_binary_search's
+    // return value), where `lo` is the index of the first element greater than `value` (or the
+    // array size, if `value` exceeds every element). Every call site here recovers `lo` via
+    // `index = -(index + 1)` (== `~index`; both encodings are equivalent since `~x == -x - 1`),
+    // matching the C# call sites exactly.
 
     // ported from: Empirical.cs PDF's `Quantiles.ToList().IndexOf(x)`. .NET List<T>.IndexOf
     // semantics: linear scan for the first EXACT match; returns -1 (always exactly -1, never an

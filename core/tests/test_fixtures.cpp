@@ -1,4 +1,5 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -6,8 +7,12 @@
 #include "json.hpp"
 #include "check.hpp"
 #include "hecfda/model/compute/random_provider.hpp"
+#include "hecfda/model/extensions/graphical_distribution.hpp"
+#include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
+#include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/model/utilities/graphical_frequency_uncertainty_calculators.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/histograms/dynamic_histogram.hpp"
 #include "hecfda/statistics/distributions/deterministic.hpp"
@@ -649,6 +654,108 @@ TEST_CASE("paired_data fixture") {
     }
 }
 
+// Regression coverage for the .NET Array.BinarySearch fidelity fix (dotnet_binary_search.hpp):
+// exercises PairedData::f/f_inverse on curves with duplicate x (flat frequency) / duplicate y
+// (flat damage) segments, where std::lower_bound (first equal element) and Array.BinarySearch
+// (midpoint-driven match) can pick different indices. Values pinned from the real C# gate.
+TEST_CASE("paired_data duplicate_values fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/duplicate_values.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_paired_data(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Dispatch for the compose/SumYsForGivenX/multiply/monotonicity/sort/f(x,ref) surface added on
+// top of the scalar-returning run_paired_data() above (paired_data_ops.json). Every case
+// constructs a fresh PairedData from `construct`, and -- for the two-curve ops -- a fresh second
+// PairedData from `input`; mutation methods (force_*/sort_to_increasing_x_vals) act on that fresh
+// `pd` and read back xvals()/yvals() afterward, matching the fresh-construction-per-assertion
+// pattern the emitter uses. Always returns a vector so compare_by_mode's "vector"/"abs" dispatch
+// (driven by the fixture's own "mode" field) applies uniformly.
+static std::vector<double> run_paired_data_ops(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    hecfda::model::paired_data::PairedData pd(ctor["xs"].get<std::vector<double>>(),
+                                               ctor["ys"].get<std::vector<double>>());
+    auto make_input = [&]() {
+        const auto& in = c["input"];
+        return hecfda::model::paired_data::PairedData(in["xs"].get<std::vector<double>>(),
+                                                        in["ys"].get<std::vector<double>>());
+    };
+    if (method == "compose_xvals" || method == "compose_yvals") {
+        auto result = pd.compose(make_input());
+        return method == "compose_xvals" ? result.xvals() : result.yvals();
+    }
+    if (method == "sum_ys_for_given_x_xvals" || method == "sum_ys_for_given_x_yvals") {
+        auto result = pd.sum_ys_for_given_x(make_input());
+        return method == "sum_ys_for_given_x_xvals" ? result.xvals() : result.yvals();
+    }
+    if (method == "multiply_xvals" || method == "multiply_yvals") {
+        auto result = pd.multiply(make_input());
+        return method == "multiply_xvals" ? result.xvals() : result.yvals();
+    }
+    if (method == "force_weak_monotonicity_bottom_up_yvals") {
+        pd.force_weak_monotonicity_bottom_up();
+        return pd.yvals();
+    }
+    if (method == "force_strict_monotonicity_top_down_yvals") {
+        pd.force_strict_monotonicity_top_down();
+        return pd.yvals();
+    }
+    if (method == "force_strict_monotonicity_bottom_up_yvals") {
+        pd.force_strict_monotonicity_bottom_up();
+        return pd.yvals();
+    }
+    if (method == "sort_to_increasing_x_vals_xvals" || method == "sort_to_increasing_x_vals_yvals") {
+        pd.sort_to_increasing_x_vals();
+        return method == "sort_to_increasing_x_vals_xvals" ? pd.xvals() : pd.yvals();
+    }
+    if (method == "f_ref_index") {
+        int index = 0;
+        return {pd.f(args[0].get<double>(), index)};
+    }
+    auto msg = std::string("unknown paired_data_ops method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("paired_data_ops fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/paired_data_ops.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_paired_data_ops(c, a["method"], a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
 static double run_special_functions(const std::string& method, const json& args) {
     using SF = hecfda::statistics::SpecialFunctions;
     if (method == "log_gamma") return SF::log_gamma(args[0].get<double>());
@@ -729,14 +836,22 @@ TEST_CASE("sample_statistics fixture") {
     }
 }
 
-static double run_uncertain_paired_data(const json& c, const std::string& method) {
-    const auto& ctor = c["construct"];
+// Builds the ys array from the fixture's `{type, params}` distribution specs via the shared
+// IDistributionFactory (same construct shape every distribution fixture uses), generalizing the
+// old Normal-only `{mean, sd}` shape. Returns a fresh, move-only UncertainPairedData.
+static hecfda::model::paired_data::UncertainPairedData make_upd(const json& ctor) {
     std::vector<double> xs = ctor["xs"].get<std::vector<double>>();
-    std::vector<hecfda::statistics::distributions::Normal> ys;
+    std::vector<std::unique_ptr<hecfda::statistics::distributions::IDistribution>> ys;
     for (const auto& y : ctor["ys"]) {
-        ys.emplace_back(y["mean"].get<double>(), y["sd"].get<double>(), 1);
+        ys.push_back(hecfda::statistics::distributions::IDistributionFactory::create(
+            hecfda::statistics::distributions::distribution_type_from_name(y["type"].get<std::string>()),
+            y["params"].get<std::vector<double>>()));
     }
-    hecfda::model::paired_data::UncertainPairedData upd(xs, ys);
+    return hecfda::model::paired_data::UncertainPairedData(std::move(xs), std::move(ys));
+}
+
+static double run_uncertain_paired_data(const json& c, const std::string& method) {
+    auto upd = make_upd(c["construct"]);
     if (method == "sample_and_integrate") return upd.sample_and_integrate(c["seed"].get<int>());
     auto msg = std::string("unknown uncertain_paired_data method: ") + method;
     FAIL(msg.c_str());
@@ -756,6 +871,341 @@ TEST_CASE("uncertain_paired_data fixture") {
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for mode: ") + mode;
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Dispatch for the generalized sample-path surface added on top of the scalar sample_and_integrate
+// above (uncertain_paired_data_ops.json). Each case builds a fresh, move-only UncertainPairedData
+// from `construct` (an `{xs, ys:[{type,params}], seed?, size?}` bag); the iteration-number overload
+// needs generate_random_numbers(seed, size) first, encoded in the construct's `seed`/`size` fields.
+// Always returns the produced curve's yvals as a vector so compare_by_mode's "vector" dispatch
+// applies uniformly (mirrors run_paired_data_ops). Fresh construction per assertion.
+static std::vector<double> run_uncertain_paired_data_ops(const json& c, const std::string& method,
+                                                         const json& args) {
+    const auto& ctor = c["construct"];
+    auto upd = make_upd(ctor);
+    if (ctor.contains("seed") && ctor.contains("size")) {
+        upd.generate_random_numbers(ctor["seed"].get<int>(), ctor["size"].get<long>());
+    }
+    if (method == "sample_paired_data") return upd.sample_paired_data(args[0].get<double>()).yvals();
+    if (method == "sample_paired_data_raw")
+        return upd.sample_paired_data_raw(args[0].get<double>()).yvals();
+    if (method == "sample_paired_data_raw_deterministic")
+        return upd.sample_paired_data_raw_deterministic().yvals();
+    if (method == "sample_paired_data_iteration")
+        return upd.sample_paired_data(args[0].get<long>(), args[1].get<double>() != 0.0).yvals();
+    auto msg = std::string("unknown uncertain_paired_data_ops method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("uncertain_paired_data_ops fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/uncertain_paired_data_ops.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "uncertain_paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_uncertain_paired_data_ops(c, a["method"], a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for InterpolateQuantiles (Task P2T4a): a plain static-method helper class,
+// called directly here, same bespoke-target pattern as ShiftedGamma/PearsonIII/Empirical/
+// ConvergenceCriteria. `construct` is {"input_exceedance_probabilities": [...],
+// "input_data_for_interpolation": [...]}; the single method `interpolate_on_x` takes the
+// "required" exceedance probabilities as its (array-valued) `args`, mirroring the emitter's
+// Program.cs EvalInterpolateQuantiles.
+static std::vector<double> run_interpolate_quantiles(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    std::vector<double> input_exceedance_probabilities =
+        ctor["input_exceedance_probabilities"].get<std::vector<double>>();
+    std::vector<double> input_data_for_interpolation = ctor["input_data_for_interpolation"].get<std::vector<double>>();
+    if (method == "interpolate_on_x") {
+        std::vector<double> required = args.get<std::vector<double>>();
+        return hecfda::model::paired_data::InterpolateQuantiles::interpolate_on_x(
+            input_exceedance_probabilities, required, input_data_for_interpolation);
+    }
+    auto msg = std::string("unknown interpolate_quantiles method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("interpolate_quantiles fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/interpolate_quantiles.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "interpolate_quantiles");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_interpolate_quantiles(c, a["method"], a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for GraphicalFrequencyUncertaintyCalculators (Task P2T4a): a plain static-method
+// helper class, called directly here like InterpolateQuantiles above. `construct` is
+// {"exceedance_probabilities": [...], "stages_or_flows": [...], "using_stages_not_flows": bool,
+// "equivalent_record_length": int?} (ERL defaults to 10, matching the C# default parameter and the
+// emitter's EvalGraphicalCalculators). Distribution mean/standard-deviation aren't part of the
+// IDistribution interface, so `distribution_means`/`distribution_standard_deviations` dynamic_cast
+// each returned IDistribution to Normal or LogNormal depending on `using_stages_not_flows`
+// (mirroring the emitter's `is Normal`/`is LogNormal` pattern match). `distribution_pdf_at` takes
+// [index, x] and evaluates PDF(x) on the distribution at that index -- this is what actually
+// discriminates Normal vs LogNormal construction (both store mean/sd identically, but interpret an
+// evaluation point `x` very differently), so it is exercised even though it isn't needed to recover
+// mean/sd themselves.
+static std::vector<double> run_graphical_calculators(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    std::vector<double> exceedance_probabilities = ctor["exceedance_probabilities"].get<std::vector<double>>();
+    std::vector<double> stages_or_flows = ctor["stages_or_flows"].get<std::vector<double>>();
+    bool using_stages_not_flows = ctor["using_stages_not_flows"].get<bool>();
+    int erl = ctor.contains("equivalent_record_length") ? ctor["equivalent_record_length"].get<int>() : 10;
+
+    auto result = hecfda::model::utilities::GraphicalFrequencyUncertaintyCalculators::less_simple_method(
+        exceedance_probabilities, stages_or_flows, using_stages_not_flows, erl);
+    const std::vector<double>& filled_probs = result.first;
+    const auto& dists = result.second;
+
+    if (method == "filled_exceedance_probabilities") return filled_probs;
+
+    if (method == "distribution_means" || method == "distribution_standard_deviations") {
+        std::vector<double> out;
+        out.reserve(dists.size());
+        for (const auto& d : dists) {
+            if (using_stages_not_flows) {
+                auto* n = dynamic_cast<hecfda::statistics::distributions::Normal*>(d.get());
+                REQUIRE(n != nullptr);
+                out.push_back(method == "distribution_means" ? n->mean() : n->standard_deviation());
+            } else {
+                auto* ln = dynamic_cast<hecfda::statistics::distributions::LogNormal*>(d.get());
+                REQUIRE(ln != nullptr);
+                out.push_back(method == "distribution_means" ? ln->mean() : ln->standard_deviation());
+            }
+        }
+        return out;
+    }
+
+    if (method == "distribution_pdf_at") {
+        std::size_t index = static_cast<std::size_t>(args[0].get<int>());
+        double x = args[1].get<double>();
+        return {dists.at(index)->pdf(x)};
+    }
+
+    auto msg = std::string("unknown graphical_calculators method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("graphical_calculators fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/graphical_calculators.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "graphical_calculators");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_graphical_calculators(c, a["method"], a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Direct guard-clause coverage transcribed from GraphicalFrequencyUncertaintyCalculatorsTests.cs's
+// three PORTABLE ArgumentException cases (mismatched lengths / insufficient points / invalid ERL).
+// These are exception-message-text assertions, not numeric oracle values, so -- like every other
+// exception guard already ported (e.g. PairedData's "X values must be in increasing order.") --
+// they are plain doctest assertions here rather than JSON fixture cases; there is no
+// expected-value-to-pin for "does this throw". The C# test file's other two cases
+// (LessSimpleMethod_WithNullExceedanceProbabilities/StagesOrFlows_ThrowsArgumentNullException) have
+// NO analog: `const std::vector<double>&` cannot be null, so those guards are not portable -- see
+// the SEVERANCE note on less_simple_method() in graphical_frequency_uncertainty_calculators.hpp.
+TEST_CASE("graphical_calculators guard clauses") {
+    using hecfda::model::utilities::GraphicalFrequencyUncertaintyCalculators;
+    std::vector<double> mismatched_probs = {0.5, 0.1, 0.02};
+    std::vector<double> mismatched_flows = {1.0, 2.0};
+    CHECK_THROWS_AS(
+        GraphicalFrequencyUncertaintyCalculators::less_simple_method(mismatched_probs, mismatched_flows, true),
+        std::invalid_argument);
+
+    std::vector<double> single_prob = {0.5};
+    std::vector<double> single_flow = {1.0};
+    CHECK_THROWS_AS(GraphicalFrequencyUncertaintyCalculators::less_simple_method(single_prob, single_flow, true),
+                     std::invalid_argument);
+
+    std::vector<double> valid_probs = {0.5, 0.1};
+    std::vector<double> valid_flows = {1.0, 2.0};
+    CHECK_THROWS_AS(
+        GraphicalFrequencyUncertaintyCalculators::less_simple_method(valid_probs, valid_flows, true, 0),
+        std::invalid_argument);
+}
+
+// Direct property-based coverage transcribed from GraphicalTests.cs
+// (unittests/extensions/GraphicalTests.cs) -- GraphicalDistribution's ExceedanceProbabilities/
+// StageOrLogFlowDistributions surface, checked via CONTAINS-style assertions (not exact numeric
+// pins, matching the C# source's own Assert.Contains usage) rather than JSON fixture cases.
+TEST_CASE("graphical_distribution properties") {
+    using hecfda::model::extensions::GraphicalDistribution;
+    using hecfda::statistics::distributions::Normal;
+
+    std::vector<double> probs = {.99, .5, .1, .02, .01, .002};
+    std::vector<double> flows = {500, 2000, 34900, 66900, 86000, 146000};
+    GraphicalDistribution graphical(probs, flows, 10);
+
+    // ReturnDistributionsForInputProbabilities: every input probability survives into the
+    // expanded ExceedanceProbabilities.
+    const auto& output_probs = graphical.exceedance_probabilities();
+    for (double p : probs) {
+        CHECK(std::find(output_probs.begin(), output_probs.end(), p) != output_probs.end());
+    }
+
+    // ReturnDistributionsWithInputMeanValues: every input flow survives as some distribution's
+    // mean (usingStagesNotFlows defaults to true, so these are Normal, not LogNormal).
+    const auto& dists = graphical.stage_or_log_flow_distributions();
+    std::vector<double> means;
+    means.reserve(dists.size());
+    for (const auto& d : dists) {
+        auto* n = dynamic_cast<Normal*>(d.get());
+        REQUIRE(n != nullptr);
+        means.push_back(n->mean());
+    }
+    for (double flow : flows) {
+        CHECK(std::find(means.begin(), means.end(), flow) != means.end());
+    }
+
+    // ReturnSameNumberOfProbabilitesAsDistributions.
+    CHECK(dists.size() == output_probs.size());
+}
+
+// ported from: GraphicalUncertaintyPairedDataTests.cs
+// ReturnsDistributionsWhereMeanAndConfidenceLimitsAreMonotonicallyIncreasing -- for every
+// probability in the "required" exceedance-probability table (Task P2T4a's
+// required_exceedance_probabilities(), reused directly here), SamplePairedData(probability)'s
+// Yvals must be weakly increasing (every ForceStrictMonotonicity{TopDown,BottomUp} call this
+// class makes is expected to guarantee this, regardless of which branch is taken).
+TEST_CASE("graphical_uncertain_paired_data yvals monotonically increasing") {
+    using hecfda::model::paired_data::CurveMetaData;
+    using hecfda::model::paired_data::GraphicalUncertainPairedData;
+
+    std::vector<double> probs = {.99, .5, .1, .02, .01, .002};
+    std::vector<double> flows = {500, 2000, 34900, 66900, 86000, 146000};
+    CurveMetaData metadata("residential");
+    GraphicalUncertainPairedData graphical(probs, flows, 5, metadata, false);
+
+    for (double probability : hecfda::model::utilities::required_exceedance_probabilities()) {
+        auto sampled = graphical.sample_paired_data(probability);
+        const auto& yvals = sampled.yvals();
+        for (std::size_t j = 1; j < yvals.size(); ++j) {
+            CHECK(yvals[j] >= yvals[j - 1]);
+        }
+    }
+}
+
+// Bespoke dispatch for GraphicalUncertainPairedData (Task P2T4b): the non-parametric graphical-
+// uncertainty frequency curve, built from GraphicalDistribution (extensions/graphical_
+// distribution.hpp), which in turn wraps GraphicalFrequencyUncertaintyCalculators::
+// less_simple_method (Task P2T4a). `construct` is {"exceedance_probabilities": [...],
+// "flow_or_stage_values": [...], "equivalent_record_length": int, "using_stages_not_flows": bool,
+// "seed": int?, "size": int?} -- seed/size optional, wiring generate_random_numbers() when
+// present (mirrors run_uncertain_paired_data_ops's construct handling). CurveMetaData is
+// irrelevant to the sampled values (same rationale as UncertainPairedData's fixture dispatch), so
+// a fixed CurveMetaData("hello") is used, matching the emitter's EvalGupd. Fresh construction per
+// assertion (move-only type, same convention as UncertainPairedData/GraphicalDistribution).
+static hecfda::model::paired_data::GraphicalUncertainPairedData make_gupd(const json& ctor) {
+    std::vector<double> exceedance_probabilities = ctor["exceedance_probabilities"].get<std::vector<double>>();
+    std::vector<double> flow_or_stage_values = ctor["flow_or_stage_values"].get<std::vector<double>>();
+    int erl = ctor["equivalent_record_length"].get<int>();
+    bool using_stages_not_flows = ctor["using_stages_not_flows"].get<bool>();
+    hecfda::model::paired_data::CurveMetaData metadata("hello");
+    hecfda::model::paired_data::GraphicalUncertainPairedData gupd(exceedance_probabilities, flow_or_stage_values, erl,
+                                                                   metadata, using_stages_not_flows);
+    if (ctor.contains("seed") && ctor.contains("size")) {
+        gupd.generate_random_numbers(ctor["seed"].get<int>(), ctor["size"].get<long>());
+    }
+    return gupd;
+}
+
+// Dispatch methods: "sample_paired_data"/"sample_paired_data_iteration" return the sampled
+// curve's Yvals (vector mode, mirroring uncertain_paired_data_ops.json); "sample_paired_data_f"/
+// "sample_paired_data_iteration_f" additionally evaluate f() at a point on that sampled curve
+// (mirroring GraphicalUncertaintyPairedDataTests.cs's SamplePairedDataShould/
+// DeterministicSamplingShouldReturnInputRelationship, which both read `sampledCurve.f(x)` off the
+// result rather than the raw Yvals) -- wrapped in a single-element vector so compare_by_mode's
+// "abs" dispatch applies uniformly.
+static std::vector<double> run_gupd(const json& c, const std::string& method, const json& args) {
+    auto gupd = make_gupd(c["construct"]);
+    if (method == "sample_paired_data") return gupd.sample_paired_data(args[0].get<double>()).yvals();
+    if (method == "sample_paired_data_iteration")
+        return gupd.sample_paired_data(args[0].get<long>(), args[1].get<double>() != 0.0).yvals();
+    if (method == "sample_paired_data_f")
+        return {gupd.sample_paired_data(args[0].get<double>()).f(args[1].get<double>())};
+    if (method == "sample_paired_data_iteration_f")
+        return {gupd.sample_paired_data(args[0].get<long>(), args[1].get<double>() != 0.0).f(args[2].get<double>())};
+    auto msg = std::string("unknown graphical_uncertain_paired_data method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("graphical_uncertain_paired_data fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/graphical.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "graphical_uncertain_paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_gupd(c, a["method"], a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());
             }
         }

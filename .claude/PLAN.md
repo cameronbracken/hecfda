@@ -1,13 +1,16 @@
 # Plan: `hecfdar` (R) + `hecfdapy` (Python) from a shared C++ core, ported from HEC-FDA
 
-> **Current status (kept in sync by hand):** Phase 0 and Phase 1 (Statistics foundation) are
-> **complete**. The full toolchain is proven end to end: seeded .NET `Random` -> `Normal` ->
-> `PairedData` -> `UncertainPairedData` integrate-and-sample, identical in C++, R, and Python, and
-> reproduced by the real HEC-FDA C#. Phase 1 added the validation subsystem, full
-> `SpecialFunctions`, `SampleStatistics`, the distribution base/enum/factory with generic
-> four-runner dispatch, all 13 distributions, the `Gamma`/`ShiftedGamma`/`PearsonIII` helpers,
-> `ConvergenceCriteria`, `DynamicHistogram`, and the `UncertainToDeterministicDistributionConverter`.
-> Phases 2-6 have not started.
+> **Current status (kept in sync by hand):** Phase 0, Phase 1 (Statistics foundation), and Phase 2
+> (paired-data compute) are **complete**. The full toolchain is proven end to end: seeded .NET
+> `Random` -> `Normal` -> `PairedData` -> `UncertainPairedData` integrate-and-sample, identical in
+> C++, R, and Python, and reproduced by the real HEC-FDA C#. Phase 1 added the validation
+> subsystem, full `SpecialFunctions`, `SampleStatistics`, the distribution base/enum/factory with
+> generic four-runner dispatch, all 13 distributions, the `Gamma`/`ShiftedGamma`/`PearsonIII`
+> helpers, `ConvergenceCriteria`, `DynamicHistogram`, and the
+> `UncertainToDeterministicDistributionConverter`. Phase 2 added the full paired-data curve
+> algebra, the faithful .NET `Array.BinarySearch`, `UncertainPairedData` generalized to
+> `IDistribution`, and the graphical uncertainty path. The oracle gate reproduces 492 fixture
+> assertions, 0 failed. Phases 3-6 have not started; Phase 3 (structures & inventory) is next.
 >
 > Phase 0 delivered the canonical C++17 header core at `core/include/hecfda/`
 > (`sampling::DotNetRandom`, `model::compute::RandomProvider`,
@@ -35,8 +38,19 @@
 > internal helper classes (not `IDistribution`) with bespoke fixture targets rather than the
 > generic dispatch. The dotnet oracle gate now reproduces 366 fixture assertions against the real
 > upstream code, 0 failed (up from Phase 0's 18). The Makefile (`test-core`/`test-r`/`test-py`/
-> `materialize`/`oracles`) and 3-platform CI (`.github/workflows/ci.yml`) are green. See
-> `CLAUDE.md` (same directory) for the working-context detail.
+> `materialize`/`oracles`) and 3-platform CI (`.github/workflows/ci.yml`) are green.
+>
+> Phase 2 delivered the paired-data compute layer: the faithful .NET `Array.BinarySearch` (closing
+> the top Phase-1 risk on duplicate x/y values, fixing `PairedData`/`Empirical` lookups),
+> `CurveMetaData` and `PairedData` compose/multiply/`sum_ys_for_given_x`/monotonicity,
+> `UncertainPairedData` generalized from `Normal` to `IDistribution` with every sample path
+> including deterministic-via-converter, and `GraphicalUncertainPairedData` +
+> `GraphicalDistribution` + the graphical uncertainty calculators + `InterpolateQuantiles`. Phase 2
+> also found and fixed a cross-language FP-contraction (FMA) divergence: `-ffp-contract=off` is now
+> set in `core/CMakeLists.txt`, `hecfdar/src/Makevars`/`Makevars.win`, and `hecfdapy/CMakeLists.txt`
+> (all non-MSVC) -- see "FP-contraction (FMA) parity" below, a standing invariant alongside RNG
+> parity. Exit gate: `test-core`/`test-r`/`test-py`/`oracles` all green, oracle gate at 492
+> reproduced / 0 failed. See `CLAUDE.md` (same directory) for the working-context detail.
 
 ## Context
 
@@ -123,6 +137,24 @@ yields the identical `double` stream in C++, R, and Python -- verified bit-for-b
 gate. Every Monte Carlo fixture carries a seed; unseeded `new Random()` paths are never
 fixture-tested because they are non-deterministic even in C#.
 
+## FP-contraction (FMA) parity (standing invariant, found in Phase 2)
+
+Clang and GCC default to fusing multiply-add expressions (`FP_CONTRACT` on, even at `-O0`), which
+rounds differently than .NET's non-fused, strict left-to-right IEEE 754 arithmetic. This was found
+in Task P2T4b: `GraphicalFrequencyUncertaintyCalculators::compute_slope`'s epsilon (1e-5)
+finite-difference division amplified a single ULP difference by roughly 1e5x, breaking bit-for-bit
+reproduction at scattered indices for some inputs. Fix: `-ffp-contract=off` is set project-wide,
+non-MSVC only (MSVC already defaults to no contraction):
+
+- `core/CMakeLists.txt` (per test target)
+- `hecfdar/src/Makevars` and `Makevars.win` (`PKG_CXXFLAGS = -ffp-contract=off`)
+- `hecfdapy/CMakeLists.txt` (`target_compile_options(_core PRIVATE
+  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-ffp-contract=off>)`)
+
+Any future core code using epsilon finite-differences or other FMA-sensitive arithmetic depends on
+this flag to reproduce identically across C++/R/Python/C#. Treat it like RNG parity: never remove
+or scope it down without re-verifying every fixture.
+
 ## Test-fixture strategy (validate identically, DRY)
 
 Oracle values live ONLY in `fixtures/*.json`, never hardcoded in test files. Three thin generic
@@ -175,19 +207,26 @@ from `Normal` to `IDistribution`, which is Phase 2 work); `TruncatedNormal`/`Tru
 `Gamma`/`TruncatedLogPearson3` currently have gate-only oracle coverage (no upstream unit-test
 literals to transcribe beyond what the oracle gate already checks).
 
-**Top risk carried into Phase 2:** C++ `std::lower_bound` vs. C#'s `Array.BinarySearch` diverge on
-duplicate x/y values. Real FDA damage/frequency curves have flat segments, and both
+**Top risk carried into Phase 2 -- CLOSED.** C++ `std::lower_bound` vs. C#'s `Array.BinarySearch`
+diverged on duplicate x/y values. Real FDA damage/frequency curves have flat segments, and both
 `PairedData::f_inverse` and `Empirical`'s inverse-CDF lookup binary-search into paired value
-arrays, so this must be closed early in Phase 2 (paired-data), before it's masked by fixtures that
-happen not to contain duplicates.
+arrays. Task P2T1 replaced the lookup with a faithful port of `Array.BinarySearch` before any other
+Phase 2 work landed, so no later fixture could mask the divergence.
 
-**Phases 2-6 -- bulk port up the dependency chain** (tests ported alongside each chunk):
+**Phase 2 -- COMPLETE (paired-data compute).** Delivered `CurveMetaData` + `PairedData`
+compose/multiply/`sum_ys_for_given_x`/monotonicity, `UncertainPairedData` generalized to
+`IDistribution` with all sample paths (including deterministic-via-converter), and
+`GraphicalUncertainPairedData` + `GraphicalDistribution` + `GraphicalFrequencyUncertaintyCalculators`
++ `InterpolateQuantiles`. Also found and closed a cross-language FMA divergence (see
+"FP-contraction (FMA) parity" above). Exit criterion met: `test-core`/`test-r`/`test-py`/`oracles`
+all green, oracle gate at 492 reproduced / 0 failed. See `CLAUDE.md` for the faithful-bug list and
+severances carried forward.
 
-2. **Paired-data library** -- full `PairedData` / `UncertainPairedData` /
-   `GraphicalUncertainPairedData` algebra (integrate, sample, compose, multiply, interpolate
-   quantiles).
+**Phases 3-6 -- bulk port up the dependency chain** (tests ported alongside each chunk):
+
 3. **Structures & inventory** -- `Structure`, `Inventory`, `OccupancyType`, the value / first-floor
-   / depth-damage uncertainty sampling.
+   / depth-damage uncertainty sampling. Builds structure depth-damage sampling on the paired-data +
+   distribution layer Phase 2 delivered.
 4. **Stage-damage** -- `ImpactAreaStageDamage`, `ScenarioStageDamage` over paired-data + structures
    (hydraulic profiles as input arrays).
 5. **Compute + metrics** -- `ImpactAreaScenarioSimulation` (EAD Monte Carlo) and the full
@@ -248,15 +287,21 @@ Python fixtures pass; `verify_oracles.py` green (when `dotnet` is available); th
   every fixture passes identically to its stated tolerances.
 - **dotnet oracle gate:** dev-only, reproduces every fixture against the real upstream C#.
 
-## Open items carried into Phase 2
+## Open items carried into Phase 3
 
-- **Top risk:** `std::lower_bound` vs. `Array.BinarySearch` on duplicate x/y values -- see
-  "Top risk carried into Phase 2" under Phasing above. Close this early in the paired-data phase.
+- **Next phase target:** Phase 3 -- structures & inventory (`HEC.FDA.Model/structures`: `Structure`,
+  `Inventory`, `OccupancyType`, depth-percent-damage + first-floor-elevation + value uncertainty),
+  which builds structure depth-damage sampling on the paired-data + distribution layer Phase 2
+  delivered.
+- `CurveMetaData`/`GraphicalDistribution`/`GraphicalUncertainPairedData` XML +
+  `ValidationErrorLogger`/GUI wiring -- severed (adapter/GUI layer, not the numeric core).
+- `UncertainPairedData.CombineWithWeights` -- depends on severed `Empirical` stacking, currently
+  untested; `Equals` and `ConvertDamagedElementCountToText` also deferred.
+- The graphical path (`GraphicalUncertainPairedData`/`GraphicalDistribution`) is validated in C++
+  and the oracle gate but not yet bound in R/Python. Documented follow-up; the
+  `-ffp-contract=off` flag is already in place in both language builds for when it lands.
 - `Empirical` stacking/weighting, `DynamicHistogram` XML/plotting/`ConvertToEmpiricalDistribution`,
-  and the converter's `IHistogram` case -- severed from Phase 1, revisit once paired-data and
-  histogram consumers exist.
-- `UncertainPairedData` deterministic-sample-path wiring needs `UncertainPairedData` generalized
-  from `Normal` to `IDistribution` -- do this as part of the Phase 2 paired-data work.
+  and the converter's `IHistogram` case -- severed from Phase 1, still pending.
 - `PORTING_MANIFEST.toml` + `tools/upstream_diff.py` (deferred per bestfit precedent; needed once
   upstream churn must be tracked across many ported files).
 - cibuildwheel / `R CMD check --as-cran` wiring (deferred until the package surface is broad
