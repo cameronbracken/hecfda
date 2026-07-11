@@ -7,6 +7,7 @@
 #include "hecfda/statistics/distributions/i_distribution.hpp"
 #include "hecfda/statistics/distributions/i_distribution_enum.hpp"
 #include "hecfda/statistics/distributions/deterministic.hpp"
+#include "hecfda/statistics/distributions/lognormal.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 #include "hecfda/statistics/distributions/triangular.hpp"
 #include "hecfda/statistics/distributions/uniform.hpp"
@@ -26,8 +27,11 @@ namespace distributions {
 //                                    params = [min, mostLikely, max, sampleSize]
 //   DistributionType::Deterministic -> FactoryDeterministic(value)
 //                                       params = [value]
+//   DistributionType::LogNormal  -> FactoryLogNormal(mean, stDev, sampleSize)
+//                                    params = [mean, stDev, sampleSize] (moments of the
+//                                    NATURAL-log-scale data -- see lognormal.hpp)
 //
-// Later distribution tasks add one `case` each (LogPearsonIII, LogNormal,
+// Later distribution tasks add one `case` each (LogPearsonIII,
 // IHistogram, Empirical, TruncatedNormal), documenting their own params order here in the same
 // style.
 class IDistributionFactory {
@@ -43,9 +47,10 @@ class IDistributionFactory {
                                                       static_cast<long>(params.at(3)));
             case DistributionType::Deterministic:
                 return std::make_unique<Deterministic>(params.at(0));
+            case DistributionType::LogNormal:
+                return std::make_unique<LogNormal>(params.at(0), params.at(1), static_cast<long>(params.at(2)));
             case DistributionType::NotSupported:
             case DistributionType::LogPearsonIII:
-            case DistributionType::LogNormal:
             case DistributionType::IHistogram:
             case DistributionType::Empirical:
             case DistributionType::TruncatedNormal:

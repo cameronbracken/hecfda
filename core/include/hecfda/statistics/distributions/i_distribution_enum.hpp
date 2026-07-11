@@ -38,6 +38,7 @@ inline DistributionType distribution_type_from_name(const std::string& name) {
     if (name == "Uniform") return DistributionType::Uniform;
     if (name == "Triangular") return DistributionType::Triangular;
     if (name == "Deterministic") return DistributionType::Deterministic;
+    if (name == "LogNormal") return DistributionType::LogNormal;
     throw std::invalid_argument("distribution_type_from_name: unknown distribution type: " + name);
 }
 

@@ -40,6 +40,7 @@ namespace oracle_emitter {
         "Uniform" => new Uniform(p[0], p[1], (int)p[2]),
         "Triangular" => new Triangular(p[0], p[1], p[2], (int)p[3]),
         "Deterministic" => new Deterministic(p[0]),
+        "LogNormal" => new LogNormal(p[0], p[1], (int)p[2]),
         _ => throw new Exception("unknown distribution type: " + type) };
     }
     static object EvalDistribution(JsonElement caseEl, string method, JsonElement argsEl) {
@@ -74,6 +75,10 @@ namespace oracle_emitter {
         }
         if (fitted is Deterministic d) {
           if (param == "value") return d.Value;
+        }
+        if (fitted is LogNormal ln) {
+          if (param == "mean") return ln.Mean;
+          if (param == "standard_deviation") return ln.StandardDeviation;
         }
         throw new Exception("unknown fit param: " + param + " for type " + type);
       }
