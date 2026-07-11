@@ -25,9 +25,15 @@
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/IMultiply.cs" />
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/ICategory.cs" />
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/IMetaData.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/paireddata/InterpolateQuantiles.cs" />
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/interfaces/ICanBeNull.cs" />
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/interfaces/IDescribed.cs" />
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/interfaces/INamed.cs" />
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/StoredPropertyAttribute.cs" />
+    <!-- Task P2T4a: GraphicalFrequencyUncertaintyCalculators.LessSimpleMethod + its one
+         DoubleGlobalStatics dependency (RequiredExceedanceProbabilities, used by
+         FillInputExceedanceProbabilitiesWithRequiredPoints). -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/GraphicalFrequencyUncertaintyCalculators.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/DoubleGlobalStatics.cs" />
   </ItemGroup>
 </Project>

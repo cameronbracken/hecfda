@@ -13,6 +13,7 @@ using Statistics.Distributions;
 using Statistics.Histograms;
 using HEC.FDA.Model.paireddata;
 using HEC.FDA.Model.compute;
+using HEC.FDA.Model.utilities;
 
 namespace oracle_emitter {
   class Program {
@@ -302,6 +303,59 @@ namespace oracle_emitter {
       throw new Exception("unknown uncertain_paired_data method: " + method);
     }
 
+    // InterpolateQuantiles (Task P2T4a) is a public static helper in HEC.FDA.Model.paireddata --
+    // no null/RNG involved, so it's dispatched directly here like ShiftedGamma/PearsonIII/etc.
+    // `construct` is {"input_exceedance_probabilities": [...], "input_data_for_interpolation":
+    // [...]}; the single method `interpolate_on_x` takes the "required" exceedance probabilities
+    // as its (array-valued) `args`.
+    static object EvalInterpolateQuantiles(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      double[] inputExceedanceProbabilities = DA(c.GetProperty("input_exceedance_probabilities"));
+      double[] inputDataForInterpolation = DA(c.GetProperty("input_data_for_interpolation"));
+      if (method == "interpolate_on_x") {
+        double[] required = DA(argsEl);
+        return InterpolateQuantiles.InterpolateOnX(inputExceedanceProbabilities, required, inputDataForInterpolation);
+      }
+      throw new Exception("unknown interpolate_quantiles method: " + method);
+    }
+    // GraphicalFrequencyUncertaintyCalculators.LessSimpleMethod (Task P2T4a) is a public static
+    // method in HEC.FDA.Model.utilities returning `(double[], ContinuousDistribution[])`.
+    // `construct` is {"exceedance_probabilities": [...], "stages_or_flows": [...],
+    // "using_stages_not_flows": bool, "equivalent_record_length": int?} (ERL defaults to 10,
+    // matching the C# default parameter). Distribution mean/standard-deviation aren't exposed on
+    // IDistribution/ContinuousDistribution, so they're read via an `is Normal`/`is LogNormal`
+    // pattern match, mirroring EvalDistribution's fit_<param> demux above.
+    static object EvalGraphicalCalculators(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      double[] exceedanceProbabilities = DA(c.GetProperty("exceedance_probabilities"));
+      double[] stagesOrFlows = DA(c.GetProperty("stages_or_flows"));
+      bool usingStagesNotFlows = c.GetProperty("using_stages_not_flows").GetBoolean();
+      int erl = c.TryGetProperty("equivalent_record_length", out var erlEl) ? erlEl.GetInt32() : 10;
+      (double[] filledProbs, ContinuousDistribution[] dists) = GraphicalFrequencyUncertaintyCalculators.LessSimpleMethod(
+          exceedanceProbabilities, stagesOrFlows, usingStagesNotFlows, erl);
+      if (method == "filled_exceedance_probabilities") return filledProbs;
+      if (method == "distribution_means") {
+        return dists.Select(d => d switch {
+          Normal n => n.Mean,
+          LogNormal ln => ln.Mean,
+          _ => throw new Exception("unexpected distribution type: " + d.GetType().Name)
+        }).ToArray();
+      }
+      if (method == "distribution_standard_deviations") {
+        return dists.Select(d => d switch {
+          Normal n => n.StandardDeviation,
+          LogNormal ln => ln.StandardDeviation,
+          _ => throw new Exception("unexpected distribution type: " + d.GetType().Name)
+        }).ToArray();
+      }
+      if (method == "distribution_pdf_at") {
+        int index = (int)D(argsEl[0]);
+        double x = D(argsEl[1]);
+        return dists[index].PDF(x);
+      }
+      throw new Exception("unknown graphical_calculators method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -340,6 +394,8 @@ namespace oracle_emitter {
               case "special_functions": val = EvalSpecial(method, argsEl); break;
               case "sample_statistics": val = EvalSampleStatistics(c.GetProperty("construct"), method); break;
               case "uncertain_paired_data": val = EvalUpd(c, method, argsEl); break;
+              case "interpolate_quantiles": val = EvalInterpolateQuantiles(c, method, argsEl); break;
+              case "graphical_calculators": val = EvalGraphicalCalculators(c, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

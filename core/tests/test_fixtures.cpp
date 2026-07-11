@@ -6,8 +6,10 @@
 #include "json.hpp"
 #include "check.hpp"
 #include "hecfda/model/compute/random_provider.hpp"
+#include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/model/utilities/graphical_frequency_uncertainty_calculators.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/histograms/dynamic_histogram.hpp"
 #include "hecfda/statistics/distributions/deterministic.hpp"
@@ -920,4 +922,158 @@ TEST_CASE("uncertain_paired_data_ops fixture") {
             }
         }
     }
+}
+
+// Bespoke dispatch for InterpolateQuantiles (Task P2T4a): a plain static-method helper class,
+// called directly here, same bespoke-target pattern as ShiftedGamma/PearsonIII/Empirical/
+// ConvergenceCriteria. `construct` is {"input_exceedance_probabilities": [...],
+// "input_data_for_interpolation": [...]}; the single method `interpolate_on_x` takes the
+// "required" exceedance probabilities as its (array-valued) `args`, mirroring the emitter's
+// Program.cs EvalInterpolateQuantiles.
+static std::vector<double> run_interpolate_quantiles(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    std::vector<double> input_exceedance_probabilities =
+        ctor["input_exceedance_probabilities"].get<std::vector<double>>();
+    std::vector<double> input_data_for_interpolation = ctor["input_data_for_interpolation"].get<std::vector<double>>();
+    if (method == "interpolate_on_x") {
+        std::vector<double> required = args.get<std::vector<double>>();
+        return hecfda::model::paired_data::InterpolateQuantiles::interpolate_on_x(
+            input_exceedance_probabilities, required, input_data_for_interpolation);
+    }
+    auto msg = std::string("unknown interpolate_quantiles method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("interpolate_quantiles fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/interpolate_quantiles.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "interpolate_quantiles");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_interpolate_quantiles(c, a["method"], a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for GraphicalFrequencyUncertaintyCalculators (Task P2T4a): a plain static-method
+// helper class, called directly here like InterpolateQuantiles above. `construct` is
+// {"exceedance_probabilities": [...], "stages_or_flows": [...], "using_stages_not_flows": bool,
+// "equivalent_record_length": int?} (ERL defaults to 10, matching the C# default parameter and the
+// emitter's EvalGraphicalCalculators). Distribution mean/standard-deviation aren't part of the
+// IDistribution interface, so `distribution_means`/`distribution_standard_deviations` dynamic_cast
+// each returned IDistribution to Normal or LogNormal depending on `using_stages_not_flows`
+// (mirroring the emitter's `is Normal`/`is LogNormal` pattern match). `distribution_pdf_at` takes
+// [index, x] and evaluates PDF(x) on the distribution at that index -- this is what actually
+// discriminates Normal vs LogNormal construction (both store mean/sd identically, but interpret an
+// evaluation point `x` very differently), so it is exercised even though it isn't needed to recover
+// mean/sd themselves.
+static std::vector<double> run_graphical_calculators(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    std::vector<double> exceedance_probabilities = ctor["exceedance_probabilities"].get<std::vector<double>>();
+    std::vector<double> stages_or_flows = ctor["stages_or_flows"].get<std::vector<double>>();
+    bool using_stages_not_flows = ctor["using_stages_not_flows"].get<bool>();
+    int erl = ctor.contains("equivalent_record_length") ? ctor["equivalent_record_length"].get<int>() : 10;
+
+    auto result = hecfda::model::utilities::GraphicalFrequencyUncertaintyCalculators::less_simple_method(
+        exceedance_probabilities, stages_or_flows, using_stages_not_flows, erl);
+    const std::vector<double>& filled_probs = result.first;
+    const auto& dists = result.second;
+
+    if (method == "filled_exceedance_probabilities") return filled_probs;
+
+    if (method == "distribution_means" || method == "distribution_standard_deviations") {
+        std::vector<double> out;
+        out.reserve(dists.size());
+        for (const auto& d : dists) {
+            if (using_stages_not_flows) {
+                auto* n = dynamic_cast<hecfda::statistics::distributions::Normal*>(d.get());
+                REQUIRE(n != nullptr);
+                out.push_back(method == "distribution_means" ? n->mean() : n->standard_deviation());
+            } else {
+                auto* ln = dynamic_cast<hecfda::statistics::distributions::LogNormal*>(d.get());
+                REQUIRE(ln != nullptr);
+                out.push_back(method == "distribution_means" ? ln->mean() : ln->standard_deviation());
+            }
+        }
+        return out;
+    }
+
+    if (method == "distribution_pdf_at") {
+        std::size_t index = static_cast<std::size_t>(args[0].get<int>());
+        double x = args[1].get<double>();
+        return {dists.at(index)->pdf(x)};
+    }
+
+    auto msg = std::string("unknown graphical_calculators method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("graphical_calculators fixture") {
+    std::ifstream f(fixtures_dir() + "/paired_data/graphical_calculators.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "graphical_calculators");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_graphical_calculators(c, a["method"], a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Direct guard-clause coverage transcribed from GraphicalFrequencyUncertaintyCalculatorsTests.cs's
+// three PORTABLE ArgumentException cases (mismatched lengths / insufficient points / invalid ERL).
+// These are exception-message-text assertions, not numeric oracle values, so -- like every other
+// exception guard already ported (e.g. PairedData's "X values must be in increasing order.") --
+// they are plain doctest assertions here rather than JSON fixture cases; there is no
+// expected-value-to-pin for "does this throw". The C# test file's other two cases
+// (LessSimpleMethod_WithNullExceedanceProbabilities/StagesOrFlows_ThrowsArgumentNullException) have
+// NO analog: `const std::vector<double>&` cannot be null, so those guards are not portable -- see
+// the SEVERANCE note on less_simple_method() in graphical_frequency_uncertainty_calculators.hpp.
+TEST_CASE("graphical_calculators guard clauses") {
+    using hecfda::model::utilities::GraphicalFrequencyUncertaintyCalculators;
+    std::vector<double> mismatched_probs = {0.5, 0.1, 0.02};
+    std::vector<double> mismatched_flows = {1.0, 2.0};
+    CHECK_THROWS_AS(
+        GraphicalFrequencyUncertaintyCalculators::less_simple_method(mismatched_probs, mismatched_flows, true),
+        std::invalid_argument);
+
+    std::vector<double> single_prob = {0.5};
+    std::vector<double> single_flow = {1.0};
+    CHECK_THROWS_AS(GraphicalFrequencyUncertaintyCalculators::less_simple_method(single_prob, single_flow, true),
+                     std::invalid_argument);
+
+    std::vector<double> valid_probs = {0.5, 0.1};
+    std::vector<double> valid_flows = {1.0, 2.0};
+    CHECK_THROWS_AS(
+        GraphicalFrequencyUncertaintyCalculators::less_simple_method(valid_probs, valid_flows, true, 0),
+        std::invalid_argument);
 }
