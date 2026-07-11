@@ -54,6 +54,9 @@
          ResetErrors) is OccupancyType's base class; a plain helper over Validation with no
          messaging dependency, so it compiles unpatched. -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/structures/PropertyValidationHelper.cs" />
+    <!-- Task Phase4T1: ConsequenceResult is a plain POCO with zero external deps (no MVVM base,
+         no other HEC.FDA.Model types), so it compiles unpatched. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/ConsequenceResult.cs" />
     <!-- Task Phase3T4: OccupancyType uses MessageHub/MessageReportedEventHandler/
          IDontImplementValidationButMyPropertiesDo (MVVM messaging), but unlike
          CurveMetaData/GraphicalUncertainPairedData's WriteToXML/ReadFromXML, which pull in the

@@ -8,6 +8,7 @@
 #include "check.hpp"
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/extensions/graphical_distribution.hpp"
+#include "hecfda/model/metrics/consequence_result.hpp"
 #include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
@@ -1634,6 +1635,59 @@ TEST_CASE("inventory fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Bespoke dispatch for ConsequenceResult (Phase 4 Task 1): a plain per-structure damage
+// accumulator, not an IDistribution, constructed directly here like ValueUncertainty/Structure
+// above. `construct` is {"damage_category": "<name>"}; `increments` is a list of [structureDamage,
+// contentDamage, vehicleDamage, otherDamage] tuples applied in order via increment_consequence
+// before every assertion in the case -- each assertion reconstructs a fresh ConsequenceResult and
+// replays the full increment list, matching run_value_uncertainty's per-call reconstruction
+// pattern. `method` dispatches one of the eight accessors; the four *_quantity accessors return
+// int, cast to double for the shared double-comparison harness.
+static double run_consequence_result(const json& c, const std::string& method, const json& args) {
+    (void)args;
+    const auto& ctor = c["construct"];
+    hecfda::model::metrics::ConsequenceResult cr(ctor["damage_category"].get<std::string>());
+    for (const auto& inc : c["increments"]) {
+        cr.increment_consequence(inc[0].get<double>(), inc[1].get<double>(), inc[2].get<double>(),
+                                  inc[3].get<double>());
+    }
+    if (method == "structure_damage") return cr.structure_damage();
+    if (method == "content_damage") return cr.content_damage();
+    if (method == "vehicle_damage") return cr.vehicle_damage();
+    if (method == "other_damage") return cr.other_damage();
+    if (method == "damaged_structures_quantity")
+        return static_cast<double>(cr.damaged_structures_quantity());
+    if (method == "damaged_contents_quantity")
+        return static_cast<double>(cr.damaged_contents_quantity());
+    if (method == "damaged_vehicles_quantity")
+        return static_cast<double>(cr.damaged_vehicles_quantity());
+    if (method == "damaged_others_quantity")
+        return static_cast<double>(cr.damaged_others_quantity());
+    auto msg = std::string("unknown consequence_result method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("consequence_result fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/consequence_result.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "consequence_result");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_consequence_result(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());

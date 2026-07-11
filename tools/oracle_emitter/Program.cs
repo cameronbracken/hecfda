@@ -16,6 +16,7 @@ using HEC.FDA.Model.compute;
 using HEC.FDA.Model.utilities;
 using HEC.FDA.Model.extensions;
 using HEC.FDA.Model.structures;
+using HEC.FDA.Model.metrics;
 
 namespace oracle_emitter {
   class Program {
@@ -640,6 +641,29 @@ namespace oracle_emitter {
       throw new Exception("unknown inventory method: " + method);
     }
 
+    // ConsequenceResult (Phase 4 Task 1) is a plain per-structure damage accumulator, not an
+    // IDistribution, constructed directly here like ValueUncertainty/Structure above. `construct`
+    // is {"damage_category": "<name>"}; `increments` is a list of [structureDamage, contentDamage,
+    // vehicleDamage, otherDamage] tuples applied in order via IncrementConsequence. `method`
+    // dispatches one of the eight accessors; the four *Quantity accessors return int, boxed as
+    // double via implicit cast for the shared double-comparison harness.
+    static object EvalConsequenceResult(JsonElement caseEl, string method) {
+      var c = caseEl.GetProperty("construct");
+      var cr = new ConsequenceResult(c.GetProperty("damage_category").GetString());
+      foreach (var inc in caseEl.GetProperty("increments").EnumerateArray()) {
+        cr.IncrementConsequence(D(inc[0]), D(inc[1]), D(inc[2]), D(inc[3]));
+      }
+      if (method == "structure_damage") return cr.StructureDamage;
+      if (method == "content_damage") return cr.ContentDamage;
+      if (method == "vehicle_damage") return cr.VehicleDamage;
+      if (method == "other_damage") return cr.OtherDamage;
+      if (method == "damaged_structures_quantity") return (double)cr.DamagedStructuresQuantity;
+      if (method == "damaged_contents_quantity") return (double)cr.DamagedContentsQuantity;
+      if (method == "damaged_vehicles_quantity") return (double)cr.DamagedVehiclesQuantity;
+      if (method == "damaged_others_quantity") return (double)cr.DamagedOthersQuantity;
+      throw new Exception("unknown consequence_result method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -687,6 +711,7 @@ namespace oracle_emitter {
               case "occupancy_type": val = EvalOccupancyType(c, a, method, argsEl); break;
               case "structure": val = EvalStructure(c, method, argsEl); break;
               case "inventory": val = EvalInventory(c, a, method, argsEl); break;
+              case "consequence_result": val = EvalConsequenceResult(c, method); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{
