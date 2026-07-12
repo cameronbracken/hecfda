@@ -217,3 +217,48 @@ test_that("impact_area_scenario_simulation fixture", {
     cmp(got, a$expected, a$tol, a$mode)
   }
 })
+
+# Phase 6 Task 12: representative subset (alternative's compute_eqad scalar dispatch, scenario's
+# impact-area fan-out). The remaining Phase-6 targets (annualization_compute/AlternativeResults,
+# AlternativeComparisonReport with/without benefits, the 5 ByQuantile/results metrics types, the
+# un-severed Empirical/quantile chain) traverse the identical binding + compiled core and are
+# validated in C++ (core/tests/test_fixtures.cpp) + the dotnet oracle gate only -- see
+# .claude/CLAUDE.md's "R/Python distribution coverage scope" convention.
+test_that("alternative compute_eqad fixture", {
+  fx <- read_fx("alternatives/alternative.json")
+  # Only the "compute_eqad" kind (the 8-row scalar EqAD oracle table, the phase's headline math) is
+  # bound here; "annualization" (AlternativeResults-producing) traverses the identical binding +
+  # compiled core (see note above).
+  cs <- Filter(function(x) x$kind == "compute_eqad", fx$cases)
+  for (c in cs) for (a in c$assertions) {
+    got <- ns$hecfda_alternative_compute_eqad(
+      as.double(a$args[[1]]), as.integer(a$args[[2]]), as.double(a$args[[3]]),
+      as.integer(a$args[[4]]), as.integer(a$args[[5]]), as.double(a$args[[6]])
+    )
+    cmp(got, a$expected, a$tol, a$mode)
+  }
+})
+
+test_that("scenario fixture", {
+  fx <- read_fx("scenarios/scenario.json")
+  for (c in fx$cases) for (a in c$assertions) {
+    ias <- c$construct$impact_areas
+    ia1 <- ias[[1]]
+    sd <- ia1$stage_damage[[1]]
+    got <- ns$hecfda_scenario(
+      as.integer(sapply(ias, function(ia) ia$impact_area_id)),
+      ia1$flow_frequency$type, as.double(unlist(ia1$flow_frequency$params)),
+      as.double(unlist(ia1$flow_stage$xs)),
+      sapply(ia1$flow_stage$ys, function(y) y$type),
+      lapply(ia1$flow_stage$ys, function(y) as.double(unlist(y$params))),
+      as.double(unlist(sd$xs)),
+      sapply(sd$ys, function(y) y$type),
+      lapply(sd$ys, function(y) as.double(unlist(y$params))),
+      sd$damage_category, sd$asset_category,
+      as.integer(ia1$additional_threshold$threshold_id), ia1$additional_threshold$value,
+      as.integer(a$args[[1]]), as.integer(a$args[[2]]), a$args[[3]] != 0,
+      as.integer(a$args[[4]])
+    )
+    cmp(got, a$expected, a$tol, a$mode)
+  }
+})

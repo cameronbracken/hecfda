@@ -100,8 +100,25 @@ EAD/AEP compute path and is validated against both deterministic oracles (150000
 iterations) that reproduce the real C#. `Parallel.For` is severed to a serial loop throughout
 (index-addressed sampling makes this safe -- no ordering dependency). `ScenarioResults`/`Scenario`/
 `Alternative`/`AlternativeComparisonReport` and the two `*ByQuantile` types are Phase 6.
-All phase 6 builds outward from this base -- see `PLAN.md` for the dependency-ordered bulk-port
-sequence.
+Phase 6 (the final phase) un-severed the Empirical/quantile chain the remaining metrics types
+depend on (`Empirical::stack_empirical_distributions`/`fit_to_sample`,
+`DynamicHistogram::convert_to_empirical_distribution`), ported the five remaining
+`hecfda::model::metrics` types (`AggregatedConsequencesByQuantile`,
+`StudyAreaConsequencesByQuantile`, `ScenarioResults`, `AlternativeResults`,
+`AlternativeComparisonReportResults`) and the binned-to-quantile converters that feed them, and
+added the three top-level domain classes: `hecfda::model::scenarios::Scenario` (the impact-area
+fan-out that produces a `ScenarioResults`), `hecfda::model::alternatives::Alternative`
+(`compute_eqad` -- the EqAD annualization: interpolate a per-year value between base/future years,
+present-value each year at the discount rate, divide by the PVIFA annuity factor -- plus
+`annualization_compute`, which builds base-year/future-year `AlternativeResults` from two
+`ScenarioResults`), and `hecfda::model::alternative_comparison_report::AlternativeComparisonReport`
+(with/without-project benefits = empirical-distribution subtraction between two `AlternativeResults`
+via `stack_empirical_distributions(subtract)`). This closes the numerical core: the full
+stage-frequency -> stage-damage -> EAD Monte Carlo -> scenario/alternative annualization ->
+with/without benefits pipeline is now ported end to end and validated against the real C# by the
+dotnet oracle gate, capped by a Task 11 capstone that chains all three domain classes together
+exactly as the real `AlternativeComparisonReportShould`-style tests do. **All 6 phases are
+complete; this is the whole port.**
 
 ## Build & test commands
 
@@ -239,6 +256,29 @@ files) and against real C# via the `verify_oracles.py` gate, matching the
 distribution/structures/stage-damage-coverage convention above rather than duplicating it with
 bespoke R/Python glue for every target.
 
+**R/Python scenarios/alternatives coverage scope (Phase 6, final):** the R
+(`hecfda_alternative_compute_eqad`/`hecfda_scenario`) and Python (`alternative_compute_eqad`/
+`scenario`) bindings cover a representative subset of the new Phase-6 targets: `alternative`'s
+`compute_eqad` scalar dispatch (the phase's headline math -- the 8-row `ComputeEqad` oracle table
+in `fixtures/alternatives/alternative.json`, a pure 6-argument scalar function with no object
+construction) and `scenario`'s impact-area fan-out (the `two_impact_area_fan_out` case of
+`fixtures/scenarios/scenario.json` -- N `ImpactAreaScenarioSimulation` objects, one per
+`impact_area_id`, built via a shared `r_build_impact_area_simulation`/`py_build_impact_area_simulation`
+helper factored out of the Phase-5 `impact_area_scenario_simulation` binding, folded into a
+`Scenario` and computed once with `ConvergenceCriteria(1,1)`/`compute_is_deterministic=true` --
+deliberately NOT the 50000-iteration Muncie case, to keep the R/Python suites fast). The remaining
+Phase-6 targets -- `alternative`'s `annualization` kind (`AlternativeResults`-producing),
+`alternative_comparison_report` (with/without benefits), the five `*ByQuantile`/results metrics
+types (`AggregatedConsequencesByQuantile`, `StudyAreaConsequencesByQuantile`, `ScenarioResults`,
+`AlternativeResults`, `AlternativeComparisonReportResults`), the un-severed
+`Empirical`/`DynamicHistogram` quantile chain, and the Task-11 end-to-end capstone (including the
+Muncie 50000-iteration seeded benchmark) -- traverse the identical binding and compiled core, so
+they stay validated in C++ (`test_fixtures.cpp` loads every `fixtures/scenarios/*.json` and
+`fixtures/alternatives/*.json`) and against real C# via the `verify_oracles.py` gate, matching the
+distribution/structures/stage-damage/compute-metrics-coverage convention above rather than
+duplicating it with bespoke R/Python glue for every target. This is the last such convention entry
+-- the port is complete as of Phase 6.
+
 ## Conventions & gotchas
 
 - **Structural mirroring:** C++ mirrors the C# file/class/method layout so upstream diffs map
@@ -374,6 +414,25 @@ bespoke R/Python glue for every target.
     `kSystemResponseSeed=5678`, `kStageDamageSeed=6789`, `kStageLifeLossSeed=7891` -- not a bug, but
     load-bearing for RNG parity (see "RNG parity" below) and recorded here since a future refactor
     that renumbers or reorders these breaks every seeded oracle silently.
+  - `AlternativeComparisonReportResults::get_consequences_reduced_results_for_given_alternative`'s
+    4-combination `get_ead_results`/`get_base_year_results` dispatch has a trailing
+    `std::invalid_argument` branch for "base-year results but NOT EAD results" that is UNREACHABLE
+    dead code in both the real C# and this port: the preceding `!get_ead_results` branch already
+    catches both values of `get_base_year_results`, so the throw can never fire. Transcribed
+    verbatim rather than removed.
+  - `AlternativeComparisonReportResults::AddAlternativeResults` (C#) looks like a genuine upstream
+    bug: on a cache miss it unconditionally appends to `_EqadReducedResultsList` regardless of the
+    `isEADResults`/`isBaseYearResults` flags that were just used to select a different list for the
+    existence check, so a miss against the base-year or future-year list still gets written to the
+    EqAD list instead. Deferred rather than ported speculatively -- it is never called by
+    `AlternativeComparisonReport::compute_alternative_comparison_report` (Task 10's ctor path
+    populates the three reduced-results lists directly), so this port has no call site that would
+    exercise the apparent bug either way.
+  - `Empirical::stack_empirical_distributions` indexes `distributions[0]` unconditionally with no
+    empty-vector guard, matching the real C#'s own lack of an empty-input check (also flagged by a
+    `//TODO` on unrelated monotonicity validation in the same file, but no guard exists for this
+    case either); never exercised by any fixture since every stacking call site in this port always
+    passes at least one distribution.
 - **By-value capture in Validation-rule predicates (standing invariant, Phase 3):**
   `ValueUncertainty`, `ValueRatioWithUncertainty`, `FirstFloorElevationUncertainty`, and
   `Structure` are all held **by value** inside containers that relocate them after construction
@@ -413,7 +472,11 @@ bespoke R/Python glue for every target.
 
 ## Status
 
-**Phase 0 through Phase 5 are complete.** The Phase 0 vertical slice (.NET `Random` ->
+**ALL 6 PHASES COMPLETE -- the port is done.** The numerical core of HEC-FDA is now fully ported
+to C++17 and bound into R and Python, validated against the real HEC-FDA C# across every layer:
+RNG -> distributions -> paired-data curve algebra -> structures/inventory -> stage-damage ->
+EAD Monte Carlo -> scenarios/alternatives/annualization -> with/without benefits. The Phase 0
+vertical slice (.NET `Random` ->
 `Normal` -> `PairedData` -> `UncertainPairedData.sample_and_integrate`) passes identically in
 C++, R, and Python; the seeded RNG stream is byte-identical across all three and matches a real
 .NET capture. Phase 1 (Statistics foundation) ported the validation subsystem, full
@@ -477,14 +540,33 @@ SEVERANCES note for the full list). R and Python bind a representative subset
 remaining Phase-5 targets, case kinds, and both seeded-benchmark fixtures are validated in C++ +
 the gate only.
 
-The exit gate is green on all four legs: `make test-core` (ctest, C++, all passing, ~66s --
-`test_fixtures` alone accounts for most of that, now including the full EAD Monte Carlo cases),
-`make test-r` (testthat, 137 passed / 0 failed), `make test-py` (pytest, 14 passed / 0 failed), and
-`make oracles` (dotnet gate, 695 reproduced / 0 failed -- up from Phase 4's 641). The Makefile
-targets and 3-platform CI are green. The `24.425549382855987` cross-language value and the RNG
-digest (FMA-insensitive) reproduce unchanged in all four legs, and the Phase 3/4 fixtures
-(`value_uncertainty`, `structure`, `consequence_result`, `impact_area_stage_damage`) still pass in
-R and Python.
+Phase 6 (scenarios & alternatives, the final phase) un-severed the `Empirical`/`DynamicHistogram`
+quantile chain (`Empirical::stack_empirical_distributions`/`fit_to_sample`,
+`DynamicHistogram::convert_to_empirical_distribution`), ported the five remaining
+`hecfda::model::metrics` types (`AggregatedConsequencesByQuantile`,
+`StudyAreaConsequencesByQuantile`, `ScenarioResults`, `AlternativeResults`,
+`AlternativeComparisonReportResults`) and the binned-to-quantile converters, and added the three
+top-level domain classes: `hecfda::model::scenarios::Scenario` (impact-area fan-out),
+`hecfda::model::alternatives::Alternative` (`compute_eqad` -- interpolate/present-value/PVIFA
+annualization -- and `annualization_compute`), and
+`hecfda::model::alternative_comparison_report::AlternativeComparisonReport` (with/without-project
+benefits via empirical-distribution subtraction). A Task 11 capstone chained all three together
+end to end (`Scenario.compute` -> `Alternative.annualization_compute` ->
+`AlternativeComparisonReport::compute_alternative_comparison_report`), reproducing the real C#'s
+`AlternativeResults_Test` (208213.80/239260.18), the with/without benefits subtraction, and a
+50000-iteration seeded Muncie benchmark (310937.1/295506.53). R and Python bind a representative
+subset (`alternative`'s `compute_eqad` scalar dispatch, `scenario`'s deterministic two-impact-area
+fan-out) per the "R/Python scenarios/alternatives coverage scope" convention above; the remaining
+Phase-6 targets, including the Muncie benchmark, are validated in C++ + the gate only.
+
+The exit gate is green on all four legs: `make test-core` (ctest, C++, all passing, ~7s),
+`make test-r` (testthat, 148 passed / 0 failed), `make test-py` (pytest, 16 passed / 0 failed), and
+`make oracles` (dotnet gate, 820 reproduced / 0 failed -- up from Phase 5's 695, the final count
+for the whole port). The Makefile targets and 3-platform CI are green. The `24.425549382855987`
+cross-language value and the RNG digest (`50124.341288393982`, FMA-insensitive) reproduce unchanged
+in all four legs -- confirmed again after Phase 6's bindings -- and every Phase 1-5 representative
+fixture (`value_uncertainty`, `structure`, `consequence_result`, `impact_area_stage_damage`,
+`system_performance_results`, `impact_area_scenario_simulation`) still passes in R and Python.
 
 Severed/deferred from Phase 2: `CurveMetaData`/`GraphicalDistribution`/
 `GraphicalUncertainPairedData` XML + `ValidationErrorLogger`/GUI wiring;
@@ -538,9 +620,24 @@ Validation-rule predicates" above) remains open -- `Threshold` now holds `System
 `std::vector<Threshold>`, another relocating container, but still not triggered by any code path
 that calls `validate()` on it.
 
-See `PLAN.md` for the conventions established in Phase 1-5 (port-internal factory keys, bespoke
-fixture targets, the faithful-bug list, the by-value-capture invariant, the hydraulics-as-arrays
-boundary, the per-curve RNG seed constants), the Phase 6 plan, and the FMA parity detail. **Next:
-Phase 6 -- scenarios & alternatives** (`Scenario`/`Alternative`/`AlternativeComparisonReport` +
-`ScenarioResults` + the two `*ByQuantile` types), which builds on the EAD compute layer Phase 5
-delivered.
+Deferred from Phase 6 (Minor, aggregated into the post-port cleanup backlog -- see `PLAN.md`): the
+`AlternativeComparisonReportResults` unreachable trailing throw and the `AddAlternativeResults`
+apparent upstream bug (both documented in "Faithful upstream bugs" above, neither exercised by any
+call path in this port); `Empirical::stack_empirical_distributions`'s unguarded `distributions[0]`
+access on an empty vector (matches upstream, never exercised); the Muncie 50000-iteration seeded
+benchmark and the `alternative`'s `annualization` kind are validated in C++ + the gate only, not
+bound in R/Python (deliberate, to keep the R/Python suites fast -- see the coverage-scope
+convention above).
+
+**The whole numerical core of HEC-FDA is now ported.** Surfaces that were NEVER in scope and were
+severed from day one, not deferred: RAS-Mapper terrain/inundation reading, `Spatial`/GIS,
+`hydraulics` RAS-grid ingest, `SQLite`/DBF persistence, `Serialization`/XML, `LifeLoss` (LifeSim),
+and all WPF/MVVM messaging, `[StoredProperty]` reflection metadata, and `CancellationToken`/
+threading boilerplate. Users of `hecfdar`/`hecfdapy` supply already-extracted inputs (stage-frequency
+curves, per-frequency hydraulic stage profiles, structure inventory tables) as plain arrays/data
+frames; nothing in this list is a gap to close in a future phase.
+
+See `PLAN.md` for the conventions established across all 6 phases (port-internal factory keys,
+bespoke fixture targets, the faithful-bug list, the by-value-capture invariant, the
+hydraulics-as-arrays boundary, the per-curve RNG seed constants), the full phase history, and the
+post-port cleanup backlog.
