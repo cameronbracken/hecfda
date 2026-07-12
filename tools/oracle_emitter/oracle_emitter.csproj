@@ -125,5 +125,68 @@
          HEC.FDA.Model.Spatial/hydraulics.enums/Interfaces/paireddata/structures/System.Xml.Linq,
          none reachable from this subset-compiled project (same rationale as patched/Structure.cs's
          dropped ctors). Same auto-pickup as the patched/ files above, no explicit Compile Include. -->
+    <!-- Task Phase5T1: AssuranceResultStorage's real source pulls in System.Xml.Linq
+         (WriteToXML/ReadFromXML) via the private (string, double, DynamicHistogram) ctor those
+         methods feed, neither reachable/needed by this subset-compiled project.
+         patched/AssuranceResultStorage.cs drops exactly those (and the now-unused
+         System.Xml.Linq using); both remaining ctors, Equals, AddObservation, and
+         PutDataIntoHistogram are kept VERBATIM. ThresholdEnum.cs was NOT compiled in as of this
+         task (a bare enum has no oracle-verifiable computation by itself); it is ported to C++
+         directly from the pinned source with no emitter/fixture surface of its own. It IS compiled
+         in starting Phase5T3 below, once Threshold/PerformanceByThresholds need a real enum value
+         to construct against. Same auto-pickup as the patched/ files above, no explicit Compile
+         Include. -->
+    <!-- Task Phase5T2: SystemPerformanceResults's real source pulls in System.Xml.Linq
+         (WriteToXML/ReadFromXML) plus HEC.MVVMFramework.Base.Events/Model.Messaging (the
+         ReportMessage/ErrorMessage call in GetAssurance) via its `: ValidationErrorLogger` base,
+         neither reachable/needed by this subset-compiled project. patched/SystemPerformanceResults.cs
+         drops the ValidationErrorLogger base, both XML-only private ctors, WriteToXML/ReadFromXML,
+         and GetAssurance's ReportMessage call (keeping its dummy-fallback return); all three public
+         ctors and every other method (AddStageAssuranceHistogram, GetAssuranceOfThresholdHistogram,
+         GetAEPHistogram, AddAEPForAssurance, AddStageForAssurance, MeanAEP, MedianAEP,
+         AEPWithGivenAssurance, AssuranceOfAEP, AssuranceIsConverged, AssuranceTestForConvergence,
+         AssuranceRemainingIterations, AssuranceOfEvent, CalculateAssuranceForLevee,
+         LongTermExceedanceProbability, ParallelResultsAreConverged, Equals,
+         PutDataIntoHistograms) are kept VERBATIM. Same auto-pickup as the patched/ files above, no
+         explicit Compile Include. -->
+    <!-- Task Phase5T3: Threshold + PerformanceByThresholds need a real ThresholdEnum to construct
+         against (Phase5T1's comment above noted ThresholdEnum.cs was NOT compiled in, since no
+         emitter needed to instantiate it yet). Unlike Threshold.cs/PerformanceByThresholds.cs
+         (which need patched/ copies for their XML+MVVM surface), ThresholdEnum.cs itself has zero
+         compile blockers: `[StoredProperty(...)]` is already reachable (StoredPropertyAttribute.cs
+         above), and `[DisplayName(...)]` only needs the equally self-contained
+         utilities/Attributes/DisplayNameAttribute.cs (System-only, no further deps). Both compiled
+         unpatched, verbatim, attributes and all; ThresholdEnumExtensions.GetDisplayName is inert
+         (never called by the emitter) but costs nothing to keep. patched/Threshold.cs drops the
+         private XML-read ctor, WriteToXML/ReadFromXML, GetXMLTagFromProperty/
+         ThresholdEnumFromString, and the [StoredProperty(...)] attributes (pure serialization
+         metadata only read by the dropped methods); the parameterless dummy ctor, both public
+         compute ctors, and Equals are kept VERBATIM. patched/PerformanceByThresholds.cs drops the
+         ValidationErrorLogger base, the private (List<Threshold>) ctor, WriteToXML/ReadFromXML,
+         and GetThreshold's ReportMessage call (keeping its dummy-fallback return); both public
+         ctors, AddThreshold, GetThreshold, and Equals are kept VERBATIM. Same auto-pickup as the
+         patched/ files above, no explicit Compile Include for the patched pair. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/Attributes/DisplayNameAttribute.cs" />
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/ThresholdEnum.cs" />
+    <!-- Task Phase5T4: CategoriedUncertainPairedData's real source pulls in System.Xml.Linq
+         (WriteToXML/ReadFromXML), neither reachable/needed by this subset-compiled project.
+         patched/CategoriedUncertainPairedData.cs drops exactly that (and the now-unused
+         System.Xml.Linq using); both fields, both ctors, AddCurveRealization,
+         PutDataIntoHistograms, GetUncertainPairedData, and InitializeHistograms are kept
+         VERBATIM. CategoriedPairedData.cs (21 lines: one ctor, five auto-properties, no XML/MVVM)
+         compiles unpatched. Same auto-pickup as the patched/ files above, no explicit Compile
+         Include for the patched file. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/CategoriedPairedData.cs" />
+    <!-- Task Phase5T5: ContinuousDistributionExtensions (BootstrapToPairedData /
+         BootstrapToUncertainPairedData) depends only on types already compiled into this project
+         (ContinuousDistribution/IDistribution/IProvideRandomNumbers via the HEC.FDA.Statistics
+         ProjectReference + IProvideRandomNumbers.cs above; PairedData/UncertainPairedData/
+         CurveMetaData via the paireddata Compile Includes above; DynamicHistogram/
+         ConvergenceCriteria via the HEC.FDA.Statistics ProjectReference). No MVVM/XML/threading
+         surface to strip, compiles unpatched, verbatim, both extension methods kept (only the
+         iterationNumber overload is exercised by the fixture; the IProvideRandomNumbers overload
+         and BootstrapToUncertainPairedData are out of this task's scope but cost nothing to keep
+         compiled in). -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/extensions/ContinuousDistributionExtensions.cs" />
   </ItemGroup>
 </Project>

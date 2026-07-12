@@ -1066,6 +1066,555 @@ namespace oracle_emitter {
       throw new Exception("unknown study_area_consequences_binned method: " + method);
     }
 
+    // CategoriedPairedData + CategoriedUncertainPairedData (Phase 5 Task 4) is the per-
+    // (damageCategory, assetCategory, ConsequenceType, RiskType) damage/FN-frequency curve
+    // accumulator -- built from patched/CategoriedUncertainPairedData.cs (see that file's header
+    // for why it's a patched local copy: WriteToXML/ReadFromXML dropped, everything else
+    // verbatim); CategoriedPairedData.cs (21 lines, no XML/MVVM) compiles unpatched. `construct`
+    // is EITHER {xvals, damage_category, asset_category, consequence_type, risk_type, convergence:
+    // {min_iterations, max_iterations}} (the 6-arg compute ctor) OR {initial_curve: {xvals, yvals,
+    // damage_category, asset_category, consequence_type, risk_type}, convergence: {min_iterations,
+    // max_iterations}} (the CategoriedPairedData-delegating ctor). `realization_batches` is a list
+    // of batches, each a list of {iteration, yvals}: for every batch, build a fresh
+    // PairedData(xvals, yvals) per realization and AddCurveRealization it in order, then
+    // PutDataIntoHistograms() exactly once per batch -- one object is built and staged per case,
+    // shared across every batch and assertion (mirrors run_categoried_uncertain_paired_data in
+    // test_fixtures.cpp). `method` is always sample_paired_data_deterministic_yvals (args []):
+    // GetUncertainPairedData().SamplePairedData(1, true).Yvals.
+    static object EvalCategoriedUncertainPairedData(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+
+      CategoriedUncertainPairedData cupd;
+      if (c.TryGetProperty("initial_curve", out var icEl)) {
+        var initialCurve = new PairedData(DA(icEl.GetProperty("xvals")), DA(icEl.GetProperty("yvals")));
+        var initial = new CategoriedPairedData(
+          initialCurve,
+          icEl.GetProperty("damage_category").GetString(),
+          icEl.GetProperty("asset_category").GetString(),
+          Enum.Parse<ConsequenceType>(icEl.GetProperty("consequence_type").GetString()),
+          Enum.Parse<RiskType>(icEl.GetProperty("risk_type").GetString()));
+        cupd = new CategoriedUncertainPairedData(initial, cc);
+      } else {
+        cupd = new CategoriedUncertainPairedData(
+          DA(c.GetProperty("xvals")),
+          c.GetProperty("damage_category").GetString(),
+          c.GetProperty("asset_category").GetString(),
+          Enum.Parse<ConsequenceType>(c.GetProperty("consequence_type").GetString()),
+          Enum.Parse<RiskType>(c.GetProperty("risk_type").GetString()),
+          cc);
+      }
+
+      double[] xvals = cupd.Xvals.ToArray();
+      foreach (var batch in caseEl.GetProperty("realization_batches").EnumerateArray()) {
+        foreach (var r in batch.EnumerateArray()) {
+          var curve = new PairedData(xvals, DA(r.GetProperty("yvals")));
+          cupd.AddCurveRealization(curve, r.GetProperty("iteration").GetInt64());
+        }
+        cupd.PutDataIntoHistograms();
+      }
+
+      if (method == "sample_paired_data_deterministic_yvals") return cupd.GetUncertainPairedData().SamplePairedData(1, true).Yvals.ToArray();
+      throw new Exception("unknown categoried_uncertain_paired_data method: " + method);
+    }
+
+    // AssuranceResultStorage (Phase 5 Task 1) is the histogram-staging Monte Carlo accumulator for
+    // one assurance metric -- built from patched/AssuranceResultStorage.cs (see that file's header
+    // for why it's a patched local copy: WriteToXML/ReadFromXML and the XML-only private ctor
+    // dropped, everything else verbatim). `construct` is {assurance_type, bin_width, convergence:
+    // {min_iterations, max_iterations}, standard_non_exceedance_probability}, matching the
+    // (string, double, ConvergenceCriteria, double) compute ctor; ConvergenceCriteria uses the
+    // 2-arg (minIterations, maxIterations) ctor, same as EvalAggregatedConsequencesBinned.
+    // `observations` is a list of {iteration, result} applied in order via AddObservation before a
+    // single PutDataIntoHistogram() call; one object is built and staged per case, shared across
+    // all of that case's assertions (mirrors run_assurance_result_storage in test_fixtures.cpp).
+    // `method` dispatches SampleMean (args []) or InverseCDF (args [p]), both read off
+    // AssuranceHistogram (a plain DynamicHistogram property, not IHistogram, so no cast needed).
+    static object EvalAssuranceResultStorage(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+      var ars = new AssuranceResultStorage(c.GetProperty("assurance_type").GetString(), D(c.GetProperty("bin_width")), cc, D(c.GetProperty("standard_non_exceedance_probability")));
+      foreach (var o in caseEl.GetProperty("observations").EnumerateArray()) {
+        ars.AddObservation(D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+      }
+      ars.PutDataIntoHistogram();
+      if (method == "sample_mean") return ars.AssuranceHistogram.SampleMean;
+      if (method == "inverse_cdf") return ars.AssuranceHistogram.InverseCDF(D(argsEl[0]));
+      throw new Exception("unknown assurance_result_storage method: " + method);
+    }
+
+    // SystemPerformanceResults (Phase 5 Task 2) is the system-performance metrics container --
+    // built from patched/SystemPerformanceResults.cs (see that file's header for the patch
+    // rationale: MVVM base + ReportMessage + XML dropped, everything else verbatim). Three case
+    // shapes selected by `construct.case_kind` (see fixtures/metrics/system_performance_results.json's
+    // note for the full rationale, matching run_system_performance_results in test_fixtures.cpp
+    // case-for-case):
+    //  - "aep": SystemPerformanceResults(ConvergenceCriteria), stages `aep_observations`
+    //    ({iteration, result}) via AddAEPForAssurance, PutDataIntoHistograms() once, then dispatches
+    //    mean_aep/median_aep/long_term_exceedance_probability (args [years]).
+    //  - "rng_conformance": the PerformanceTest.AssuranceResultStorageShould pin. Builds
+    //    SystemPerformanceResults(ConvergenceCriteria), AddStageAssuranceHistogram(standardProbability),
+    //    seeds `iterationCount` master seeds via `new Random(masterSeed).Next()` (matching the real
+    //    test's masterSeedList loop -- only the first IterationCount of MinIterations are ever
+    //    consumed by the real test's Parallel.For bound, so generating exactly IterationCount
+    //    reproduces the identical seed prefix), then for `computeChunks` outer passes: for each
+    //    seed, RandomProvider(seed).NextRandom() -> standard Normal InverseCDF ->
+    //    AddStageForAssurance(standardProbability, invCDF, i); PutDataIntoHistograms() once per
+    //    pass. `method: assurance_of_event` (args []) returns AssuranceOfEvent(standardProbability,
+    //    thresholdValue); `method: normal_cdf_reference` (args []) returns the same
+    //    standardNormal.CDF(thresholdValue) PerformanceTest.cs compares against, letting the
+    //    fixture pin both the exact RNG-seeded value and its theoretical cross-check from one C#
+    //    run.
+    //  - "levee": builds SystemPerformanceResults(UncertainPairedData systemResponse,
+    //    ConvergenceCriteria) from `system_response_xs`/`system_response_ys` (Deterministic-
+    //    distribution ys, matching ComputeLeveeAEP_Test's fragility curve), AddStageAssuranceHistogram
+    //    (standardProbability), stages `stage_observations` via AddStageForAssurance,
+    //    PutDataIntoHistograms() once, then dispatches `assurance_of_event` (args [thresholdValue]
+    //    -- ignored by the levee branch, kept for construct-shape parity) through
+    //    CalculateAssuranceForLevee.
+    static object EvalSystemPerformanceResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      string caseKind = c.GetProperty("case_kind").GetString();
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+
+      if (caseKind == "aep") {
+        var spr = new SystemPerformanceResults(cc);
+        foreach (var o in c.GetProperty("aep_observations").EnumerateArray()) {
+          spr.AddAEPForAssurance(D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+        }
+        spr.PutDataIntoHistograms();
+        if (method == "mean_aep") return spr.MeanAEP();
+        if (method == "median_aep") return spr.MedianAEP();
+        if (method == "long_term_exceedance_probability") return spr.LongTermExceedanceProbability((int)D(argsEl[0]));
+        throw new Exception("unknown system_performance_results (aep) method: " + method);
+      }
+
+      if (caseKind == "rng_conformance") {
+        double standardProbability = c.GetProperty("standard_probability").GetDouble();
+        int masterSeed = c.GetProperty("master_seed").GetInt32();
+        double thresholdValue = c.GetProperty("threshold_value").GetDouble();
+        int computeChunks = c.GetProperty("compute_chunks").GetInt32();
+
+        var spr = new SystemPerformanceResults(cc);
+        spr.AddStageAssuranceHistogram(standardProbability);
+
+        long iterationCount = cc.IterationCount;
+        var masterSeedList = new Random(masterSeed);
+        var seeds = new int[iterationCount];
+        for (int i = 0; i < iterationCount; i++) seeds[i] = masterSeedList.Next();
+
+        var standardNormal = new Normal();
+        for (int j = 0; j < computeChunks; j++) {
+          for (int i = 0; i < iterationCount; i++) {
+            var threadlocalRandomProvider = new RandomProvider(seeds[i]);
+            double invCDF = standardNormal.InverseCDF(threadlocalRandomProvider.NextRandom());
+            spr.AddStageForAssurance(standardProbability, invCDF, i);
+          }
+          spr.PutDataIntoHistograms();
+        }
+        if (method == "assurance_of_event") return spr.AssuranceOfEvent(standardProbability, thresholdValue);
+        if (method == "normal_cdf_reference") return standardNormal.CDF(thresholdValue);
+        throw new Exception("unknown system_performance_results (rng_conformance) method: " + method);
+      }
+
+      if (caseKind == "levee") {
+        double[] xs = DA(c.GetProperty("system_response_xs"));
+        double[] ys = DA(c.GetProperty("system_response_ys"));
+        IDistribution[] failureProbs = ys.Select(y => (IDistribution)new Deterministic(y)).ToArray();
+        var md = new CurveMetaData("x", "y", "oracle");
+        var systemResponse = new UncertainPairedData(xs, failureProbs, md);
+        double standardProbability = c.GetProperty("standard_probability").GetDouble();
+
+        var spr = new SystemPerformanceResults(systemResponse, cc);
+        spr.AddStageAssuranceHistogram(standardProbability);
+        foreach (var o in c.GetProperty("stage_observations").EnumerateArray()) {
+          spr.AddStageForAssurance(standardProbability, D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+        }
+        spr.PutDataIntoHistograms();
+        if (method == "assurance_of_event") return spr.AssuranceOfEvent(standardProbability, D(argsEl[0]));
+        throw new Exception("unknown system_performance_results (levee) method: " + method);
+      }
+      throw new Exception("unknown system_performance_results case_kind: " + caseKind);
+    }
+
+    // PerformanceByThresholds (Phase 5 Task 3) -- the Threshold container. Built from
+    // patched/Threshold.cs + patched/PerformanceByThresholds.cs (see those files' headers for the
+    // patch rationale: XML/MVVM dropped, ctors/AddThreshold/GetThreshold/Equals kept VERBATIM) plus
+    // the real (unpatched) ThresholdEnum. `construct.thresholds` is a list of {id, type
+    // (ThresholdEnum name string), value, convergence}; each is built via the (id,
+    // ConvergenceCriteria, ThresholdEnum, value) ctor and AddThreshold'd in list order.
+    // `construct.get_threshold_id` selects which one GetThreshold retrieves; `threshold_value`/
+    // `threshold_type`/`threshold_id` read straight off that retrieved Threshold (plain ctor-
+    // assigned data, not oracle math). `construct.aep_observations` ({iteration, result}) are then
+    // fed into the retrieved Threshold's own SystemPerformanceResults via AddAEPForAssurance,
+    // followed by one PutDataIntoHistograms() call, so `mean_aep` proves AddThreshold/GetThreshold
+    // hand back the SAME live SystemPerformanceResults the ctor built (not a copy).
+    static object EvalPerformanceByThresholds(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var pbt = new PerformanceByThresholds();
+      foreach (var t in c.GetProperty("thresholds").EnumerateArray()) {
+        int id = t.GetProperty("id").GetInt32();
+        string typeName = t.GetProperty("type").GetString();
+        ThresholdEnum type = Enum.Parse<ThresholdEnum>(typeName);
+        double value = D(t.GetProperty("value"));
+        var conv = t.GetProperty("convergence");
+        var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+        pbt.AddThreshold(new Threshold(id, cc, type, value));
+      }
+      int getThresholdId = c.GetProperty("get_threshold_id").GetInt32();
+      Threshold threshold = pbt.GetThreshold(getThresholdId);
+
+      if (method == "threshold_value") return threshold.ThresholdValue;
+      if (method == "threshold_type") return (double)(int)threshold.ThresholdType;
+      if (method == "threshold_id") return (double)threshold.ThresholdID;
+      if (method == "mean_aep") {
+        foreach (var o in c.GetProperty("aep_observations").EnumerateArray()) {
+          threshold.SystemPerformanceResults.AddAEPForAssurance(D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+        }
+        threshold.SystemPerformanceResults.PutDataIntoHistograms();
+        return threshold.SystemPerformanceResults.MeanAEP();
+      }
+      throw new Exception("unknown performance_by_thresholds method: " + method);
+    }
+
+    // ImpactAreaScenarioResults (Phase 5 Task 6) is the compute-output container holding one
+    // PerformanceByThresholds + one StudyAreaConsequencesBinned -- built from
+    // patched/ImpactAreaScenarioResults.cs (see that file's header for the patch rationale: XML
+    // dropped, everything else including the GetOrCreateUncertainConsequenceFrequencyCurve lock
+    // kept VERBATIM). `construct` is {impact_area_id, damage_category, asset_category,
+    // consequence_convergence: {min_iterations, max_iterations}, threshold: {id, type
+    // (ThresholdEnum name string), value, convergence: {min_iterations, max_iterations}}}. Builds
+    // a fresh ImpactAreaScenarioResults(impactAreaID) (the 1-arg public ctor), AddThreshold's a
+    // Threshold built from `threshold`, and AddNewConsequenceResultObject's ONE (damageCategory,
+    // assetCategory) combo into ConsequenceResults with ConsequenceType.Damage/RiskType.Total
+    // (Total, not StudyAreaConsequencesBinned's own Fail default -- matches the RiskType.Total
+    // default MeanExpectedAnnualConsequences itself uses; see
+    // fixtures/metrics/impact_area_scenario_results.json's note). `consequence_realizations`
+    // ({iteration, damage}) feed ConsequenceResults.AddConsequenceRealization(damage,
+    // damageCategory, assetCategory, impactAreaID, iteration, ConsequenceType.Damage,
+    // RiskType.Total) (the EAD-binning overload), then ConsequenceResults.PutDataIntoHistograms()
+    // runs once. `aep_observations` ({iteration, result}) feed the retrieved threshold's
+    // SystemPerformanceResults.AddAEPForAssurance(...), then that same SystemPerformanceResults.
+    // PutDataIntoHistograms() runs once. `method` dispatches mean_aep/median_aep (args
+    // [thresholdID]), long_term_exceedance_probability (args [thresholdID, years]),
+    // assurance_of_aep (args [thresholdID, exceedanceProbability]),
+    // mean_expected_annual_consequences (args [impactAreaID]), and results_are_converged (args
+    // [upper, lower] -- ResultsAreConverged(upper, lower, checkConsequenceResults: true), returned
+    // as 1.0/0.0).
+    static object EvalImpactAreaScenarioResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      int impactAreaID = c.GetProperty("impact_area_id").GetInt32();
+      string damageCategory = c.GetProperty("damage_category").GetString();
+      string assetCategory = c.GetProperty("asset_category").GetString();
+
+      var results = new ImpactAreaScenarioResults(impactAreaID);
+
+      var t = c.GetProperty("threshold");
+      int thresholdId = t.GetProperty("id").GetInt32();
+      ThresholdEnum thresholdType = Enum.Parse<ThresholdEnum>(t.GetProperty("type").GetString());
+      double thresholdValue = D(t.GetProperty("value"));
+      var tConv = t.GetProperty("convergence");
+      var thresholdCc = new ConvergenceCriteria(tConv.GetProperty("min_iterations").GetInt32(), tConv.GetProperty("max_iterations").GetInt32());
+      results.PerformanceByThresholds.AddThreshold(new Threshold(thresholdId, thresholdCc, thresholdType, thresholdValue));
+
+      var consConv = c.GetProperty("consequence_convergence");
+      var consequenceCc = new ConvergenceCriteria(consConv.GetProperty("min_iterations").GetInt32(), consConv.GetProperty("max_iterations").GetInt32());
+      results.ConsequenceResults.AddNewConsequenceResultObject(damageCategory, assetCategory, consequenceCc, impactAreaID, ConsequenceType.Damage, RiskType.Total);
+
+      foreach (var r in caseEl.GetProperty("consequence_realizations").EnumerateArray()) {
+        results.ConsequenceResults.AddConsequenceRealization(D(r.GetProperty("damage")), damageCategory, assetCategory, impactAreaID, r.GetProperty("iteration").GetInt64(), ConsequenceType.Damage, RiskType.Total);
+      }
+      results.ConsequenceResults.PutDataIntoHistograms();
+
+      Threshold threshold = results.PerformanceByThresholds.GetThreshold(thresholdId);
+      threshold.SystemPerformanceResults.AddStageAssuranceHistogram(0.98);
+      foreach (var o in caseEl.GetProperty("aep_observations").EnumerateArray()) {
+        threshold.SystemPerformanceResults.AddAEPForAssurance(D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+      }
+      foreach (var o in caseEl.GetProperty("stage_observations").EnumerateArray()) {
+        threshold.SystemPerformanceResults.AddStageForAssurance(0.98, D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+      }
+      threshold.SystemPerformanceResults.PutDataIntoHistograms();
+
+      if (method == "mean_aep") return results.MeanAEP(argsEl[0].GetInt32());
+      if (method == "median_aep") return results.MedianAEP(argsEl[0].GetInt32());
+      if (method == "long_term_exceedance_probability") return results.LongTermExceedanceProbability(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+      if (method == "assurance_of_aep") return results.AssuranceOfAEP(argsEl[0].GetInt32(), D(argsEl[1]));
+      if (method == "mean_expected_annual_consequences") return results.MeanExpectedAnnualConsequences(argsEl[0].GetInt32(), damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      if (method == "results_are_converged") return results.ResultsAreConverged(D(argsEl[0]), D(argsEl[1]), true) ? 1.0 : 0.0;
+      if (method == "uncertain_curve_count" || method == "uncertain_curve_yvals_a" || method == "uncertain_curve_yvals_b") {
+        // Reference-stability coverage for GetOrCreateUncertainConsequenceFrequencyCurve (Task 6
+        // follow-up): get_or_create for category_a (creates a curve, keeps the C# object
+        // reference -- in C# this is always stable, matching the port's post-fix std::deque
+        // behavior), feeds realization_a_before_grow, then get_or_create for a DIFFERENT
+        // category_b (grows UncertainConsequenceFrequencyCurves), feeds realization_b, then
+        // get_or_create for category_a again (must be the SAME object -- uncertainCurveCount
+        // stays 2). realization_a_after_grow is added through the ORIGINAL category_a reference.
+        var s = caseEl.GetProperty("uncertain_curve_stability");
+        double[] curveXvals = DA(s.GetProperty("xvals"));
+        var sc = s.GetProperty("convergence");
+        var curveCc = new ConvergenceCriteria(sc.GetProperty("min_iterations").GetInt32(), sc.GetProperty("max_iterations").GetInt32());
+        var ca = s.GetProperty("category_a");
+        var cb = s.GetProperty("category_b");
+
+        CategoriedUncertainPairedData curveA1 = results.GetOrCreateUncertainConsequenceFrequencyCurve(
+            curveXvals, ca.GetProperty("damage_category").GetString(), ca.GetProperty("asset_category").GetString(),
+            Enum.Parse<ConsequenceType>(ca.GetProperty("consequence_type").GetString()),
+            Enum.Parse<RiskType>(ca.GetProperty("risk_type").GetString()), curveCc);
+        var rABefore = s.GetProperty("realization_a_before_grow");
+        curveA1.AddCurveRealization(new PairedData(curveXvals, DA(rABefore.GetProperty("yvals"))), rABefore.GetProperty("iteration").GetInt64());
+
+        CategoriedUncertainPairedData curveB = results.GetOrCreateUncertainConsequenceFrequencyCurve(
+            curveXvals, cb.GetProperty("damage_category").GetString(), cb.GetProperty("asset_category").GetString(),
+            Enum.Parse<ConsequenceType>(cb.GetProperty("consequence_type").GetString()),
+            Enum.Parse<RiskType>(cb.GetProperty("risk_type").GetString()), curveCc);
+        var rB = s.GetProperty("realization_b");
+        curveB.AddCurveRealization(new PairedData(curveXvals, DA(rB.GetProperty("yvals"))), rB.GetProperty("iteration").GetInt64());
+
+        CategoriedUncertainPairedData curveA2 = results.GetOrCreateUncertainConsequenceFrequencyCurve(
+            curveXvals, ca.GetProperty("damage_category").GetString(), ca.GetProperty("asset_category").GetString(),
+            Enum.Parse<ConsequenceType>(ca.GetProperty("consequence_type").GetString()),
+            Enum.Parse<RiskType>(ca.GetProperty("risk_type").GetString()), curveCc);
+
+        var rAAfter = s.GetProperty("realization_a_after_grow");
+        curveA1.AddCurveRealization(new PairedData(curveXvals, DA(rAAfter.GetProperty("yvals"))), rAAfter.GetProperty("iteration").GetInt64());
+
+        if (method == "uncertain_curve_count") return (double)results.UncertainConsequenceFrequencyCurves.Count;
+        results.PutUncertainFrequencyCurvesIntoHistograms();
+        if (method == "uncertain_curve_yvals_a") return curveA2.GetUncertainPairedData().SamplePairedData(1, true).Yvals;
+        return curveB.GetUncertainPairedData().SamplePairedData(1, true).Yvals;
+      }
+      throw new Exception("unknown impact_area_scenario_results method: " + method);
+    }
+
+    // ImpactAreaScenarioSimulation (Phase 5 Task 7): the skeleton + fluent SimulationBuilder +
+    // CanCompute + InitializeConsequenceHistograms surface only -- see
+    // patched/ImpactAreaScenarioSimulation.cs's header for what's kept/dropped and why. `construct`
+    // is {impact_area_id, flow_frequency: {type,params}, flow_stage: {xs, ys:[{type,params}]},
+    // stage_damage: [{damage_category, asset_category, xs, ys:[{type,params}]}],
+    // non_failure_stage_damage (same per-item shape, optional)} -- same shape
+    // core/tests/test_fixtures.cpp's run_simulation dispatch uses. Builds via
+    // Builder(id).WithFlowFrequency(...).WithFlowStage(...).WithStageDamages(...)
+    // [.WithNonFailureStageDamage(...)].Build(). `method` dispatches: is_null (args
+    // [min_iterations, max_iterations]) -- Compute(new ConvergenceCriteria(min, max)).IsNull;
+    // can_compute (args [min, max]) -- CanCompute(new ConvergenceCriteria(min, max)) directly;
+    // consequence_result_count (args []) -- InitializeConsequenceHistograms(new
+    // ConvergenceCriteria()) directly, then ImpactAreaScenarioResultsForTest.ConsequenceResults.
+    // ConsequenceResultList.Count.
+    static UncertainPairedData MakeSimulationUpd(JsonElement ctor) {
+      double[] xs = DA(ctor.GetProperty("xs"));
+      IDistribution[] ys = DistArray(ctor.GetProperty("ys"));
+      if (ctor.TryGetProperty("damage_category", out var dc)) {
+        string assetCategory = ctor.TryGetProperty("asset_category", out var ac) ? ac.GetString() : "unassigned";
+        return new UncertainPairedData(xs, ys, new CurveMetaData(dc.GetString(), assetCategory));
+      }
+      return new UncertainPairedData(xs, ys, new CurveMetaData());
+    }
+    // Phase 5 Task 11: the direct graphical stage-frequency curve set via WithFrequencyStage() --
+    // mirrors StudyDataGraphicalStageFrequencyResultsTests.ComputeMeanEADWithIterations_Test's
+    // `.WithFrequencyStage(stageFrequency)` (no WithFlowFrequency/WithFlowStage at all in that
+    // test). `ctor` is {exceedance_probabilities, values, equivalent_record_length,
+    // using_stages_not_flows?, damage_category, asset_category?} -- damage_category/asset_category
+    // matter here (unlike EvalGupd's fixed "hello" metadata) since the resulting curve's metadata
+    // must match the mean_eac dispatch args.
+    static GraphicalUncertainPairedData MakeSimulationGupd(JsonElement ctor) {
+      double[] exceedanceProbabilities = DA(ctor.GetProperty("exceedance_probabilities"));
+      double[] values = DA(ctor.GetProperty("values"));
+      int erl = ctor.GetProperty("equivalent_record_length").GetInt32();
+      bool usingStagesNotFlows = ctor.TryGetProperty("using_stages_not_flows", out var usnf) ? usnf.GetBoolean() : true;
+      string damageCategory = ctor.GetProperty("damage_category").GetString();
+      string assetCategory = ctor.TryGetProperty("asset_category", out var ac) ? ac.GetString() : "unassigned";
+      return new GraphicalUncertainPairedData(exceedanceProbabilities, values, erl,
+                                               new CurveMetaData(damageCategory, assetCategory), usingStagesNotFlows);
+    }
+    static ImpactAreaScenarioSimulation BuildSimulation(JsonElement ctor) {
+      int impactAreaID = ctor.GetProperty("impact_area_id").GetInt32();
+      var builder = ImpactAreaScenarioSimulation.Builder(impactAreaID);
+      // flow_frequency/flow_stage are OPTIONAL as of Task 11 (a direct-graphical-frequency-stage
+      // simulation never calls WithFlowFrequency/WithFlowStage at all -- see frequency_stage below).
+      if (ctor.TryGetProperty("flow_frequency", out var ffEl)) {
+        var flowFrequency = DistFactory(ffEl.GetProperty("type").GetString(), DA(ffEl.GetProperty("params")));
+        builder = builder.WithFlowFrequency(flowFrequency);
+      }
+      if (ctor.TryGetProperty("flow_stage", out var fsEl)) {
+        builder = builder.WithFlowStage(MakeSimulationUpd(fsEl));
+      }
+      if (ctor.TryGetProperty("frequency_stage", out var freqStageEl)) {
+        builder = builder.WithFrequencyStage(MakeSimulationGupd(freqStageEl));
+      }
+      // stage_damage is OPTIONAL as of Phase 5 Task 10 (a levee-only simulation with no stage
+      // damage at all, e.g. PerformanceTest.ComputeLeveeAEP_Test, never calls WithStageDamages).
+      if (ctor.TryGetProperty("stage_damage", out var sdEl)) {
+        var stageDamage = new List<UncertainPairedData>();
+        foreach (var sd in sdEl.EnumerateArray()) {
+          stageDamage.Add(MakeSimulationUpd(sd));
+        }
+        builder = builder.WithStageDamages(stageDamage);
+      }
+      if (ctor.TryGetProperty("non_failure_stage_damage", out var nfsd)) {
+        var nonFailureStageDamage = new List<UncertainPairedData>();
+        foreach (var sd in nfsd.EnumerateArray()) {
+          nonFailureStageDamage.Add(MakeSimulationUpd(sd));
+        }
+        builder = builder.WithNonFailureStageDamage(nonFailureStageDamage);
+      }
+      // stage_life_loss (Phase 5 Task 10: ComputeEALL's WithStageLifeLoss).
+      if (ctor.TryGetProperty("stage_life_loss", out var sllEl)) {
+        var stageLifeLoss = new List<UncertainPairedData>();
+        foreach (var sd in sllEl.EnumerateArray()) {
+          stageLifeLoss.Add(MakeSimulationUpd(sd));
+        }
+        builder = builder.WithStageLifeLoss(stageLifeLoss);
+      }
+      // levee (Phase 5 Task 10: ComputeEAD_withLevee/TotalRiskShould/ComputeLeveeAEP's WithLevee).
+      if (ctor.TryGetProperty("levee", out var leveeEl)) {
+        var levee = MakeSimulationUpd(leveeEl);
+        builder = builder.WithLevee(levee, leveeEl.GetProperty("top_of_levee_elevation").GetDouble());
+      }
+      // Phase 5 Task 9: optional additional_threshold ({threshold_id, type, value}) -- mirrors
+      // DefaultThresholdShould.NotOverrideUserProvidedDefaultThreshold's pre-registered ID-0
+      // Threshold, built with ConvergenceCriteria(1, 1) matching every DefaultThresholdShould test.
+      // Phase 5 Task 11 adds an OPTIONAL `cc: [min, max, tolerance?]` override for cases (e.g.
+      // PerformanceTest.ComputeConditionalNonExceedanceProbability_Test) whose threshold is built
+      // with the SAME non-(1,1)/non-default-tolerance ConvergenceCriteria the simulation itself
+      // computes with (see BuildSimulation's C++ mirror's comment for why this matters).
+      if (ctor.TryGetProperty("additional_threshold", out var at)) {
+        var thresholdCc = new ConvergenceCriteria(1, 1);
+        if (at.TryGetProperty("cc", out var ccEl)) {
+          var ccArr = ccEl.EnumerateArray().ToArray();
+          double tolerance = ccArr.Length > 2 ? ccArr[2].GetDouble() : 0.01;
+          thresholdCc = new ConvergenceCriteria(ccArr[0].GetInt32(), ccArr[1].GetInt32(), 1.96039491692543, tolerance);
+        }
+        var userThreshold = new Threshold(at.GetProperty("threshold_id").GetInt32(), thresholdCc,
+                                           Enum.Parse<ThresholdEnum>(at.GetProperty("type").GetString()),
+                                           at.GetProperty("value").GetDouble());
+        builder = builder.WithAdditionalThreshold(userThreshold);
+      }
+      return builder.Build();
+    }
+    static object EvalSimulation(JsonElement caseEl, string method, JsonElement argsEl) {
+      var simulation = BuildSimulation(caseEl.GetProperty("construct"));
+      if (method == "is_null") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        return simulation.Compute(cc).IsNull ? 1.0 : 0.0;
+      }
+      if (method == "can_compute") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        return simulation.CanCompute(cc) ? 1.0 : 0.0;
+      }
+      if (method == "consequence_result_count") {
+        var cc = new ConvergenceCriteria();
+        simulation.InitializeConsequenceHistograms(cc);
+        return (double)simulation.ImpactAreaScenarioResultsForTest.ConsequenceResults.ConsequenceResultList.Count;
+      }
+      // Phase 5 Task 8: frequency-stage assembly + seeded PopulateRandomNumbers. args =
+      // [min_iterations, max_iterations, iteration_number, compute_is_deterministic (0/1)] --
+      // see fixtures/compute/frequency_stage_sample.json's `note`.
+      if (method == "frequency_stage_channel_yvals" || method == "frequency_stage_floodplain_yvals") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        simulation.PopulateRandomNumbers(cc);
+        long iterationNumber = argsEl[2].GetInt64();
+        bool computeIsDeterministic = argsEl[3].GetDouble() != 0.0;
+        FrequencyStageCurves curves = simulation.GetFrequencyStageSample(computeIsDeterministic, iterationNumber);
+        return method == "frequency_stage_channel_yvals" ? curves.ChannelStage.Yvals : curves.FloodplainStage.Yvals;
+      }
+      // Phase 5 Task 9: SetupPerformanceThresholds's own deterministic ComputeDefaultThreshold
+      // pass. args = [min_iterations, max_iterations] (always [1, 1] in
+      // fixtures/compute/default_threshold.json). Mirrors DefaultThresholdShould's
+      // Compute(convergenceCriteria, new CancellationToken(), computeIsDeterministic: true) --
+      // but calls SetupPerformanceThresholds directly rather than the full Compute()/
+      // ComputeIterations path (not compiled into this subset-compiled emitter project, see the
+      // patched file's header): SetupPerformanceThresholds's own internal deterministic pass fully
+      // derives the default threshold's ThresholdValue, and nothing else downstream ever mutates it.
+      if (method == "default_threshold_value") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        simulation.SetupPerformanceThresholds(cc);
+        return simulation.ImpactAreaScenarioResultsForTest.PerformanceByThresholds.GetThreshold(0).ThresholdValue;
+      }
+      // Phase 5 Task 10: the full Compute()/ComputeIterations Monte Carlo loop's EAD oracle. args =
+      // [min_iterations, max_iterations, compute_is_deterministic (0/1), impact_area_id,
+      // damage_category, asset_category, consequence_type_name]. RiskType is never passed --
+      // MeanExpectedAnnualConsequences's own RiskType.Total default is used (matches every
+      // SimulationShould/TotalRiskShould test's own call).
+      if (method == "mean_eac") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        bool computeIsDeterministic = argsEl[2].GetDouble() != 0.0;
+        int impactAreaID = argsEl[3].GetInt32();
+        string damageCategory = argsEl[4].GetString();
+        string assetCategory = argsEl[5].GetString();
+        var consequenceType = Enum.Parse<ConsequenceType>(argsEl[6].GetString());
+        ImpactAreaScenarioResults results = simulation.Compute(cc, computeIsDeterministic);
+        return results.MeanExpectedAnnualConsequences(impactAreaID, damageCategory, assetCategory, consequenceType);
+      }
+      // Phase 5 Task 10: PreviewCompute()'s single-deterministic-pass EAD oracle. args =
+      // [damage_category, asset_category, impact_area_id]. RiskType is never passed --
+      // SampleMeanDamage's own RiskType.Fail default is used, matching
+      // StudyDataAnalyticalFrequencyResultsTests.ComputeMeanEAD_Test's
+      // `ConsequenceResults.SampleMeanDamage(damCat, assetCat, impactAreaID)` call verbatim.
+      if (method == "preview_mean_damage") {
+        string damageCategory = argsEl[0].GetString();
+        string assetCategory = argsEl[1].GetString();
+        int impactAreaID = argsEl[2].GetInt32();
+        ImpactAreaScenarioResults results = simulation.PreviewCompute();
+        return results.ConsequenceResults.SampleMeanDamage(damageCategory, assetCategory, impactAreaID);
+      }
+      // Phase 5 Task 10: PerformanceTest.ComputeLeveeAEP_Test's levee-only (no stage damage)
+      // MeanAEP oracle. args = [threshold_id, min_iterations, max_iterations,
+      // compute_is_deterministic (0/1)].
+      if (method == "mean_aep") {
+        int thresholdID = argsEl[0].GetInt32();
+        var cc = new ConvergenceCriteria(argsEl[1].GetInt32(), argsEl[2].GetInt32());
+        bool computeIsDeterministic = argsEl[3].GetDouble() != 0.0;
+        ImpactAreaScenarioResults results = simulation.Compute(cc, computeIsDeterministic);
+        return results.MeanAEP(thresholdID);
+      }
+      // Phase 5 Task 11: PerformanceTest.ComputeConditionalNonExceedanceProbability_Test's seeded
+      // assurance-of-threshold oracle. args = [threshold_id, min_iterations, max_iterations,
+      // compute_is_deterministic (0/1), recurrence_interval, tolerance?] -- mirrors
+      // `results.AssuranceOfEvent(thresholdID, recurrenceInterval)` verbatim. `tolerance` is an
+      // OPTIONAL 6th arg (defaults to 0.01) matching the upstream test's `tolerance: .001`
+      // ConvergenceCriteria override -- must match the fixture's `additional_threshold.cc`.
+      if (method == "assurance_of_event") {
+        int thresholdID = argsEl[0].GetInt32();
+        double tolerance = argsEl.GetArrayLength() > 5 ? argsEl[5].GetDouble() : 0.01;
+        var cc = new ConvergenceCriteria(argsEl[1].GetInt32(), argsEl[2].GetInt32(), 1.96039491692543, tolerance);
+        bool computeIsDeterministic = argsEl[3].GetDouble() != 0.0;
+        double recurrenceInterval = argsEl[4].GetDouble();
+        ImpactAreaScenarioResults results = simulation.Compute(cc, computeIsDeterministic);
+        return results.AssuranceOfEvent(thresholdID, recurrenceInterval);
+      }
+      throw new Exception("unknown simulation method: " + method);
+    }
+
+    // ContinuousDistributionExtensions.BootstrapToPairedData(this ContinuousDistribution, long
+    // iterationNumber, double[] ExceedanceProbabilities, bool computeIsDeterministic) (Phase 5
+    // Task 5) -- the analytical-frequency realization Task 8's EAD compute uses to turn a fitted
+    // flow-frequency distribution into a PairedData flow-frequency curve, either deterministically
+    // (the distribution's own fit) or via a seeded parametric bootstrap resample
+    // (ContinuousDistribution.Sample(iterationNumber)). `construct` is {mean, standard_deviation,
+    // skew, sample_size} for LogPearson3(mean, standardDeviation, skew, sampleSize). `seed` +
+    // `quantity_of_samples`, if present on the case, call GenerateRandomSamplesofNumbers(seed,
+    // quantityOfSamples) before BootstrapToPairedData (the seeded case; omitted for the
+    // deterministic case, matching the C# path that never touches RandomSamplesofNumbers).
+    // `iteration_number` + `compute_is_deterministic` are passed straight through, along with
+    // DoubleGlobalStatics.RequiredExceedanceProbabilities (the fixed 173-point grid). `method` is
+    // always bootstrap_to_paired_data_yvals (args []): the resulting PairedData's Yvals.
+    static object EvalBootstrapToPairedData(JsonElement caseEl, string method) {
+      var c = caseEl.GetProperty("construct");
+      var lp3 = new LogPearson3(D(c.GetProperty("mean")), D(c.GetProperty("standard_deviation")), D(c.GetProperty("skew")), c.GetProperty("sample_size").GetInt32());
+      if (caseEl.TryGetProperty("seed", out var seedEl)) {
+        lp3.GenerateRandomSamplesofNumbers(seedEl.GetInt32(), caseEl.GetProperty("quantity_of_samples").GetInt32());
+      }
+      long iterationNumber = caseEl.GetProperty("iteration_number").GetInt64();
+      bool computeIsDeterministic = caseEl.GetProperty("compute_is_deterministic").GetBoolean();
+      PairedData pd = lp3.BootstrapToPairedData(iterationNumber, DoubleGlobalStatics.RequiredExceedanceProbabilities, computeIsDeterministic);
+      if (method == "bootstrap_to_paired_data_yvals") return pd.Yvals;
+      throw new Exception("unknown bootstrap_to_paired_data method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -1117,6 +1666,13 @@ namespace oracle_emitter {
               case "consequence_result": val = EvalConsequenceResult(c, method); break;
               case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
+              case "categoried_uncertain_paired_data": val = EvalCategoriedUncertainPairedData(c, method, argsEl); break;
+              case "assurance_result_storage": val = EvalAssuranceResultStorage(c, method, argsEl); break;
+              case "system_performance_results": val = EvalSystemPerformanceResults(c, method, argsEl); break;
+              case "performance_by_thresholds": val = EvalPerformanceByThresholds(c, method, argsEl); break;
+              case "impact_area_scenario_results": val = EvalImpactAreaScenarioResults(c, method, argsEl); break;
+              case "simulation": val = EvalSimulation(c, method, argsEl); break;
+              case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;
               case "impact_area_stage_damage": val = EvalImpactAreaStageDamage(c, method, argsEl); break;

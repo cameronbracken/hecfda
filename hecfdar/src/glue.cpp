@@ -20,6 +20,7 @@
 #include "hecfda_core/include/hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
 #include "hecfda_core/include/hecfda/model/stage_damage/hydraulic_profiles.hpp"
 #include "hecfda_core/include/hecfda/model/stage_damage/impact_area_stage_damage.hpp"
+#include "hecfda_core/include/hecfda/model/compute/impact_area_scenario_simulation.hpp"
 namespace nd = hecfda::statistics::distributions;
 namespace pd = hecfda::model::paired_data;
 namespace ms = hecfda::model::structures;
@@ -324,4 +325,104 @@ static std::vector<std::vector<float>> r_make_mock_wses_by_profile(float stage1,
     }
     auto sampled = target->sample_paired_data(1, true);
     return sampled.f(stage);
+}
+
+// Bespoke dispatch for SystemPerformanceResults (Phase 5 Task 12 R binding): reproduces
+// test_fixtures.cpp's run_system_performance_results "rng_conformance" case_kind exactly -- the
+// PerformanceTest.AssuranceResultStorageShould RNG-port-conformance pin, the case that proves the
+// seeded DotNetRandom(1234) -> RandomProvider -> Normal InverseCDF chain reproduces the real C#
+// through this metrics leaf. The "aep" and "levee" case_kinds traverse the identical binding +
+// compiled core and stay validated in C++ (core/tests/test_fixtures.cpp) + the dotnet oracle gate
+// only -- see .claude/CLAUDE.md's "R/Python distribution coverage scope" convention.
+[[cpp11::register]] double hecfda_system_performance_results(int min_iterations, int max_iterations,
+                                                                double standard_probability, int master_seed,
+                                                                double threshold_value, int compute_chunks,
+                                                                std::string method) {
+    using namespace hecfda::model::metrics;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    ConvergenceCriteria cc(min_iterations, max_iterations);
+    SystemPerformanceResults spr(cc);
+    spr.add_stage_assurance_histogram(standard_probability);
+
+    int iteration_count = cc.iteration_count();
+    hecfda::sampling::DotNetRandom master_seed_list(master_seed);
+    std::vector<int> seeds(static_cast<std::size_t>(iteration_count));
+    for (int i = 0; i < iteration_count; ++i) {
+        seeds[static_cast<std::size_t>(i)] = master_seed_list.internal_sample();
+    }
+
+    nd::Normal standard_normal(0.0, 1.0);
+    for (int j = 0; j < compute_chunks; ++j) {
+        for (int i = 0; i < iteration_count; ++i) {
+            hecfda::model::compute::RandomProvider provider(seeds[static_cast<std::size_t>(i)]);
+            double inv_cdf = standard_normal.inverse_cdf(provider.next_random());
+            spr.add_stage_for_assurance(standard_probability, inv_cdf, i);
+        }
+        spr.put_data_into_histograms();
+    }
+    if (method == "assurance_of_event") return spr.assurance_of_event(standard_probability, threshold_value);
+    if (method == "normal_cdf_reference") return standard_normal.cdf(threshold_value);
+    throw std::invalid_argument("hecfda_system_performance_results: unknown method: " + method);
+}
+
+// Bespoke dispatch for ImpactAreaScenarioSimulation (Phase 5 Task 12 R binding, the phase's
+// headline end-to-end EAD compute): reproduces test_fixtures.cpp's build_simulation/run_simulation
+// for the "compute_ead" case of
+// fixtures/compute/impact_area_scenario_simulation_deterministic.json -- one flow_frequency
+// ContinuousDistribution (via with_flow_frequency), a two-point flow_stage UncertainPairedData (via
+// with_flow_stage, reusing r_make_curve), one CurveMetaData-tagged stage_damage
+// UncertainPairedData (via with_stage_damages), and an additional_threshold (always
+// ThresholdEnum::DefaultExteriorStage/ConvergenceCriteria(1,1), matching that case). Only mean_eac
+// (mean_expected_annual_consequences's own ConsequenceType::Damage/RiskType::Total defaults) is
+// exposed -- the phase's headline oracle; the remaining simulation methods (frequency-stage
+// assembly, default-threshold, mean_aep, assurance_of_event, the seeded benchmark) traverse the
+// identical binding + compiled core and stay validated in C++ (core/tests/test_fixtures.cpp) + the
+// dotnet oracle gate only.
+[[cpp11::register]] double hecfda_impact_area_scenario_simulation(
+    int impact_area_id, std::string flow_freq_type, cpp11::doubles flow_freq_params,
+    cpp11::doubles flow_stage_xs, cpp11::strings flow_stage_types, cpp11::list flow_stage_params,
+    cpp11::doubles stage_damage_xs, cpp11::strings stage_damage_types, cpp11::list stage_damage_params,
+    std::string damage_category, std::string asset_category, int threshold_id, double threshold_value,
+    int min_iterations, int max_iterations, bool compute_is_deterministic) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::metrics::Threshold;
+    using hecfda::model::metrics::ThresholdEnum;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    auto builder = ImpactAreaScenarioSimulation::builder(impact_area_id);
+
+    auto ff_dist = nd::IDistributionFactory::create(
+        nd::distribution_type_from_name(flow_freq_type),
+        std::vector<double>(flow_freq_params.begin(), flow_freq_params.end()));
+    auto* ff_continuous = dynamic_cast<nd::ContinuousDistribution*>(ff_dist.get());
+    if (ff_continuous == nullptr) {
+        throw std::runtime_error("hecfda_impact_area_scenario_simulation: flow_frequency is not continuous");
+    }
+    ff_dist.release();
+    builder.with_flow_frequency(std::unique_ptr<nd::ContinuousDistribution>(ff_continuous));
+
+    builder.with_flow_stage(r_make_curve(flow_stage_xs, flow_stage_types, flow_stage_params));
+
+    pd::CurveMetaData stage_damage_metadata(damage_category, asset_category);
+    std::vector<std::unique_ptr<nd::IDistribution>> stage_damage_ys;
+    for (R_xlen_t i = 0; i < stage_damage_types.size(); ++i) {
+        cpp11::doubles p(stage_damage_params[i]);
+        stage_damage_ys.push_back(nd::IDistributionFactory::create(
+            nd::distribution_type_from_name(std::string(stage_damage_types[i])),
+            std::vector<double>(p.begin(), p.end())));
+    }
+    std::vector<pd::UncertainPairedData> stage_damage;
+    stage_damage.push_back(pd::UncertainPairedData(std::vector<double>(stage_damage_xs.begin(), stage_damage_xs.end()),
+                                                     std::move(stage_damage_ys), std::move(stage_damage_metadata)));
+    builder.with_stage_damages(std::move(stage_damage));
+
+    ConvergenceCriteria threshold_cc(1, 1);
+    builder.with_additional_threshold(
+        Threshold(threshold_id, threshold_cc, ThresholdEnum::DefaultExteriorStage, threshold_value));
+
+    auto simulation = builder.build();
+    ConvergenceCriteria cc(min_iterations, max_iterations);
+    auto results = simulation.compute(cc, compute_is_deterministic);
+    return results.mean_expected_annual_consequences(impact_area_id, damage_category, asset_category);
 }

@@ -6,16 +6,25 @@
 #include "doctest.h"
 #include "json.hpp"
 #include "check.hpp"
+#include "hecfda/model/compute/impact_area_scenario_simulation.hpp"
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/extensions/graphical_distribution.hpp"
 #include "hecfda/model/metrics/aggregated_consequences_binned.hpp"
+#include "hecfda/model/metrics/assurance_result_storage.hpp"
+#include "hecfda/model/metrics/categoried_paired_data.hpp"
+#include "hecfda/model/metrics/categoried_uncertain_paired_data.hpp"
 #include "hecfda/model/metrics/consequence_extensions.hpp"
 #include "hecfda/model/metrics/consequence_result.hpp"
+#include "hecfda/model/metrics/impact_area_scenario_results.hpp"
+#include "hecfda/model/metrics/performance_by_thresholds.hpp"
 #include "hecfda/model/metrics/study_area_consequences_binned.hpp"
+#include "hecfda/model/metrics/system_performance_results.hpp"
+#include "hecfda/model/metrics/threshold_enum.hpp"
 #include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/sampling/dotnet_random.hpp"
 #include "hecfda/model/stage_damage/hydraulic_profiles.hpp"
 #include "hecfda/model/stage_damage/impact_area_stage_damage.hpp"
 #include "hecfda/model/stage_damage/scenario_stage_damage.hpp"
@@ -29,9 +38,11 @@
 #include "hecfda/model/utilities/graphical_frequency_uncertainty_calculators.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/histograms/dynamic_histogram.hpp"
+#include "hecfda/statistics/distributions/continuous_distribution_extensions.hpp"
 #include "hecfda/statistics/distributions/deterministic.hpp"
 #include "hecfda/statistics/distributions/empirical.hpp"
 #include "hecfda/statistics/distributions/i_distribution_factory.hpp"
+#include "hecfda/statistics/distributions/logpearson3.hpp"
 #include "hecfda/statistics/distributions/lognormal.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 #include "hecfda/statistics/distributions/pearson3.hpp"
@@ -1896,6 +1907,271 @@ TEST_CASE("aggregated_consequences_binned fixture") {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for AssuranceResultStorage (Phase 5 Task 1): the histogram-staging Monte Carlo
+// accumulator for one assurance metric. `construct` is {assurance_type, bin_width, convergence:
+// {min_iterations, max_iterations}, standard_non_exceedance_probability} matching the compute
+// ctor; ConvergenceCriteria is built with the 2-arg (minIterations, maxIterations) ctor, same
+// convention as run_aggregated_consequences_binned. `observations` is applied in order via
+// add_observation(result, iteration) before a single put_data_into_histogram() call -- ONE object
+// per case, shared across all of the case's assertions. `method` dispatches sample_mean (args [])
+// or inverse_cdf (args [p]), both read off assurance_histogram(). See
+// fixtures/metrics/assurance_result_storage.json's note for what each case exercises.
+static hecfda::model::metrics::AssuranceResultStorage make_assurance_result_storage(const json& ctor) {
+    using namespace hecfda::model::metrics;
+    const auto& conv = ctor["convergence"];
+    hecfda::statistics::ConvergenceCriteria cc(conv["min_iterations"].get<int>(),
+                                                conv["max_iterations"].get<int>());
+    return AssuranceResultStorage(ctor["assurance_type"].get<std::string>(),
+                                   ctor["bin_width"].get<double>(), cc,
+                                   ctor["standard_non_exceedance_probability"].get<double>());
+}
+
+static double run_assurance_result_storage(const json& c, const std::string& method, const json& args) {
+    auto ars = make_assurance_result_storage(c["construct"]);
+    for (const auto& o : c["observations"]) {
+        ars.add_observation(o["result"].get<double>(), o["iteration"].get<int>());
+    }
+    ars.put_data_into_histogram();
+    if (method == "sample_mean") {
+        return ars.assurance_histogram().sample_mean();
+    }
+    if (method == "inverse_cdf") {
+        return ars.assurance_histogram().inverse_cdf(args[0].get<double>());
+    }
+    auto msg = std::string("unknown assurance_result_storage method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("assurance_result_storage fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/assurance_result_storage.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "assurance_result_storage");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_assurance_result_storage(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// SystemPerformanceResults (Phase 5 Task 2) is the system-performance metrics container: AEP +
+// stage assurance histograms wrapping Task-1 AssuranceResultStorage, plus the FP-sensitive levee
+// fragility-curve integration (calculate_assurance_for_levee). Three case shapes selected by
+// `construct.case_kind` (see fixtures/metrics/system_performance_results.json's note for the full
+// rationale; mirrors EvalSystemPerformanceResults in Program.cs case-for-case):
+//  - "aep": SystemPerformanceResults(ConvergenceCriteria), stages `aep_observations` via
+//    add_aep_for_assurance, put_data_into_histograms() once, dispatches mean_aep/median_aep/
+//    long_term_exceedance_probability(years).
+//  - "rng_conformance": the PerformanceTest.AssuranceResultStorageShould RNG-port-conformance pin.
+//    Seeds `iteration_count` master seeds via DotNetRandom(master_seed).internal_sample() (the C++
+//    equivalent of C#'s parameterless `Random.Next()`, which is `InternalSample()` unscaled -- see
+//    dotnet_random.hpp), matching the real test's masterSeedList loop (only the first
+//    IterationCount of MinIterations are ever consumed by the real test's Parallel.For bound, so
+//    generating exactly IterationCount reproduces the identical seed prefix). For `compute_chunks`
+//    outer passes: for each seed, RandomProvider(seed).next_random() -> Normal(0,1).inverse_cdf()
+//    feeds add_stage_for_assurance; put_data_into_histograms() once per pass. Dispatches
+//    assurance_of_event (proving the seeded DotNetRandom(1234) -> RandomProvider -> Normal
+//    InverseCDF chain reproduces the real C#) and normal_cdf_reference (the same
+//    Normal(0,1).CDF(threshold) PerformanceTest.cs cross-checks against, pinned from the identical
+//    C# run for an apples-to-apples comparison).
+//  - "levee": SystemPerformanceResults(UncertainPairedData, ConvergenceCriteria) built from
+//    system_response_xs/ys (Deterministic-distribution ys, mirroring ComputeLeveeAEP_Test's
+//    fragility curve), stages `stage_observations` via add_stage_for_assurance,
+//    put_data_into_histograms() once, dispatches assurance_of_event through
+//    calculate_assurance_for_levee.
+static double run_system_performance_results(const json& c, const std::string& method, const json& args) {
+    using namespace hecfda::model::metrics;
+    using namespace hecfda::model::paired_data;
+    using hecfda::statistics::ConvergenceCriteria;
+    using hecfda::statistics::distributions::Deterministic;
+    using hecfda::statistics::distributions::IDistribution;
+    using hecfda::statistics::distributions::Normal;
+
+    const auto& ctor = c["construct"];
+    std::string case_kind = ctor["case_kind"].get<std::string>();
+    const auto& conv = ctor["convergence"];
+    ConvergenceCriteria cc(conv["min_iterations"].get<int>(), conv["max_iterations"].get<int>());
+
+    if (case_kind == "aep") {
+        SystemPerformanceResults spr(cc);
+        for (const auto& o : ctor["aep_observations"]) {
+            spr.add_aep_for_assurance(o["result"].get<double>(), o["iteration"].get<int>());
+        }
+        spr.put_data_into_histograms();
+        if (method == "mean_aep") return spr.mean_aep();
+        if (method == "median_aep") return spr.median_aep();
+        if (method == "long_term_exceedance_probability") {
+            return spr.long_term_exceedance_probability(args[0].get<int>());
+        }
+        FAIL("unknown system_performance_results (aep) method");
+        return 0.0;
+    }
+
+    if (case_kind == "rng_conformance") {
+        double standard_probability = ctor["standard_probability"].get<double>();
+        int master_seed = ctor["master_seed"].get<int>();
+        double threshold_value = ctor["threshold_value"].get<double>();
+        int compute_chunks = ctor["compute_chunks"].get<int>();
+
+        SystemPerformanceResults spr(cc);
+        spr.add_stage_assurance_histogram(standard_probability);
+
+        int iteration_count = cc.iteration_count();
+        hecfda::sampling::DotNetRandom master_seed_list(master_seed);
+        std::vector<int> seeds(static_cast<std::size_t>(iteration_count));
+        for (int i = 0; i < iteration_count; ++i) {
+            seeds[static_cast<std::size_t>(i)] = master_seed_list.internal_sample();
+        }
+
+        Normal standard_normal(0.0, 1.0);
+        for (int j = 0; j < compute_chunks; ++j) {
+            for (int i = 0; i < iteration_count; ++i) {
+                hecfda::model::compute::RandomProvider provider(seeds[static_cast<std::size_t>(i)]);
+                double inv_cdf = standard_normal.inverse_cdf(provider.next_random());
+                spr.add_stage_for_assurance(standard_probability, inv_cdf, i);
+            }
+            spr.put_data_into_histograms();
+        }
+        if (method == "assurance_of_event") {
+            return spr.assurance_of_event(standard_probability, threshold_value);
+        }
+        if (method == "normal_cdf_reference") {
+            return standard_normal.cdf(threshold_value);
+        }
+        FAIL("unknown system_performance_results (rng_conformance) method");
+        return 0.0;
+    }
+
+    if (case_kind == "levee") {
+        std::vector<double> xs = ctor["system_response_xs"].get<std::vector<double>>();
+        std::vector<double> ys = ctor["system_response_ys"].get<std::vector<double>>();
+        std::vector<std::unique_ptr<IDistribution>> failure_probs;
+        for (double y : ys) {
+            failure_probs.push_back(std::make_unique<Deterministic>(y));
+        }
+        UncertainPairedData system_response(xs, std::move(failure_probs));
+        double standard_probability = ctor["standard_probability"].get<double>();
+
+        SystemPerformanceResults spr(std::move(system_response), cc);
+        spr.add_stage_assurance_histogram(standard_probability);
+        for (const auto& o : ctor["stage_observations"]) {
+            spr.add_stage_for_assurance(standard_probability, o["result"].get<double>(), o["iteration"].get<int>());
+        }
+        spr.put_data_into_histograms();
+        if (method == "assurance_of_event") {
+            return spr.assurance_of_event(standard_probability, args[0].get<double>());
+        }
+        FAIL("unknown system_performance_results (levee) method");
+        return 0.0;
+    }
+    FAIL("unknown system_performance_results case_kind");
+    return 0.0;
+}
+
+TEST_CASE("system_performance_results fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/system_performance_results.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "system_performance_results");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_system_performance_results(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// PerformanceByThresholds (Phase 5 Task 3) is the Threshold container. `construct.thresholds` is a
+// list of {id, type (ThresholdEnum name string), value, convergence}; each is built via the (id,
+// ConvergenceCriteria, ThresholdEnum, value) ctor and add_threshold'd in list order.
+// `construct.get_threshold_id` selects which one get_threshold retrieves; `threshold_value`/
+// `threshold_type`/`threshold_id` read straight off that retrieved Threshold (plain ctor-assigned
+// data, not oracle math -- exact literals in the fixture). `construct.aep_observations`
+// ({iteration, result}) are then fed into the retrieved Threshold's own SystemPerformanceResults
+// via add_aep_for_assurance, followed by one put_data_into_histograms() call, so `mean_aep` proves
+// add_threshold/get_threshold hand back the SAME live SystemPerformanceResults the ctor built (not
+// a copy) -- pinned from the real C# via the oracle gate. Mirrors EvalPerformanceByThresholds in
+// Program.cs case-for-case.
+static hecfda::model::metrics::ThresholdEnum threshold_enum_from_name(const std::string& name) {
+    using hecfda::model::metrics::ThresholdEnum;
+    if (name == "NotSupported") return ThresholdEnum::NotSupported;
+    if (name == "DefaultExteriorStage") return ThresholdEnum::DefaultExteriorStage;
+    if (name == "TopOfLevee") return ThresholdEnum::TopOfLevee;
+    if (name == "LeveeSystemResponse") return ThresholdEnum::LeveeSystemResponse;
+    if (name == "AdditionalExteriorStage") return ThresholdEnum::AdditionalExteriorStage;
+    FAIL(("unknown ThresholdEnum name: " + name).c_str());
+    return ThresholdEnum::NotSupported;
+}
+
+static double run_performance_by_thresholds(const json& c, const std::string& method, const json& /*args*/) {
+    using namespace hecfda::model::metrics;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    const auto& ctor = c["construct"];
+    PerformanceByThresholds pbt;
+    for (const auto& t : ctor["thresholds"]) {
+        int id = t["id"].get<int>();
+        ThresholdEnum type = threshold_enum_from_name(t["type"].get<std::string>());
+        double value = t["value"].get<double>();
+        const auto& conv = t["convergence"];
+        ConvergenceCriteria cc(conv["min_iterations"].get<int>(), conv["max_iterations"].get<int>());
+        pbt.add_threshold(Threshold(id, cc, type, value));
+    }
+    int get_threshold_id = ctor["get_threshold_id"].get<int>();
+    Threshold& threshold = pbt.get_threshold(get_threshold_id);
+
+    if (method == "threshold_value") return threshold.threshold_value();
+    if (method == "threshold_type") return static_cast<double>(static_cast<int>(threshold.threshold_type()));
+    if (method == "threshold_id") return static_cast<double>(threshold.threshold_id());
+    if (method == "mean_aep") {
+        for (const auto& o : ctor["aep_observations"]) {
+            threshold.system_performance_results().add_aep_for_assurance(o["result"].get<double>(),
+                                                                           o["iteration"].get<int>());
+        }
+        threshold.system_performance_results().put_data_into_histograms();
+        return threshold.system_performance_results().mean_aep();
+    }
+    FAIL("unknown performance_by_thresholds method");
+    return 0.0;
+}
+
+TEST_CASE("performance_by_thresholds fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/performance_by_thresholds.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "performance_by_thresholds");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_performance_by_thresholds(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
 // StudyAreaConsequencesBinned (Phase 4 Task 4) is the collection wrapper over per-asset-category
 // AggregatedConsequencesBinned results. `construct` is {damage_category, impact_area_id,
 // convergence: {min_iterations, max_iterations}, asset_categories: [...]}; one
@@ -2507,6 +2783,726 @@ TEST_CASE("scenario_stage_damage fixture") {
             if (!hecfda_test::compare_by_mode({got}, {expected}, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + method;
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for CategoriedPairedData + CategoriedUncertainPairedData (Phase 5 Task 4): the
+// per-(damageCategory, assetCategory, ConsequenceType, RiskType) damage/FN-frequency curve
+// accumulator the EAD compute loop batches MC realizations into. `construct` is EITHER
+// {xvals, damage_category, asset_category, consequence_type, risk_type, convergence:
+// {min_iterations, max_iterations}} (the 6-arg compute ctor) OR {initial_curve: {xvals, yvals,
+// damage_category, asset_category, consequence_type, risk_type}, convergence: {min_iterations,
+// max_iterations}} (the CategoriedPairedData-delegating ctor); ConvergenceCriteria uses the 2-arg
+// (minIterations, maxIterations) ctor, same convention as run_aggregated_consequences_binned.
+// `realization_batches` is a list of batches, each a list of {iteration, yvals}: for every batch,
+// construct a fresh PairedData(xvals, yvals) per realization and add_curve_realization it in
+// order, THEN put_data_into_histograms() exactly once per batch -- one
+// CategoriedUncertainPairedData is built and staged per case, shared across every batch and
+// assertion (mirrors run_aggregated_consequences_binned/run_study_area_consequences_binned's
+// "one staged object per case" convention). `method` is always
+// sample_paired_data_deterministic_yvals (args []): get_uncertain_paired_data().sample_paired_data(
+// 1, true)'s (deterministic, monotonicity-forced) Yvals. See
+// fixtures/metrics/categoried_uncertain_paired_data.json's note for what each case exercises (the
+// 0.001-literal vs range/INITIAL_BIN_QUANTITY bin-width branches, the multi-flush-batch
+// accumulation path, the CategoriedPairedData-delegating ctor, and the staged-array zero-
+// contamination quirk).
+static hecfda::model::metrics::CategoriedUncertainPairedData make_categoried_uncertain_paired_data(
+    const json& ctor) {
+    using namespace hecfda::model::metrics;
+    const auto& conv = ctor["convergence"];
+    hecfda::statistics::ConvergenceCriteria cc(conv["min_iterations"].get<int>(),
+                                                conv["max_iterations"].get<int>());
+    if (ctor.contains("initial_curve")) {
+        const auto& ic = ctor["initial_curve"];
+        hecfda::model::paired_data::PairedData curve(ic["xvals"].get<std::vector<double>>(),
+                                                       ic["yvals"].get<std::vector<double>>());
+        CategoriedPairedData initial(std::move(curve), ic["damage_category"].get<std::string>(),
+                                      ic["asset_category"].get<std::string>(),
+                                      parse_consequence_type(ic["consequence_type"].get<std::string>()),
+                                      parse_risk_type(ic["risk_type"].get<std::string>()));
+        return CategoriedUncertainPairedData(initial, cc);
+    }
+    return CategoriedUncertainPairedData(
+        ctor["xvals"].get<std::vector<double>>(), ctor["damage_category"].get<std::string>(),
+        ctor["asset_category"].get<std::string>(),
+        parse_consequence_type(ctor["consequence_type"].get<std::string>()),
+        parse_risk_type(ctor["risk_type"].get<std::string>()), cc);
+}
+
+static std::vector<double> run_categoried_uncertain_paired_data(const json& c, const std::string& method) {
+    using namespace hecfda::model::metrics;
+    CategoriedUncertainPairedData cupd = make_categoried_uncertain_paired_data(c["construct"]);
+    for (const auto& batch : c["realization_batches"]) {
+        for (const auto& r : batch) {
+            hecfda::model::paired_data::PairedData curve(cupd.xvals(),
+                                                           r["yvals"].get<std::vector<double>>());
+            cupd.add_curve_realization(curve, r["iteration"].get<std::int64_t>());
+        }
+        cupd.put_data_into_histograms();
+    }
+    if (method == "sample_paired_data_deterministic_yvals") {
+        return cupd.get_uncertain_paired_data().sample_paired_data(1, true).yvals();
+    }
+    auto msg = std::string("unknown categoried_uncertain_paired_data method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("categoried_uncertain_paired_data fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/categoried_uncertain_paired_data.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "categoried_uncertain_paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_categoried_uncertain_paired_data(c, a["method"].get<std::string>());
+            std::vector<double> exp = a["expected"].get<std::vector<double>>();
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for ContinuousDistribution::sample(iteration) + bootstrap_to_paired_data
+// (Phase 5 Task 5) -- the analytical-frequency realization Task 8's EAD compute uses to turn a
+// fitted flow-frequency distribution (e.g. LogPearson3) into a PairedData flow-frequency curve,
+// either deterministically (the distribution's own fit) or via a seeded parametric bootstrap
+// resample. `construct` is {mean, standard_deviation, skew, sample_size} for
+// LogPearson3(mean, standard_deviation, skew, sample_size); `seed` + `quantity_of_samples`, if
+// present, call generate_random_samples_of_numbers(seed, quantity_of_samples) before
+// bootstrap_to_paired_data (the seeded case). `iteration_number` + `compute_is_deterministic` are
+// passed straight through to bootstrap_to_paired_data, along with
+// hecfda::statistics::distributions::required_exceedance_probabilities() (the fixed 173-point
+// grid -- see fixtures/compute/bootstrap_to_paired_data.json's note for why it's never restated
+// per-case). `method` is always bootstrap_to_paired_data_yvals (args []): the resulting
+// PairedData's Yvals.
+static std::vector<double> run_bootstrap_to_paired_data(const json& c) {
+    using namespace hecfda::statistics::distributions;
+    const auto& ctor = c["construct"];
+    LogPearson3 lp3(ctor["mean"].get<double>(), ctor["standard_deviation"].get<double>(),
+                     ctor["skew"].get<double>(), ctor["sample_size"].get<long>());
+    if (c.contains("seed")) {
+        lp3.generate_random_samples_of_numbers(c["seed"].get<int>(), c["quantity_of_samples"].get<int>());
+    }
+    hecfda::model::paired_data::PairedData pd = bootstrap_to_paired_data(
+        lp3, c["iteration_number"].get<long>(), required_exceedance_probabilities(),
+        c["compute_is_deterministic"].get<bool>());
+    return pd.yvals();
+}
+
+TEST_CASE("bootstrap_to_paired_data fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/bootstrap_to_paired_data.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "bootstrap_to_paired_data");
+    for (const auto& c : fx["cases"]) {
+        auto got = run_bootstrap_to_paired_data(c);
+        for (const auto& a : c["assertions"]) {
+            CHECK(a["method"].get<std::string>() == "bootstrap_to_paired_data_yvals");
+            std::vector<double> exp = a["expected"].get<std::vector<double>>();
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for ImpactAreaScenarioResults (Phase 5 Task 6): the compute-output container
+// holding one PerformanceByThresholds + one StudyAreaConsequencesBinned. `construct` is
+// {impact_area_id, damage_category, asset_category, consequence_convergence: {min_iterations,
+// max_iterations}, threshold: {id, type (ThresholdEnum name string), value, convergence:
+// {min_iterations, max_iterations}}}. Builds a fresh ImpactAreaScenarioResults(impact_area_id)
+// (the 1-arg public ctor), add_threshold's a Threshold built from `threshold`, and
+// add_new_consequence_result_object's ONE (damage_category, asset_category) combo into
+// consequence_results() with ConsequenceType::Damage/RiskType::Total (Total, not
+// StudyAreaConsequencesBinned's own Fail default -- matches the RiskType::Total default
+// mean_expected_annual_consequences itself uses at the ImpactAreaScenarioResults level; see
+// fixtures/metrics/impact_area_scenario_results.json's note). `consequence_realizations`
+// ({iteration, damage}) feed consequence_results().add_consequence_realization(...) (the
+// EAD-binning overload, same ConsequenceType::Damage/RiskType::Total), then
+// consequence_results().put_data_into_histograms() runs once. `aep_observations` ({iteration,
+// result}) feed the retrieved threshold's system_performance_results().add_aep_for_assurance(...),
+// then that same system_performance_results().put_data_into_histograms() runs once. One object is
+// built and staged per case, shared across every assertion (mirrors run_performance_by_thresholds/
+// run_study_area_consequences_binned's "one staged object per case" convention). `method`
+// dispatches mean_aep/median_aep (args [threshold_id]), long_term_exceedance_probability (args
+// [threshold_id, years]), assurance_of_aep (args [threshold_id, exceedance_probability]),
+// mean_expected_annual_consequences (args [impact_area_id], damage_category/asset_category/
+// ConsequenceType::Damage/RiskType::Total from construct), results_are_converged (args
+// [upper, lower], mode bool -- ImpactAreaScenarioResults::results_are_converged(upper, lower,
+// /*check_consequence_results=*/true), returned as 1.0/0.0), and the reference-stability coverage
+// (Task 6 follow-up) for get_or_create_uncertain_consequence_frequency_curve (see the class
+// header's "Reference stability" note): when the case's `uncertain_curve_stability` field is
+// present, get_or_create is called for category_a (creating a curve and returning a reference
+// held for the rest of this function), fed realization_a_before_grow, then called for a DIFFERENT
+// category_b (growing the underlying std::deque), fed realization_b, then called a third time for
+// category_a again (must return the identical object, not a new one -- `uncertain_curve_count`
+// asserts the container still holds exactly 2 curves). realization_a_after_grow is then added
+// through the ORIGINAL category_a reference obtained BEFORE the category_b call grew the
+// container -- proving that reference survived the grow. `uncertain_curve_yvals_a`/
+// `uncertain_curve_yvals_b` (args []) flush both curves via
+// put_uncertain_frequency_curves_into_histograms() and return each curve's
+// get_uncertain_paired_data().sample_paired_data(1, true).Yvals (vector mode).
+static std::vector<double> run_impact_area_scenario_results(const json& c, const std::string& method,
+                                                              const json& args) {
+    using namespace hecfda::model::metrics;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    const auto& ctor = c["construct"];
+    int impact_area_id = ctor["impact_area_id"].get<int>();
+    std::string damage_category = ctor["damage_category"].get<std::string>();
+    std::string asset_category = ctor["asset_category"].get<std::string>();
+
+    ImpactAreaScenarioResults results(impact_area_id);
+
+    const auto& t = ctor["threshold"];
+    int threshold_id = t["id"].get<int>();
+    ThresholdEnum threshold_type = threshold_enum_from_name(t["type"].get<std::string>());
+    double threshold_value = t["value"].get<double>();
+    const auto& t_conv = t["convergence"];
+    ConvergenceCriteria threshold_cc(t_conv["min_iterations"].get<int>(), t_conv["max_iterations"].get<int>());
+    results.performance_by_thresholds().add_threshold(
+        Threshold(threshold_id, threshold_cc, threshold_type, threshold_value));
+
+    const auto& cons_conv = ctor["consequence_convergence"];
+    ConvergenceCriteria consequence_cc(cons_conv["min_iterations"].get<int>(), cons_conv["max_iterations"].get<int>());
+    results.consequence_results().add_new_consequence_result_object(
+        damage_category, asset_category, consequence_cc, impact_area_id, ConsequenceType::Damage, RiskType::Total);
+
+    for (const auto& r : c["consequence_realizations"]) {
+        results.consequence_results().add_consequence_realization(
+            r["damage"].get<double>(), damage_category, asset_category, impact_area_id,
+            r["iteration"].get<std::int64_t>(), ConsequenceType::Damage, RiskType::Total);
+    }
+    results.consequence_results().put_data_into_histograms();
+
+    Threshold& threshold = results.performance_by_thresholds().get_threshold(threshold_id);
+    threshold.system_performance_results().add_stage_assurance_histogram(0.98);
+    for (const auto& o : c["aep_observations"]) {
+        threshold.system_performance_results().add_aep_for_assurance(o["result"].get<double>(),
+                                                                        o["iteration"].get<int>());
+    }
+    for (const auto& o : c["stage_observations"]) {
+        threshold.system_performance_results().add_stage_for_assurance(0.98, o["result"].get<double>(),
+                                                                          o["iteration"].get<int>());
+    }
+    threshold.system_performance_results().put_data_into_histograms();
+
+    if (method == "mean_aep") return {results.mean_aep(args[0].get<int>())};
+    if (method == "median_aep") return {results.median_aep(args[0].get<int>())};
+    if (method == "long_term_exceedance_probability") {
+        return {results.long_term_exceedance_probability(args[0].get<int>(), args[1].get<int>())};
+    }
+    if (method == "assurance_of_aep") {
+        return {results.assurance_of_aep(args[0].get<int>(), args[1].get<double>())};
+    }
+    if (method == "mean_expected_annual_consequences") {
+        return {results.mean_expected_annual_consequences(args[0].get<int>(), damage_category, asset_category,
+                                                            ConsequenceType::Damage, RiskType::Total)};
+    }
+    if (method == "results_are_converged") {
+        bool converged =
+            results.results_are_converged(args[0].get<double>(), args[1].get<double>(), /*check_consequence_results=*/true);
+        return {converged ? 1.0 : 0.0};
+    }
+    if (method == "uncertain_curve_count" || method == "uncertain_curve_yvals_a" ||
+        method == "uncertain_curve_yvals_b") {
+        const auto& s = c["uncertain_curve_stability"];
+        std::vector<double> curve_xvals = s["xvals"].get<std::vector<double>>();
+        const auto& sc = s["convergence"];
+        ConvergenceCriteria curve_cc(sc["min_iterations"].get<int>(), sc["max_iterations"].get<int>());
+        const auto& ca = s["category_a"];
+        const auto& cb = s["category_b"];
+
+        // get_or_create for category A: creates the curve, returns a reference held across the
+        // category-B call below (the reference-stability property under test).
+        CategoriedUncertainPairedData& curve_a1 = results.get_or_create_uncertain_consequence_frequency_curve(
+            curve_xvals, ca["damage_category"].get<std::string>(), ca["asset_category"].get<std::string>(),
+            parse_consequence_type(ca["consequence_type"].get<std::string>()),
+            parse_risk_type(ca["risk_type"].get<std::string>()), curve_cc);
+        const auto& r_a_before = s["realization_a_before_grow"];
+        curve_a1.add_curve_realization(
+            hecfda::model::paired_data::PairedData(curve_xvals, r_a_before["yvals"].get<std::vector<double>>()),
+            r_a_before["iteration"].get<std::int64_t>());
+
+        // get_or_create for a DIFFERENT category B: grows the underlying std::deque.
+        CategoriedUncertainPairedData& curve_b = results.get_or_create_uncertain_consequence_frequency_curve(
+            curve_xvals, cb["damage_category"].get<std::string>(), cb["asset_category"].get<std::string>(),
+            parse_consequence_type(cb["consequence_type"].get<std::string>()),
+            parse_risk_type(cb["risk_type"].get<std::string>()), curve_cc);
+        const auto& r_b = s["realization_b"];
+        curve_b.add_curve_realization(
+            hecfda::model::paired_data::PairedData(curve_xvals, r_b["yvals"].get<std::vector<double>>()),
+            r_b["iteration"].get<std::int64_t>());
+
+        // get_or_create for category A again: must return the SAME curve (uncertain_curve_count
+        // stays 2, not 3).
+        CategoriedUncertainPairedData& curve_a2 = results.get_or_create_uncertain_consequence_frequency_curve(
+            curve_xvals, ca["damage_category"].get<std::string>(), ca["asset_category"].get<std::string>(),
+            parse_consequence_type(ca["consequence_type"].get<std::string>()),
+            parse_risk_type(ca["risk_type"].get<std::string>()), curve_cc);
+
+        // Add a realization through the ORIGINAL category-A reference, obtained BEFORE the
+        // category-B call grew the container -- proves that reference is still valid.
+        const auto& r_a_after = s["realization_a_after_grow"];
+        curve_a1.add_curve_realization(
+            hecfda::model::paired_data::PairedData(curve_xvals, r_a_after["yvals"].get<std::vector<double>>()),
+            r_a_after["iteration"].get<std::int64_t>());
+
+        if (method == "uncertain_curve_count") {
+            return {static_cast<double>(results.uncertain_consequence_frequency_curves().size())};
+        }
+        results.put_uncertain_frequency_curves_into_histograms();
+        if (method == "uncertain_curve_yvals_a") {
+            return curve_a2.get_uncertain_paired_data().sample_paired_data(1, true).yvals();
+        }
+        return curve_b.get_uncertain_paired_data().sample_paired_data(1, true).yvals();
+    }
+    auto msg = std::string("unknown impact_area_scenario_results method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("impact_area_scenario_results fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/impact_area_scenario_results.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "impact_area_scenario_results");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_impact_area_scenario_results(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for ImpactAreaScenarioSimulation. Phase 5 Task 7 ported the skeleton + fluent
+// SimulationBuilder + CanCompute + InitializeConsequenceHistograms surface; Task 8 added
+// PopulateRandomNumbers/GetFrequencyStageSample; Task 9 added the risk/performance/threshold
+// compute; Task 10 wired the full Monte Carlo compute() loop (ComputeIterations) +
+// PreviewCompute(). `construct` is {impact_area_id, flow_frequency: {type, params}
+// (ContinuousDistribution via with_flow_frequency), flow_stage: {xs, ys:[{type,params}]}
+// (UncertainPairedData via with_flow_stage, no metadata), stage_damage: [{damage_category,
+// asset_category, xs, ys:[{type,params}]}] (List<UncertainPairedData> via with_stage_damages,
+// OPTIONAL as of Task 10 -- see ComputeLeveeAEP-style levee-only-no-damage cases),
+// non_failure_stage_damage (same per-item shape, OPTIONAL, via with_non_failure_stage_damage),
+// stage_life_loss (same per-item shape, OPTIONAL, via with_stage_life_loss -- Task 10's
+// ComputeEALL oracle), levee: {xs, ys:[{type,params}], top_of_levee_elevation} (OPTIONAL, via
+// with_levee -- Task 10's ComputeEAD_withLevee/TotalRiskShould oracles), additional_threshold
+// (OPTIONAL, via with_additional_threshold, ConvergenceCriteria(1,1))}. `method` dispatches:
+// is_null (args [min_iterations, max_iterations]) -- compute(ConvergenceCriteria(min,max)).
+// is_null(), mirroring
+// ImpactAreaScenarioSimulationShould.ResultsShouldNotComputeWhenMaxIterationsAreGreaterThanMinIterations
+// (default MinIterations=50000 > a small MaxIterations short-circuits, since compute() returns
+// the null results immediately once can_compute() is false); can_compute (args [min, max]) --
+// can_compute(ConvergenceCriteria(min,max)) directly (this port's deliberate public-access
+// relaxation of C#'s private CanCompute, see the header's class comment); consequence_result_count
+// (args []) -- calls initialize_consequence_histograms(ConvergenceCriteria()) directly (same
+// access-relaxation rationale) then reads
+// results().consequence_results().consequence_result_list().size(), exercising the
+// one-AggregatedConsequencesBinned-per-(damage_category,asset_category,consequence_type,risk_type)
+// fan-out for a case with both a failing and a non-failing stage-damage list. mean_eac (Task 10,
+// args [min_iterations, max_iterations, compute_is_deterministic (0/1), impact_area_id,
+// damage_category, asset_category, consequence_type_name]) -- the full compute(cc,
+// compute_is_deterministic).mean_expected_annual_consequences(...) path (RiskType defaults to
+// Total, matching every SimulationShould/TotalRiskShould test's own call). preview_mean_damage
+// (Task 10, args [damage_category, asset_category, impact_area_id]) --
+// preview_compute().consequence_results().sample_mean_damage(...) (RiskType defaults to Fail,
+// matching StudyDataAnalyticalFrequencyResultsTests.ComputeMeanEAD_Test's own
+// `ConsequenceResults.SampleMeanDamage(damCat, assetCat, impactAreaID)` call, which never passes a
+// RiskType). mean_aep (Task 10, args [threshold_id, min_iterations, max_iterations,
+// compute_is_deterministic (0/1)]) -- compute(cc, deterministic).mean_aep(threshold_id), mirroring
+// PerformanceTest.ComputeLeveeAEP_Test. All values PIN (gate-captured against the real C#, never
+// hand-derived).
+static hecfda::model::paired_data::UncertainPairedData make_simulation_upd(const json& ctor) {
+    using namespace hecfda::model::paired_data;
+    using namespace hecfda::statistics::distributions;
+    std::vector<double> xs = ctor["xs"].get<std::vector<double>>();
+    std::vector<std::unique_ptr<IDistribution>> ys;
+    for (const auto& y : ctor["ys"]) {
+        ys.push_back(IDistributionFactory::create(distribution_type_from_name(y["type"].get<std::string>()),
+                                                    y["params"].get<std::vector<double>>()));
+    }
+    if (ctor.contains("damage_category")) {
+        CurveMetaData metadata(ctor["damage_category"].get<std::string>(),
+                                ctor.value("asset_category", std::string("unassigned")));
+        return UncertainPairedData(std::move(xs), std::move(ys), std::move(metadata));
+    }
+    return UncertainPairedData(std::move(xs), std::move(ys));
+}
+
+static std::unique_ptr<hecfda::statistics::distributions::ContinuousDistribution>
+make_simulation_continuous_distribution(const json& spec) {
+    using namespace hecfda::statistics::distributions;
+    auto dist = IDistributionFactory::create(distribution_type_from_name(spec["type"].get<std::string>()),
+                                              spec["params"].get<std::vector<double>>());
+    auto* continuous = dynamic_cast<ContinuousDistribution*>(dist.get());
+    if (continuous == nullptr) {
+        FAIL("simulation flow_frequency distribution type is not a ContinuousDistribution");
+    }
+    dist.release();
+    return std::unique_ptr<ContinuousDistribution>(continuous);
+}
+
+// Phase 5 Task 11: optional `frequency_stage` construct field ({exceedance_probabilities, values,
+// equivalent_record_length, using_stages_not_flows?, damage_category, asset_category?}), the
+// direct graphical stage-frequency curve set via with_frequency_stage() -- mirrors
+// StudyDataGraphicalStageFrequencyResultsTests.ComputeMeanEADWithIterations_Test's
+// `.WithFrequencyStage(stageFrequency)` (no WithFlowFrequency/WithFlowStage at all in that test).
+// damage_category/asset_category matter here (unlike make_gupd's fixed "hello" metadata) because
+// get_frequency_stage_sample()'s short-circuit gate is `!frequency_stage_.curve_meta_data().
+// is_null()`, and the resulting curve's metadata must match the mean_eac dispatch args.
+static hecfda::model::paired_data::GraphicalUncertainPairedData make_simulation_gupd(const json& ctor) {
+    using hecfda::model::paired_data::CurveMetaData;
+    using hecfda::model::paired_data::GraphicalUncertainPairedData;
+    std::vector<double> exceedance_probabilities = ctor["exceedance_probabilities"].get<std::vector<double>>();
+    std::vector<double> values = ctor["values"].get<std::vector<double>>();
+    int erl = ctor["equivalent_record_length"].get<int>();
+    bool using_stages_not_flows = ctor.value("using_stages_not_flows", true);
+    CurveMetaData metadata(ctor["damage_category"].get<std::string>(),
+                            ctor.value("asset_category", std::string("unassigned")));
+    return GraphicalUncertainPairedData(exceedance_probabilities, values, erl, metadata, using_stages_not_flows);
+}
+
+// Phase 5 Task 9: optional `additional_threshold` construct field ({threshold_id, type, value}),
+// pre-registering a user-supplied Threshold (mirrors DefaultThresholdShould.
+// NotOverrideUserProvidedDefaultThreshold's `new Threshold(0, convergenceCriteria,
+// ThresholdEnum.AdditionalExteriorStage, userStage)` + `.WithAdditionalThreshold(userThreshold)`).
+// Built with ConvergenceCriteria(1, 1), matching every DefaultThresholdShould test's
+// `new ConvergenceCriteria(minIterations: 1, maxIterations: 1)`. threshold_enum_from_name is
+// defined above (shared with the performance_by_thresholds/threshold fixture dispatch).
+static hecfda::model::compute::ImpactAreaScenarioSimulation build_simulation(const json& ctor) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::metrics::Threshold;
+    using hecfda::model::paired_data::UncertainPairedData;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    int impact_area_id = ctor["impact_area_id"].get<int>();
+
+    auto builder = ImpactAreaScenarioSimulation::builder(impact_area_id);
+    // flow_frequency/flow_stage are OPTIONAL as of Task 11 (a direct-graphical-frequency-stage
+    // simulation, e.g. StudyDataGraphicalStageFrequencyResultsTests, never calls
+    // WithFlowFrequency/WithFlowStage at all -- see frequency_stage below).
+    if (ctor.contains("flow_frequency")) {
+        builder.with_flow_frequency(make_simulation_continuous_distribution(ctor["flow_frequency"]));
+    }
+    if (ctor.contains("flow_stage")) {
+        builder.with_flow_stage(make_simulation_upd(ctor["flow_stage"]));
+    }
+    if (ctor.contains("frequency_stage")) {
+        builder.with_frequency_stage(make_simulation_gupd(ctor["frequency_stage"]));
+    }
+
+    // Each with_* mutates `builder`'s internal simulation in place and returns an (unused, here)
+    // rvalue reference to the same object -- called as a plain statement on the `builder` lvalue
+    // rather than reassigned, matching the established OccupancyType::builder() precedent (avoids a
+    // self-move-assignment).
+    //
+    // `stage_damage` is OPTIONAL as of Task 10 (a levee-only simulation with no stage damage at
+    // all, e.g. PerformanceTest.ComputeLeveeAEP_Test, never calls WithStageDamages).
+    if (ctor.contains("stage_damage")) {
+        std::vector<UncertainPairedData> stage_damage;
+        for (const auto& sd : ctor["stage_damage"]) {
+            stage_damage.push_back(make_simulation_upd(sd));
+        }
+        builder.with_stage_damages(std::move(stage_damage));
+    }
+    if (ctor.contains("non_failure_stage_damage")) {
+        std::vector<UncertainPairedData> non_failure_stage_damage;
+        for (const auto& sd : ctor["non_failure_stage_damage"]) {
+            non_failure_stage_damage.push_back(make_simulation_upd(sd));
+        }
+        builder.with_non_failure_stage_damage(std::move(non_failure_stage_damage));
+    }
+    // stage_life_loss (Task 10: ComputeEALL's WithStageLifeLoss).
+    if (ctor.contains("stage_life_loss")) {
+        std::vector<UncertainPairedData> stage_life_loss;
+        for (const auto& sd : ctor["stage_life_loss"]) {
+            stage_life_loss.push_back(make_simulation_upd(sd));
+        }
+        builder.with_stage_life_loss(std::move(stage_life_loss));
+    }
+    // levee (Task 10: ComputeEAD_withLevee/TotalRiskShould/ComputeLeveeAEP's WithLevee).
+    if (ctor.contains("levee")) {
+        const auto& levee = ctor["levee"];
+        builder.with_levee(make_simulation_upd(levee), levee["top_of_levee_elevation"].get<double>());
+    }
+    if (ctor.contains("additional_threshold")) {
+        const auto& at = ctor["additional_threshold"];
+        // Default ConvergenceCriteria(1, 1) matches every DefaultThresholdShould/ComputeEAD test's
+        // own threshold construction (its own convergence criteria happened to equal the compute()
+        // call's own (1,1) cc in every fixture up through Task 10). Task 11 adds an OPTIONAL `cc:
+        // [min, max, tolerance?]` override for cases (e.g. PerformanceTest.
+        // ComputeConditionalNonExceedanceProbability_Test) whose threshold is built with the SAME
+        // non-(1,1)/non-default-tolerance ConvergenceCriteria the simulation itself computes with --
+        // SystemPerformanceResults stores this cc and uses it for its own assurance-histogram
+        // bin-width/convergence bookkeeping, so a mismatched threshold cc would silently diverge
+        // from the real C#.
+        ConvergenceCriteria threshold_cc(1, 1);
+        if (at.contains("cc")) {
+            const auto& cc_arr = at["cc"];
+            double tolerance = cc_arr.size() > 2 ? cc_arr[2].get<double>() : 0.01;
+            threshold_cc = ConvergenceCriteria(cc_arr[0].get<int>(), cc_arr[1].get<int>(), 1.96039491692543, tolerance);
+        }
+        Threshold user_threshold(at["threshold_id"].get<int>(), threshold_cc,
+                                  threshold_enum_from_name(at["type"].get<std::string>()),
+                                  at["value"].get<double>());
+        builder.with_additional_threshold(std::move(user_threshold));
+    }
+    return builder.build();
+}
+
+static std::vector<double> run_simulation(const json& c, const std::string& method, const json& args) {
+    using hecfda::statistics::ConvergenceCriteria;
+
+    auto simulation = build_simulation(c["construct"]);
+
+    if (method == "is_null") {
+        ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
+        return {simulation.compute(cc).is_null() ? 1.0 : 0.0};
+    }
+    if (method == "can_compute") {
+        ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
+        return {simulation.can_compute(cc) ? 1.0 : 0.0};
+    }
+    if (method == "consequence_result_count") {
+        ConvergenceCriteria cc;
+        simulation.initialize_consequence_histograms(cc);
+        return {static_cast<double>(simulation.results().consequence_results().consequence_result_list().size())};
+    }
+    // Phase 5 Task 8: frequency-stage assembly + seeded PopulateRandomNumbers. args =
+    // [min_iterations, max_iterations, iteration_number, compute_is_deterministic (0/1)]; see
+    // fixtures/compute/frequency_stage_sample.json's `note` for the exact call sequence
+    // (populate_random_numbers(cc), then get_frequency_stage_sample(deterministic, iteration)).
+    if (method == "frequency_stage_channel_yvals" || method == "frequency_stage_floodplain_yvals") {
+        ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
+        simulation.populate_random_numbers(cc);
+        long iteration_number = args[2].get<long>();
+        bool compute_is_deterministic = args[3].get<double>() != 0.0;
+        auto curves = simulation.get_frequency_stage_sample(compute_is_deterministic, iteration_number);
+        return method == "frequency_stage_channel_yvals" ? curves.channel_stage.yvals() : curves.floodplain_stage.yvals();
+    }
+    // Phase 5 Task 9: SetupPerformanceThresholds's own deterministic default-threshold pass. args =
+    // [min_iterations, max_iterations] (always [1, 1] in fixtures/compute/default_threshold.json,
+    // matching DefaultThresholdShould's ConvergenceCriteria(1, 1)). Calling
+    // setup_performance_thresholds() directly (rather than the not-yet-implemented full compute()
+    // loop) is sufficient: it runs its own internal deterministic iteration-1 pass to derive the
+    // default threshold, and nothing in the (Task 10) Monte Carlo loop ever touches
+    // Threshold::threshold_value() afterward -- see that fixture's own `note`.
+    if (method == "default_threshold_value") {
+        ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
+        simulation.setup_performance_thresholds(cc);
+        return {simulation.results().performance_by_thresholds().get_threshold(0).threshold_value()};
+    }
+    // Phase 5 Task 10: the full compute() loop's EAD oracle. args = [min_iterations,
+    // max_iterations, compute_is_deterministic (0/1), impact_area_id, damage_category,
+    // asset_category, consequence_type_name]. RiskType is never passed -- every
+    // SimulationShould/TotalRiskShould oracle this dispatches relies on
+    // mean_expected_annual_consequences's own RiskType::Total default (see that method's own
+    // comment: Total matches Fail-only or Fail+Non_Fail results identically since Total is a
+    // wildcard, not an accumulation-vs-Fail distinction).
+    if (method == "mean_eac") {
+        ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
+        bool compute_is_deterministic = args[2].get<double>() != 0.0;
+        int impact_area_id = args[3].get<int>();
+        std::string damage_category = args[4].get<std::string>();
+        std::string asset_category = args[5].get<std::string>();
+        auto consequence_type = parse_consequence_type(args[6].get<std::string>());
+        auto results = simulation.compute(cc, compute_is_deterministic);
+        return {results.mean_expected_annual_consequences(impact_area_id, damage_category, asset_category,
+                                                            consequence_type)};
+    }
+    // Phase 5 Task 10: preview_compute()'s single-deterministic-pass EAD oracle. args =
+    // [damage_category, asset_category, impact_area_id]. Calls
+    // consequence_results().sample_mean_damage(...) directly (its own RiskType::Fail default),
+    // matching StudyDataAnalyticalFrequencyResultsTests.ComputeMeanEAD_Test's
+    // `ConsequenceResults.SampleMeanDamage(damCat, assetCat, impactAreaID)` call verbatim (no
+    // RiskType argument passed there either).
+    if (method == "preview_mean_damage") {
+        std::string damage_category = args[0].get<std::string>();
+        std::string asset_category = args[1].get<std::string>();
+        int impact_area_id = args[2].get<int>();
+        auto results = simulation.preview_compute();
+        return {results.consequence_results().sample_mean_damage(damage_category, asset_category, impact_area_id)};
+    }
+    // Phase 5 Task 10: PerformanceTest.ComputeLeveeAEP_Test's levee-only (no stage damage) MeanAEP
+    // oracle. args = [threshold_id, min_iterations, max_iterations, compute_is_deterministic
+    // (0/1)].
+    if (method == "mean_aep") {
+        int threshold_id = args[0].get<int>();
+        ConvergenceCriteria cc(args[1].get<int>(), args[2].get<int>());
+        bool compute_is_deterministic = args[3].get<double>() != 0.0;
+        auto results = simulation.compute(cc, compute_is_deterministic);
+        return {results.mean_aep(threshold_id)};
+    }
+    // Phase 5 Task 11: PerformanceTest.ComputeConditionalNonExceedanceProbability_Test's seeded
+    // assurance-of-threshold oracle. args = [threshold_id, min_iterations, max_iterations,
+    // compute_is_deterministic (0/1), recurrence_interval, tolerance?] -- mirrors
+    // `results.AssuranceOfEvent(thresholdID, recurrenceInterval)` verbatim (only the non-levee
+    // simulation's assurance is pinned; the paired levee simulation in that test is only checked
+    // for internal self-consistency against this same value, not against its own golden literal).
+    // The upstream test's ConvergenceCriteria uses `tolerance: .001` (not the 0.01 default) --
+    // `tolerance` is an OPTIONAL 6th arg (defaults to 0.01) for cases that need the override; the
+    // fixture's `additional_threshold.cc` must carry the SAME cc (see build_simulation's comment).
+    if (method == "assurance_of_event") {
+        int threshold_id = args[0].get<int>();
+        double tolerance = args.size() > 5 ? args[5].get<double>() : 0.01;
+        ConvergenceCriteria cc(args[1].get<int>(), args[2].get<int>(), 1.96039491692543, tolerance);
+        bool compute_is_deterministic = args[3].get<double>() != 0.0;
+        double recurrence_interval = args[4].get<double>();
+        auto results = simulation.compute(cc, compute_is_deterministic);
+        return {results.assurance_of_event(threshold_id, recurrence_interval)};
+    }
+    auto msg = std::string("unknown simulation method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("simulation fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/simulation_validation.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "simulation");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_simulation(c, a["method"].get<std::string>(), a["args"]);
+            bool mode_is_bool = a["mode"].get<std::string>() == "bool";
+            std::vector<double> exp = mode_is_bool ? std::vector<double>{a["expected"].get<bool>() ? 1.0 : 0.0}
+                                                    : std::vector<double>{a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Phase 5 Task 8: frequency-stage assembly (get_frequency_stage_sample/get_stage_freq) + seeded
+// populate_random_numbers. Separate TEST_CASE (rather than folded into "simulation fixture" above)
+// because this fixture's assertions are vector-valued (173-point Yvals), unlike
+// simulation_validation.json's bool/scalar assertions -- reuses build_simulation/run_simulation.
+TEST_CASE("frequency_stage_sample fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/frequency_stage_sample.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "simulation");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_simulation(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = a["expected"].get<std::vector<double>>();
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Phase 5 Task 9: SetupPerformanceThresholds's own deterministic ComputeDefaultThreshold pass --
+// reuses build_simulation/run_simulation (with the additional_threshold construct field this task
+// adds). See fixtures/compute/default_threshold.json's `note` for what each case exercises.
+TEST_CASE("default_threshold fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/default_threshold.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "simulation");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_simulation(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Phase 5 Task 10: the full compute()/ComputeIterations Monte Carlo loop + preview_compute() --
+// the deterministic EAD oracles (ComputeEAD/ComputeEAD_withLevee/TotalRiskShould/ComputeEALL/
+// ComputeMeanEAD_Test, and PerformanceTest.ComputeLeveeAEP_Test's MeanAEP if present). Reuses
+// build_simulation/run_simulation, same as every other simulation-target fixture. See
+// fixtures/compute/impact_area_scenario_simulation_deterministic.json's `note` for what each case
+// exercises and where its upstream literal comes from.
+TEST_CASE("impact_area_scenario_simulation_deterministic fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/impact_area_scenario_simulation_deterministic.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "simulation");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_simulation(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Phase 5 Task 11: the SEEDED Monte Carlo EAD + performance benchmarks -- compute(cc,
+// computeIsDeterministic=false), exercising the per-curve seeds (Task 8) through the full MC loop
+// (Task 10) with cc.min_iterations==max_iterations wherever feasible so the iteration count (and
+// therefore the seeded value) is exactly fixed, not convergence-dependent. Reuses
+// build_simulation/run_simulation (with Task 11's new optional `frequency_stage` construct field
+// and `assurance_of_event` method), same as every other simulation-target fixture. See
+// fixtures/compute/impact_area_scenario_simulation_seeded.json's `note` for what each case
+// exercises and where its upstream literal comes from.
+TEST_CASE("impact_area_scenario_simulation_seeded fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/impact_area_scenario_simulation_seeded.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "simulation");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_simulation(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());
             }
         }

@@ -85,7 +85,22 @@ hydraulics-as-arrays input boundary replacing disk-backed `HydraulicDataset` --
 `ImpactAreaStageDamage`'s aggregation-stage geometry + `Compute()`, and `ScenarioStageDamage`'s
 outer per-impact-area compute loop). Deterministic-only scope this phase (`compute_is_deterministic
 = true`); the tractable-curve oracle (`TractableStageDamageTests`) is the headline cross-check.
-All phases 5-6 build outward from this base -- see `PLAN.md` for the dependency-ordered bulk-port
+Phase 5 added `hecfda::model::metrics`' EAD-results/performance/threshold/assurance surface --
+`ThresholdEnum`, `AssuranceResultStorage`, `SystemPerformanceResults` (AEP + stage assurance
+histograms, the levee fragility-curve integration), `Threshold`, `PerformanceByThresholds`,
+`CategoriedPairedData`/`CategoriedUncertainPairedData`, and `ImpactAreaScenarioResults` -- plus the
+analytical `hecfda::statistics::distributions::bootstrap_to_paired_data` prerequisite, and the full
+seeded EAD Monte Carlo engine `hecfda::model::compute::ImpactAreaScenarioSimulation` +
+`SimulationBuilder` (frequency-stage assembly, seeded `populate_random_numbers` over seven
+per-curve seed constants, risk/consequence integration, `setup_performance_thresholds`, the
+`compute()`/`compute_iterations()` Monte Carlo loop, and `preview_compute()`'s single-pass
+shortcut). This is the phase's headline: it closes the full stage-frequency -> stage-damage ->
+EAD/AEP compute path and is validated against both deterministic oracles (150000, 83333.33,
+100150.179, 20.74, 0.026) and a bit-for-bit seeded benchmark (`121194.5159789352` at exactly 100
+iterations) that reproduce the real C#. `Parallel.For` is severed to a serial loop throughout
+(index-addressed sampling makes this safe -- no ordering dependency). `ScenarioResults`/`Scenario`/
+`Alternative`/`AlternativeComparisonReport` and the two `*ByQuantile` types are Phase 6.
+All phase 6 builds outward from this base -- see `PLAN.md` for the dependency-ordered bulk-port
 sequence.
 
 ## Build & test commands
@@ -129,6 +144,15 @@ gate) or from an existing upstream test literal. The pinned Phase 0 values:
 `UncertainPairedData::sample_and_integrate(seed=1234) == 24.425549382855987` and the RNG digest
 `sum(seed=12345, n=100000) == 50124.341288393982`, both identical across C++/R/Python and matching
 the real C#.
+
+As of Phase 5, RNG parity is load-bearing through the full EAD Monte Carlo compute, not just
+isolated sampling primitives: `ImpactAreaScenarioSimulation`'s seven fixed per-curve seed constants
+(1234/2345/3456/4567/5678/6789/7891, see the faithful-bug list below) feed
+`populate_random_numbers` -> `RandomProvider` -> per-distribution `sample()`/`inverse_cdf()` across
+every iteration of `compute_iterations`'s Monte Carlo loop, and the seeded exact-100-iteration
+benchmark `121194.5159789352` reproduces the real C# bit-for-bit at that exact iteration count --
+proof that RNG parity survives composition through the entire stage-frequency -> stage-damage ->
+consequence-histogram pipeline, not just a single seeded draw.
 
 ## FP-contraction (FMA) parity (standing invariant, added Phase 2)
 
@@ -190,6 +214,30 @@ core, so they stay validated in C++ (`test_fixtures.cpp` loads every `fixtures/m
 `fixtures/stage_damage/*.json`) and against real C# via the `verify_oracles.py` gate, matching the
 distribution/structures-coverage convention above rather than duplicating it with bespoke R/Python
 glue for every target.
+
+**R/Python compute/metrics coverage scope (Phase 5):** the R (`hecfda_system_performance_results`/
+`hecfda_impact_area_scenario_simulation`) and Python (`system_performance_results`/
+`impact_area_scenario_simulation`) bindings cover a representative subset of the new Phase-5
+targets: `system_performance_results` (a metrics/performance leaf, bound against only the
+`rng_conformance` case of `fixtures/metrics/system_performance_results.json` -- the seeded
+`DotNetRandom(1234)` -> `RandomProvider` -> `Normal::inverse_cdf` conformance pin, proving the RNG
+chain reproduces the real C# through this leaf) and `impact_area_scenario_simulation` (the
+end-to-end EAD compute -- the phase's headline, bound against only the `compute_ead` case of
+`fixtures/compute/impact_area_scenario_simulation_deterministic.json`, the
+`ConvergenceCriteria(1,1)`/deterministic `150000` oracle). Both bindings are bespoke,
+single-case constructors (mirroring `impact_area_stage_damage`'s Phase-4 precedent) rather than a
+generic construct-by-case_kind dispatcher. The remaining Phase-5 targets --
+`assurance_result_storage`, `performance_by_thresholds`/`threshold`,
+`categoried_paired_data`/`categoried_uncertain_paired_data`, `bootstrap_to_paired_data`,
+`frequency_stage_sample`, `default_threshold`, the `aep`/`levee` `system_performance_results` case
+kinds, the remaining `impact_area_scenario_simulation_deterministic` cases (levee, total-risk,
+EALL, preview, AEP), and both seeded benchmarks (`impact_area_scenario_simulation_seeded.json`,
+including the bit-for-bit `121194.5159789352` exact-100 case) -- traverse the identical binding and
+compiled core, so they stay validated in C++ (`test_fixtures.cpp` loads every
+`fixtures/metrics/*.json` and both `fixtures/compute/impact_area_scenario_simulation_*.json`
+files) and against real C# via the `verify_oracles.py` gate, matching the
+distribution/structures/stage-damage-coverage convention above rather than duplicating it with
+bespoke R/Python glue for every target.
 
 ## Conventions & gotchas
 
@@ -301,6 +349,31 @@ glue for every target.
     previously-DEFERRED "Phase 2" IHistogram case now that `DynamicHistogram` is a live
     `UncertainPairedData` Yvals type; not a bug, but recorded here since the class comment's
     original "SCOPE" note called it out as deferred and that is no longer true as of Phase 4.
+  - `SystemPerformanceResults::add_stage_assurance_histogram`'s `if (!Assurances.Contains(assurance))`
+    dead-code guard: `AssuranceResultStorage` never overrides `object.Equals`, so `List<T>.Contains`
+    falls back to reference equality and a freshly constructed local can never match an existing
+    element -- the guard never fires and every call unconditionally appends, even for a
+    `standardNonExceedanceProbability` that already has an entry. Transcribed as an unconditional
+    `push_back`.
+  - `SystemPerformanceResults::assurance_of_event`'s `threshold_value` parameter is read but never
+    used when the levee branch is active -- `calculate_assurance_for_levee` is called with only
+    `standard_non_exceedance_probability`, ignoring `threshold_value` entirely.
+  - `PerformanceByThresholds::equals`'s nested-`foreach` comparison never breaks the OUTER loop on
+    a mismatch (only the inner one), so (1) if no `ThresholdID` pair matches at all, `success` is
+    vacuously left `true`, and (2) a later matching pair can silently overwrite an earlier
+    mismatch's `false` back to `true`. Transcribed exactly as upstream wrote it.
+  - `ImpactAreaScenarioSimulation::compute_iterations`'s non-convergent-pass loop restarts the
+    outer `for (i = 0; i < additional_chunks_needed; ++i)` from `i = 0` on every `while` iteration
+    instead of resuming from where the prior pass left off, so every chunk from the first
+    while-pass gets resampled and re-accumulated into the histograms again on a second pass. Inert
+    for every fixture this phase pins (`max_iterations=1` or the seeded exact-iteration cases
+    always converge after the first chunk), but preserved verbatim for future multi-chunk callers.
+  - `ImpactAreaScenarioSimulation::populate_random_numbers` seeds seven curve types with fixed
+    constants transcribed verbatim from the C# source: `kFrequencySeed=1234`,
+    `kFlowRegulationSeed=2345`, `kStageFlowSeed=3456`, `kExteriorInteriorSeed=4567`,
+    `kSystemResponseSeed=5678`, `kStageDamageSeed=6789`, `kStageLifeLossSeed=7891` -- not a bug, but
+    load-bearing for RNG parity (see "RNG parity" below) and recorded here since a future refactor
+    that renumbers or reorders these breaks every seeded oracle silently.
 - **By-value capture in Validation-rule predicates (standing invariant, Phase 3):**
   `ValueUncertainty`, `ValueRatioWithUncertainty`, `FirstFloorElevationUncertainty`, and
   `Structure` are all held **by value** inside containers that relocate them after construction
@@ -340,7 +413,7 @@ glue for every target.
 
 ## Status
 
-**Phase 0, Phase 1, Phase 2, Phase 3, and Phase 4 are complete.** The Phase 0 vertical slice (.NET `Random` ->
+**Phase 0 through Phase 5 are complete.** The Phase 0 vertical slice (.NET `Random` ->
 `Normal` -> `PairedData` -> `UncertainPairedData.sample_and_integrate`) passes identically in
 C++, R, and Python; the seeded RNG stream is byte-identical across all three and matches a real
 .NET capture. Phase 1 (Statistics foundation) ported the validation subsystem, full
@@ -384,13 +457,34 @@ Monte Carlo stage-damage and EAD-level aggregation are Phase 5. R and Python bin
 subset (`consequence_result`, `impact_area_stage_damage`) per the "R/Python stage-damage coverage
 scope" convention above; the remaining Phase-4 targets are validated in C++ + the gate only.
 
-The exit gate is green on all four legs: `make test-core` (ctest, C++, all passing, ~61s --
-`test_fixtures` alone accounts for most of that; see "Deferred from Phase 4" below), `make test-r`
-(testthat, 134 passed / 0 failed), `make test-py` (pytest, 12 passed / 0 failed), and `make
-oracles` (dotnet gate, 641 reproduced / 0 failed -- up from Phase 3's 537). The Makefile targets
-and 3-platform CI are green. The `24.425549382855987` cross-language value and the RNG digest
-(FMA-insensitive) reproduce unchanged in all four legs, and the Phase 3 structures fixtures
-(`value_uncertainty`, `structure`) still pass in R and Python.
+Phase 5 (compute + metrics) closes the numerical core's headline path: `hecfda::model::metrics`'
+EAD-results/performance/threshold/assurance surface (`ThresholdEnum`, `AssuranceResultStorage`,
+`SystemPerformanceResults`, `Threshold`, `PerformanceByThresholds`,
+`CategoriedPairedData`/`CategoriedUncertainPairedData`, `ImpactAreaScenarioResults`), the
+analytical `bootstrap_to_paired_data` prerequisite, and the full seeded Monte Carlo engine
+`hecfda::model::compute::ImpactAreaScenarioSimulation` + `SimulationBuilder` -- frequency-stage
+assembly, seeded `populate_random_numbers` over seven per-curve seed constants, risk/consequence
+integration, `setup_performance_thresholds`, the `compute()`/`compute_iterations()` Monte Carlo
+loop, and `preview_compute()`'s single-pass shortcut. Validated against both deterministic oracles
+(150000, 83333.33, 100150.179, 20.74, 0.026) and the bit-for-bit seeded benchmark
+(`121194.5159789352` at exactly 100 iterations), all reproducing the real C#. `Parallel.For` is
+severed to a serial loop throughout (safe: index-addressed sampling has no ordering dependency);
+`IProgressReport`/`ReportMessage`/`CancellationToken`/`[StoredProperty]` are dropped per the
+repo-wide MVVM/messaging/reflection severance (see `impact_area_scenario_simulation.hpp`'s own
+SEVERANCES note for the full list). R and Python bind a representative subset
+(`system_performance_results`'s `rng_conformance` case, `impact_area_scenario_simulation`'s
+`compute_ead` case) per the "R/Python compute/metrics coverage scope" convention above; the
+remaining Phase-5 targets, case kinds, and both seeded-benchmark fixtures are validated in C++ +
+the gate only.
+
+The exit gate is green on all four legs: `make test-core` (ctest, C++, all passing, ~66s --
+`test_fixtures` alone accounts for most of that, now including the full EAD Monte Carlo cases),
+`make test-r` (testthat, 137 passed / 0 failed), `make test-py` (pytest, 14 passed / 0 failed), and
+`make oracles` (dotnet gate, 695 reproduced / 0 failed -- up from Phase 4's 641). The Makefile
+targets and 3-platform CI are green. The `24.425549382855987` cross-language value and the RNG
+digest (FMA-insensitive) reproduce unchanged in all four legs, and the Phase 3/4 fixtures
+(`value_uncertainty`, `structure`, `consequence_result`, `impact_area_stage_damage`) still pass in
+R and Python.
 
 Severed/deferred from Phase 2: `CurveMetaData`/`GraphicalDistribution`/
 `GraphicalUncertainPairedData` XML + `ValidationErrorLogger`/GUI wiring;
@@ -424,8 +518,29 @@ because `impact_area_stage_damage`/`scenario_stage_damage` each run the full 100
 first-chunk) path -- a known, accepted cost of exercising the real convergence loop rather than a
 regression.
 
-See `PLAN.md` for the conventions established in Phase 1-4 (port-internal factory keys, bespoke
+Severed/deferred from Phase 5: `IProgressReport`/`ReportProgress`/`ReportMessage` (MVVM
+progress/messaging, repo-wide severance -- includes the `IMPACT_AREA_SIM_COMPLETED` sentinel and
+the begin/end-compute messages), `CancellationToken` and the 3-arg `Compute` overload (only the
+2-arg `Compute(ConvergenceCriteria, bool)` "used by tests" overload is ported, with the 3-arg
+body inlined directly into it), `[StoredProperty]` reflection metadata, and per-property
+validation-rule registration on the `With*(UncertainPairedData)`/`With*(GraphicalUncertainPairedData)`
+builder overloads (no analog: those two paired-data types have no `validate()`/`has_errors()`
+surface in this port, and the "stage range" rule additionally needs `Yvals[0]`/`Yvals[^1]` access
+`UncertainPairedData` doesn't expose). `PerformanceByThresholds`/`SystemPerformanceResults`/
+`Threshold` throw `std::runtime_error` on a lookup miss instead of C#'s log-and-return-a-dummy-
+fallback, matching the repo-wide severed-`ReportMessage`-miss convention already established for
+`StudyAreaConsequencesBinned::require_consequence_result` -- every miss this phase's compute path
+can reach was pre-registered, so the throw is unreachable in practice. `ImpactAreaScenarioResults`
+declines any method needing the also-severed placeholder `DynamicHistogram` graphing surface. The
+`ConvergenceCriteria` by-value-in-a-relocating-container hazard (see "By-value capture in
+Validation-rule predicates" above) remains open -- `Threshold` now holds `SystemPerformanceResults`
+(itself holding `ConvergenceCriteria`) inside `PerformanceByThresholds`'
+`std::vector<Threshold>`, another relocating container, but still not triggered by any code path
+that calls `validate()` on it.
+
+See `PLAN.md` for the conventions established in Phase 1-5 (port-internal factory keys, bespoke
 fixture targets, the faithful-bug list, the by-value-capture invariant, the hydraulics-as-arrays
-boundary), the Phase 5-6 plan, and the FMA parity detail. **Next: Phase 5 -- compute + metrics**
-(`ImpactAreaScenarioSimulation`/EAD Monte Carlo and EAD-level metrics/results/thresholds/
-performance), which builds on the stage-damage layer Phase 4 delivered.
+boundary, the per-curve RNG seed constants), the Phase 6 plan, and the FMA parity detail. **Next:
+Phase 6 -- scenarios & alternatives** (`Scenario`/`Alternative`/`AlternativeComparisonReport` +
+`ScenarioResults` + the two `*ByQuantile` types), which builds on the EAD compute layer Phase 5
+delivered.

@@ -1,0 +1,46 @@
+{
+  "target": "assurance_result_storage",
+  "kind": "assurance_result_storage",
+  "source_test": "HEC.FDA.Model/metrics/AssuranceResultStorage.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real AssuranceResultStorage/PutDataIntoHistogram/AddObservation directly)",
+  "note": "construct = {assurance_type, bin_width, convergence: {min_iterations, max_iterations}, standard_non_exceedance_probability}, matching the AssuranceResultStorage(string, double, ConvergenceCriteria, double) compute ctor; ConvergenceCriteria is built with the 2-arg (minIterations, maxIterations) ctor (ZAlpha/Tolerance left at their defaults), same convention as the aggregated_consequences_binned fixture. `observations` is a list of {iteration, result} applied in order via AddObservation(result, iteration) before a single PutDataIntoHistogram() call -- ONE object per case, shared across all of the case's assertions. Assertion `method` dispatches sample_mean (args []) or inverse_cdf (args [p]), both read off AssuranceHistogram. Cases: (1) single_iteration_narrow -- IterationCount pinned to 1 via the ConvergenceCriteria quirk (MaxIterations < 100 forces IterationCount = 1), so the one observation fills the entire staging array and the histogram is single-valued, exercising DynamicHistogram::inverse_cdf's histogram_is_single_valued short-circuit (returns SampleMean regardless of p); (2) multi_iteration_partial -- IterationCount defaults to 100 (MaxIterations >= 100), only 6 of the 100 staging slots are written by AddObservation, so the untouched 0.0 slots are included in the single PutDataIntoHistogram/AddObservationsToHistogram call alongside the real observations (unlike AggregatedConsequencesBinned, AssuranceHistogram's bin width is fixed at construction, not derived from the staged array's min/max, so this is ordinary eager-histogram behavior rather than the staged-array min/max quirk).",
+  "cases": [
+    {
+      "name": "single_iteration_narrow",
+      "construct": {
+        "assurance_type": "Target",
+        "bin_width": 0.1,
+        "convergence": { "min_iterations": 1, "max_iterations": 50 },
+        "standard_non_exceedance_probability": 0.9
+      },
+      "observations": [
+        { "iteration": 0, "result": 0.75 }
+      ],
+      "assertions": [
+        { "method": "sample_mean", "args": [], "expected": 0.75, "tol": 1e-9, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.5], "expected": 0.75, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "multi_iteration_partial",
+      "construct": {
+        "assurance_type": "Levee",
+        "bin_width": 0.05,
+        "convergence": { "min_iterations": 5, "max_iterations": 1000 },
+        "standard_non_exceedance_probability": 0.0
+      },
+      "observations": [
+        { "iteration": 0, "result": 0.1 },
+        { "iteration": 1, "result": 0.3 },
+        { "iteration": 2, "result": 0.5 },
+        { "iteration": 3, "result": 0.7 },
+        { "iteration": 4, "result": 0.9 },
+        { "iteration": 5, "result": 0.2 }
+      ],
+      "assertions": [
+        { "method": "sample_mean", "args": [], "expected": 0.027000000000000017, "tol": 1e-9, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.5], "expected": 0.026595744680851064, "tol": 1e-9, "mode": "abs" },
+        { "method": "inverse_cdf", "args": [0.9], "expected": 0.04787234042553192, "tol": 1e-9, "mode": "abs" }
+      ]
+    }
+  ]
+}

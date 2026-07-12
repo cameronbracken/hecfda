@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -60,9 +61,6 @@ inline constexpr const char* kVehicleAssetCategory = "Vehicle";
 //    the severed parameterless "ARBITRARY histogram" DynamicHistogram ctor). Not needed by this
 //    task's compute path (the ctor below, `(std::vector<AggregatedConsequencesBinned>)`, is the
 //    "public for testing" one the task brief calls out).
-//  - `Equals(StudyAreaConsequencesBinned)`: not exercised by the fixture or required by this
-//    task's produced interface; trivial to add later (AggregatedConsequencesBinned::equals
-//    already exists) if a caller needs it.
 //  - `WriteToXML()`/`ReadFromXML(XElement)`: XML (de)serialization, no equivalent surface in this
 //    port (repo-wide XML severance, matching CurveMetaData/ConvergenceCriteria/PairedData).
 //  - `ConvertToStudyAreaConsequencesByQuantile(...)`: needs StudyAreaConsequencesByQuantile +
@@ -73,23 +71,33 @@ inline constexpr const char* kVehicleAssetCategory = "Vehicle";
 //    ConvertToEmpiricalDistribution (deferred, see dynamic_histogram.hpp) and
 //    Empirical::StackEmpiricalDistributions (not ported). Also emits the same MVVM Fatal
 //    ErrorMessage-on-miss pattern as GetSpecificHistogram below.
-//  - `SampleMeanDamage(...)`/`ConsequenceExceededWithProbabilityQ(...)` (the "Aggregation"-region
-//    overloads, distinct from AggregatedConsequencesBinned's own same-named members): both are
-//    `ConsequenceResultList.FilterByCategories(...).Sum(...)` one-liners over
-//    AggregatedConsequencesBinned::sample_mean_expected_annual_consequences/
-//    consequence_exceeded_with_probability_q (both already ported, Task 3). Not required by this
-//    task's produced interface or fixture; trivial to add later using
-//    consequence_extensions::filter_by_categories if a caller needs cross-category aggregation.
+//  - `ConsequenceExceededWithProbabilityQ(...)` (the "Aggregation"-region overload, distinct from
+//    AggregatedConsequencesBinned's own same-named member): a
+//    `ConsequenceResultList.FilterByCategories(...).Sum(...)` one-liner over
+//    AggregatedConsequencesBinned::consequence_exceeded_with_probability_q (already ported, Task
+//    3). Not required by this task's produced interface or fixture; trivial to add later using
+//    consequence_extensions::filter_by_categories, mirroring sample_mean_damage below, if a
+//    caller needs it. (Its sibling `SampleMeanDamage(...)` WAS ported, Phase 5 Task 6 -- see
+//    `sample_mean_damage` below -- once ImpactAreaScenarioResults::
+//    mean_expected_annual_consequences needed it.)
 //  - MVVM `ValidationErrorLogger`/`MessageHub`/`ReportMessage`: no messaging/validation-log
 //    infrastructure in this port (matches the repo-wide MVVM severance). In `GetSpecificHistogram`
-//    (ported below as `get_specific_histogram`) the C# emits a Fatal `ErrorMessage` on a lookup
-//    miss and then returns a placeholder `new DynamicHistogram()` (the same severed "ARBITRARY
-//    histogram" ctor referenced above) -- there is no placeholder to fall back to here, so a miss
-//    throws `std::runtime_error` instead. This task's compute path never actually misses (every
-//    (damageCategory, assetCategory) combination queried by to_uncertain_paired_data comes from
-//    GetDamageCategories/GetAssetCategories, which only ever enumerate categories that already
-//    exist in ConsequenceResultList), so the throw is unreachable in practice, matching the C#
-//    Fatal-and-continue path being "should never happen" in practice too.
+//    (ported below as `get_specific_histogram`, public since Phase 5 Task 6) the C# emits a Fatal
+//    `ErrorMessage` on a lookup miss and then returns a placeholder `new DynamicHistogram()` (the
+//    same severed "ARBITRARY histogram" ctor referenced above) -- there is no placeholder to fall
+//    back to here, so a miss throws `std::runtime_error` instead. This task's compute path never
+//    actually misses (every (damageCategory, assetCategory) combination queried by
+//    to_uncertain_paired_data comes from GetDamageCategories/GetAssetCategories, which only ever
+//    enumerate categories that already exist in ConsequenceResultList), so the throw is
+//    unreachable in practice, matching the C# Fatal-and-continue path being "should never happen"
+//    in practice too.
+//
+// Phase 5 Task 6 additions (ImpactAreaScenarioResults, the container this class is nested inside):
+// `equals` (fully const -- see that method's own comment for why it didn't need the non-const
+// treatment `sample_mean_damage`/`results_are_converged`/`remaining_iterations` need), a const
+// `get_consequence_result` overload it relies on, `sample_mean_damage` (see the removed
+// SEVERANCES bullet above), `get_specific_histogram` made public, and a non-const
+// `consequence_result_list()` overload (see that accessor's own comment).
 class StudyAreaConsequencesBinned {
    public:
     using IDistribution = hecfda::statistics::distributions::IDistribution;
@@ -111,6 +119,13 @@ class StudyAreaConsequencesBinned {
     const std::vector<AggregatedConsequencesBinned>& consequence_result_list() const {
         return consequence_result_list_;
     }
+    // Non-const overload, added Phase 5 Task 6: ImpactAreaScenarioResults::consequence_results_are_
+    // converged/remaining_iterations (the ImpactAreaScenarioResults-level convergence helpers, NOT
+    // the same-named methods below -- see impact_area_scenario_results.hpp) need mutable access to
+    // each result's ConsequenceHistogram to call its non-const is_histogram_converged/
+    // estimate_iterations_remaining, mirroring the const/non-const accessor pair convention already
+    // established by PerformanceByThresholds::list_of_thresholds().
+    std::vector<AggregatedConsequencesBinned>& consequence_result_list() { return consequence_result_list_; }
 
     // ported from: StudyAreaConsequencesBinned.cs `internal void AddNewConsequenceResultObject(
     // string damageCategory, string assetCategory, ConvergenceCriteria convergenceCriteria, int
@@ -297,6 +312,88 @@ class StudyAreaConsequencesBinned {
         return {std::move(damage_upds), std::move(quantity_upds)};
     }
 
+    // ported from: StudyAreaConsequencesBinned.cs `public double SampleMeanDamage(string
+    // damageCategory = null, string assetCategory = null, int impactAreaID =
+    // ..DEFAULT_MISSING_VALUE, ConsequenceType consequenceType = ConsequenceType.Damage, RiskType
+    // riskType = RiskType.Fail)` -- the "Aggregation"-region overload (distinct from
+    // AggregatedConsequencesBinned's own same-named method). Added Phase 5 Task 6: this task's
+    // ImpactAreaScenarioResults::mean_expected_annual_consequences is the first caller (the class
+    // comment's SEVERANCES note anticipated this: "trivial to add later ... if a caller needs it").
+    // Sums sample_mean_expected_annual_consequences() over every result matching the filter --
+    // NON-CONST for the same reason results_are_converged/remaining_iterations are (see class
+    // comment): filter_by_categories needs mutable access to consequence_result_list_ to return
+    // pointers into it, even though nothing here actually mutates a result.
+    double sample_mean_damage(const std::optional<std::string>& damage_category = std::nullopt,
+                               const std::optional<std::string>& asset_category = std::nullopt,
+                               int impact_area_id = kDefaultMissingValue,
+                               ConsequenceType consequence_type = ConsequenceType::Damage,
+                               RiskType risk_type = RiskType::Fail) {
+        std::vector<AggregatedConsequencesBinned*> matches = consequence_extensions::filter_by_categories(
+            consequence_result_list_, damage_category, asset_category, impact_area_id, consequence_type,
+            risk_type);
+        double sum = 0.0;
+        for (AggregatedConsequencesBinned* result : matches) {
+            sum += result->sample_mean_expected_annual_consequences();
+        }
+        return sum;
+    }
+
+    // ported from: StudyAreaConsequencesBinned.cs `public IHistogram GetSpecificHistogram(string
+    // damageCategory, string assetCategory, int impactAreaID, bool getQuantityHistogram = false)`.
+    // Was private until Phase 5 Task 6: ImpactAreaScenarioResults::get_specific_histogram is this
+    // method's first direct caller (`to_uncertain_paired_data` above already called it internally).
+    // A direct linear scan for an EXACT (damageCategory, assetCategory, impactAreaID) match -- note
+    // this does NOT filter by ConsequenceType/RiskType (unlike get_consequence_result/
+    // filter_by_categories), matching the C# source exactly. On a miss: SEVERED MVVM
+    // ErrorMessage/ReportMessage + severed placeholder `new DynamicHistogram()` fallback -- see the
+    // class comment's SEVERANCES entry for why this throws instead.
+    const DynamicHistogram* get_specific_histogram(const std::string& damage_category,
+                                                    const std::string& asset_category, int impact_area_id,
+                                                    bool get_quantity_histogram = false) const {
+        const DynamicHistogram* return_histogram = nullptr;
+        for (const AggregatedConsequencesBinned& result : consequence_result_list_) {
+            if (result.damage_category() == damage_category && result.asset_category() == asset_category &&
+                result.region_id() == impact_area_id) {
+                return_histogram = get_quantity_histogram ? result.damaged_element_quantity_histogram()
+                                                            : result.consequence_histogram();
+            }
+        }
+        if (return_histogram == nullptr) {
+            throw std::runtime_error(
+                "StudyAreaConsequencesBinned::get_specific_histogram: no result for "
+                "damage_category='" +
+                damage_category + "', asset_category='" + asset_category +
+                "', impact_area_id=" + std::to_string(impact_area_id) +
+                " (mirrors the C# Fatal-ErrorMessage-and-placeholder-histogram fallback, which has "
+                "no equivalent placeholder in this port -- see class comment)");
+        }
+        return return_histogram;
+    }
+
+    // ported from: StudyAreaConsequencesBinned.cs `public bool Equals(StudyAreaConsequencesBinned
+    // inputDamageResults)`. Added Phase 5 Task 6: ImpactAreaScenarioResults::equals is this
+    // method's first caller (the class comment's SEVERANCES note anticipated this). Unlike
+    // sample_mean_damage/get_specific_histogram above, kept fully CONST: uses the const
+    // get_consequence_result overload below (itself backed by consequence_extensions::
+    // filter_by_categories's const overload) rather than the non-const private helper the other
+    // methods share, since AggregatedConsequencesBinned::equals and DynamicHistogram::equals are
+    // both const -- no forced non-const propagation here, matching Threshold::equals/
+    // PerformanceByThresholds::equals/AggregatedConsequencesBinned::equals's own const convention.
+    bool equals(const StudyAreaConsequencesBinned& input_damage_results) const {
+        for (const AggregatedConsequencesBinned& damage_result : consequence_result_list_) {
+            const AggregatedConsequencesBinned* input_damage_result = input_damage_results.get_consequence_result(
+                damage_result.damage_category(), damage_result.asset_category(), damage_result.region_id(),
+                damage_result.consequence_type(), damage_result.risk_type());
+            if (input_damage_result == nullptr) {
+                return false;
+            }
+            if (!damage_result.equals(*input_damage_result)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
    private:
     // ported from: StudyAreaConsequencesBinned.cs `public AggregatedConsequencesBinned
     // GetConsequenceResult(string damageCategory, string assetCategory, int impactAreaID =
@@ -311,6 +408,19 @@ class StudyAreaConsequencesBinned {
         int impact_area_id = kDefaultMissingValue, ConsequenceType consequence_type = ConsequenceType::Damage,
         RiskType risk_type = RiskType::Fail) {
         std::vector<AggregatedConsequencesBinned*> matches = consequence_extensions::filter_by_categories(
+            consequence_result_list_, damage_category, asset_category, impact_area_id, consequence_type,
+            risk_type);
+        return matches.empty() ? nullptr : matches.front();
+    }
+
+    // const overload of the above, added Phase 5 Task 6 for equals() (see that method's comment):
+    // the same lookup, but through consequence_extensions::filter_by_categories's const overload,
+    // so a const StudyAreaConsequencesBinned can still be queried read-only.
+    const AggregatedConsequencesBinned* get_consequence_result(
+        const std::string& damage_category, const std::string& asset_category,
+        int impact_area_id = kDefaultMissingValue, ConsequenceType consequence_type = ConsequenceType::Damage,
+        RiskType risk_type = RiskType::Fail) const {
+        std::vector<const AggregatedConsequencesBinned*> matches = consequence_extensions::filter_by_categories(
             consequence_result_list_, damage_category, asset_category, impact_area_id, consequence_type,
             risk_type);
         return matches.empty() ? nullptr : matches.front();
@@ -338,36 +448,6 @@ class StudyAreaConsequencesBinned {
                 " (mirrors C# NullReferenceException on GetConsequenceResult(...) returning null)");
         }
         return result;
-    }
-
-    // ported from: StudyAreaConsequencesBinned.cs `public IHistogram GetSpecificHistogram(string
-    // damageCategory, string assetCategory, int impactAreaID, bool getQuantityHistogram = false)`.
-    // A direct linear scan for an EXACT (damageCategory, assetCategory, impactAreaID) match -- note
-    // this does NOT filter by ConsequenceType/RiskType (unlike get_consequence_result/
-    // filter_by_categories), matching the C# source exactly. On a miss: SEVERED MVVM
-    // ErrorMessage/ReportMessage + severed placeholder `new DynamicHistogram()` fallback -- see the
-    // class comment's SEVERANCES entry for why this throws instead.
-    const DynamicHistogram* get_specific_histogram(const std::string& damage_category,
-                                                    const std::string& asset_category, int impact_area_id,
-                                                    bool get_quantity_histogram = false) const {
-        const DynamicHistogram* return_histogram = nullptr;
-        for (const AggregatedConsequencesBinned& result : consequence_result_list_) {
-            if (result.damage_category() == damage_category && result.asset_category() == asset_category &&
-                result.region_id() == impact_area_id) {
-                return_histogram = get_quantity_histogram ? result.damaged_element_quantity_histogram()
-                                                            : result.consequence_histogram();
-            }
-        }
-        if (return_histogram == nullptr) {
-            throw std::runtime_error(
-                "StudyAreaConsequencesBinned::get_specific_histogram: no result for "
-                "damage_category='" +
-                damage_category + "', asset_category='" + asset_category +
-                "', impact_area_id=" + std::to_string(impact_area_id) +
-                " (mirrors the C# Fatal-ErrorMessage-and-placeholder-histogram fallback, which has "
-                "no equivalent placeholder in this port -- see class comment)");
-        }
-        return return_histogram;
     }
 
     // ported from: StudyAreaConsequencesBinned.cs `private List<string> GetAssetCategories()`.

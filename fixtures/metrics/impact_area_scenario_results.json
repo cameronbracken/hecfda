@@ -1,0 +1,103 @@
+{
+  "target": "impact_area_scenario_results",
+  "kind": "impact_area_scenario_results",
+  "source_test": "HEC.FDA.Model/metrics/ImpactAreaScenarioResults.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real ImpactAreaScenarioResults/PerformanceByThresholds/StudyAreaConsequencesBinned directly)",
+  "note": "construct = {impact_area_id, damage_category, asset_category, consequence_convergence: {min_iterations, max_iterations}, threshold: {id, type (ThresholdEnum name string), value, convergence: {min_iterations, max_iterations}}}. Build a fresh ImpactAreaScenarioResults(impact_area_id) (the 1-arg public ctor), add_threshold(Threshold(threshold.id, thresholdConvergence, thresholdType, thresholdValue)) to its PerformanceByThresholds, and add_new_consequence_result_object(damage_category, asset_category, consequence_convergence, impact_area_id, ConsequenceType.Damage, RiskType.Total) to its ConsequenceResults -- RiskType.Total (not the StudyAreaConsequencesBinned-level default of Fail) so the default RiskType.Total MeanExpectedAnnualConsequences itself uses at the ImpactAreaScenarioResults level actually matches this constructed result. `consequence_realizations` ({iteration, damage}) are fed via ConsequenceResults.AddConsequenceRealization(damage, damage_category, asset_category, impact_area_id, iteration, ConsequenceType.Damage, RiskType.Total) (the EAD-binning overload) then ConsequenceResults.PutDataIntoHistograms() runs once. `aep_observations` ({iteration, result}) are fed via PerformanceByThresholds.GetThreshold(threshold.id).SystemPerformanceResults.AddAEPForAssurance(result, iteration). The retrieved threshold's SystemPerformanceResults(ConvergenceCriteria) ctor registers ONLY an AEP assurance (no STAGE) -- AssuranceTestForConvergence/AssuranceIsConverged/AssuranceRemainingIterations all hard-code standardNonExceedanceProbability=0.98 internally (see system_performance_results.hpp), so exercising results_are_converged (which calls AssuranceTestForConvergence transitively) requires a STAGE-0.98 assurance to already exist -- otherwise GetAssurance's lookup miss throws in this port (C#'s severed dummy-fallback masks the same miss silently instead, still yielding an -- unconverged, since the dummy's histogram is empty -- false, which is why the real C# run below still produces 0 rather than throwing). `add_stage_assurance_histogram(0.98)` is therefore called on the same SystemPerformanceResults before staging, and `stage_observations` ({iteration, result}) are fed via `add_stage_for_assurance(0.98, result, iteration)`; both AEP and STAGE observations are flushed by ONE SystemPerformanceResults.PutDataIntoHistograms() call. One object is built and staged per case, shared across every assertion (mirrors run_performance_by_thresholds/run_study_area_consequences_binned's convention). `method` dispatches: mean_aep/median_aep (args [threshold.id]), long_term_exceedance_probability (args [threshold.id, years]), assurance_of_aep (args [threshold.id, exceedance_probability]) -- all straight PerformanceByThresholds.GetThreshold(id).SystemPerformanceResults delegators; mean_expected_annual_consequences (args [impact_area_id] -- damage_category/asset_category/ConsequenceType.Damage/RiskType.Total come from construct, matching the default-arg call ImpactAreaScenarioResults.MeanExpectedAnnualConsequences(impactAreaID: impact_area_id, damageCategory: damage_category, assetCategory: asset_category) makes) -- ConsequenceResults.SampleMeanDamage's Welford-style running mean over the full 100-slot (IterationCount, from ConvergenceCriteria(5,1000)) staged array, mostly untouched zeros (only 5 of 100 iterations are realized), the same staged-array zero-contamination quirk aggregated_consequences_binned.json/study_area_consequences_binned.json document for their own SampleMean-derived assertions; results_are_converged (args [upper_confidence_limit_prob, lower_confidence_limit_prob], mode bool) -- ImpactAreaScenarioResults.ResultsAreConverged(upper, lower, checkConsequenceResults: true), ANDing PerformanceResultsAreConverged (every threshold's AssuranceTestForConvergence) with ConsequenceResultsAreConverged (every non-zero-valued consequence histogram's IsHistogramConverged) -- exercises the zero-valued-histogram-skip logic that is ImpactAreaScenarioResults's own convergence method, distinct from StudyAreaConsequencesBinned.ResultsAreConverged. All values PIN (gate-captured, never hand-derived).",
+  "cases": [
+    {
+      "name": "single_threshold_single_consequence_result",
+      "construct": {
+        "impact_area_id": 7,
+        "damage_category": "Residential",
+        "asset_category": "Structure",
+        "consequence_convergence": { "min_iterations": 5, "max_iterations": 1000 },
+        "threshold": {
+          "id": 3,
+          "type": "DefaultExteriorStage",
+          "value": 12.5,
+          "convergence": { "min_iterations": 5, "max_iterations": 1000 }
+        }
+      },
+      "consequence_realizations": [
+        { "iteration": 0, "damage": 1000.0 },
+        { "iteration": 1, "damage": 1500.0 },
+        { "iteration": 2, "damage": 1200.0 },
+        { "iteration": 3, "damage": 1800.0 },
+        { "iteration": 4, "damage": 900.0 }
+      ],
+      "aep_observations": [
+        { "iteration": 0, "result": 0.05 },
+        { "iteration": 1, "result": 0.08 },
+        { "iteration": 2, "result": 0.03 },
+        { "iteration": 3, "result": 0.10 },
+        { "iteration": 4, "result": 0.06 }
+      ],
+      "stage_observations": [
+        { "iteration": 0, "result": 10.1 },
+        { "iteration": 1, "result": 10.3 },
+        { "iteration": 2, "result": 9.9 },
+        { "iteration": 3, "result": 10.5 },
+        { "iteration": 4, "result": 10.0 }
+      ],
+      "assertions": [
+        { "method": "mean_aep", "args": [3], "expected": 0.003200000000000001, "tol": 1e-9, "mode": "abs" },
+        { "method": "median_aep", "args": [3], "expected": 0.00010526315789473685, "tol": 1e-9, "mode": "abs" },
+        { "method": "long_term_exceedance_probability", "args": [3, 10], "expected": 0.03154311022423595, "tol": 1e-9, "mode": "abs" },
+        { "method": "assurance_of_aep", "args": [3, 0.05], "expected": 0.97, "tol": 1e-9, "mode": "abs" },
+        { "method": "mean_expected_annual_consequences", "args": [7], "expected": 63.99999999999998, "tol": 1e-9, "mode": "abs" },
+        { "method": "results_are_converged", "args": [0.95, 0.05], "expected": 0, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "get_or_create_uncertain_curve_reference_stability",
+      "note": "Coverage for get_or_create_uncertain_consequence_frequency_curve (previously dead code -- see the class header's 'Reference stability' note): calls it for category A (creates + returns a reference), calls it again for a DIFFERENT category B (grows the underlying storage), calls it a third time for category A again (must return the SAME curve, not create a third one -- verified via uncertain_curve_count == 2), then adds a curve realization through the FIRST category-A reference -- obtained BEFORE the category-B call grew the storage -- to prove that reference is still valid after the grow. Regression coverage for the deque-vs-vector reference-stability fix. `uncertain_curve_stability` = {xvals, convergence: {min_iterations, max_iterations}, category_a/category_b: {damage_category, asset_category, consequence_type, risk_type}, realization_a_before_grow/realization_a_after_grow/realization_b: {iteration, yvals}}: category A's curve is created and fed realization_a_before_grow via get_or_create_uncertain_consequence_frequency_curve(...).add_curve_realization(...), category B's curve is then created (the grow) and fed realization_b, category A is fetched a second time (get_or_create) to confirm it is the same object (uncertain_curve_count stays 2), and realization_a_after_grow is added through the ORIGINAL (pre-grow) category-A reference. put_uncertain_frequency_curves_into_histograms() flushes both curves, then get_uncertain_paired_data().sample_paired_data(1, true).yvals() is read off each -- category A's reflects both realizations (100/200 at iteration 0, 300/400 at iteration 1, added through two different-in-time but reference-identical objects), category B's reflects only its own realization. All values PIN (gate-captured against the real C#, never hand-derived).",
+      "construct": {
+        "impact_area_id": 7,
+        "damage_category": "Residential",
+        "asset_category": "Structure",
+        "consequence_convergence": { "min_iterations": 5, "max_iterations": 1000 },
+        "threshold": {
+          "id": 3,
+          "type": "DefaultExteriorStage",
+          "value": 12.5,
+          "convergence": { "min_iterations": 5, "max_iterations": 1000 }
+        }
+      },
+      "consequence_realizations": [
+        { "iteration": 0, "damage": 1000.0 },
+        { "iteration": 1, "damage": 1500.0 },
+        { "iteration": 2, "damage": 1200.0 },
+        { "iteration": 3, "damage": 1800.0 },
+        { "iteration": 4, "damage": 900.0 }
+      ],
+      "aep_observations": [
+        { "iteration": 0, "result": 0.05 },
+        { "iteration": 1, "result": 0.08 },
+        { "iteration": 2, "result": 0.03 },
+        { "iteration": 3, "result": 0.10 },
+        { "iteration": 4, "result": 0.06 }
+      ],
+      "stage_observations": [
+        { "iteration": 0, "result": 10.1 },
+        { "iteration": 1, "result": 10.3 },
+        { "iteration": 2, "result": 9.9 },
+        { "iteration": 3, "result": 10.5 },
+        { "iteration": 4, "result": 10.0 }
+      ],
+      "uncertain_curve_stability": {
+        "xvals": [1.0, 2.0],
+        "convergence": { "min_iterations": 5, "max_iterations": 1000 },
+        "category_a": { "damage_category": "Residential", "asset_category": "Structure", "consequence_type": "Damage", "risk_type": "Fail" },
+        "category_b": { "damage_category": "Commercial", "asset_category": "Content", "consequence_type": "Damage", "risk_type": "Fail" },
+        "realization_a_before_grow": { "iteration": 0, "yvals": [100.0, 200.0] },
+        "realization_b": { "iteration": 0, "yvals": [10.0, 20.0] },
+        "realization_a_after_grow": { "iteration": 1, "yvals": [300.0, 400.0] }
+      },
+      "assertions": [
+        { "method": "uncertain_curve_count", "args": [], "expected": 2.0, "tol": 0.0, "mode": "abs" },
+        { "method": "uncertain_curve_yvals_a", "args": [], "expected": [3.9999999999999987, 6.0000000000000044], "tol": 1e-9, "mode": "vector" },
+        { "method": "uncertain_curve_yvals_b", "args": [], "expected": [0.09999999999999995, 0.1999999999999999], "tol": 1e-9, "mode": "vector" }
+      ]
+    }
+  ]
+}

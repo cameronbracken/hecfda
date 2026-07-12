@@ -1,0 +1,1074 @@
+{
+  "target": "simulation",
+  "kind": "simulation",
+  "source_test": "HEC.FDA.ModelTest/unittests/simulationShould.cs (ComputeEAD, ComputeEAD_withLevee, TotalRiskShould, ComputeEALL), HEC.FDA.ModelTest/unittests/PerformanceTest.cs (ComputeLeveeAEP_Test), HEC.FDA.ModelTest/integrationtests/StudyDataAnalyticalFrequencyResultsTests.cs (ComputeMeanEAD_Test) -- Phase 5 Task 10: the full compute()/ComputeIterations Monte Carlo loop + preview_compute(), all exercised via a single DETERMINISTIC pass (ConvergenceCriteria(minIterations:1, maxIterations:1), computeIsDeterministic:true, or preview_compute() which is internally always a single deterministic pass), so every oracle here is exact-reproducible (no RNG/convergence-loop dependence -- a max_iterations=1 histogram converges after its first and only chunk).",
+  "note": "construct = {impact_area_id, flow_frequency: {type,params} (ContinuousDistribution via with_flow_frequency), flow_stage: {xs, ys:[{type,params}]} (UncertainPairedData via with_flow_stage, no metadata), stage_damage: [{damage_category, asset_category, xs, ys:[{type,params}]}] (List<UncertainPairedData> via with_stage_damages, OPTIONAL), non_failure_stage_damage (same per-item shape, OPTIONAL, via with_non_failure_stage_damage), stage_life_loss (same per-item shape, OPTIONAL, via with_stage_life_loss), levee: {xs, ys:[{type,params}], top_of_levee_elevation} (OPTIONAL, via with_levee), additional_threshold: {threshold_id, type, value} (OPTIONAL, via with_additional_threshold, built with ConvergenceCriteria(1,1))}. method 'mean_eac', args [min_iterations, max_iterations, compute_is_deterministic (0/1), impact_area_id, damage_category, asset_category, consequence_type_name]: calls compute(ConvergenceCriteria(min,max), compute_is_deterministic).mean_expected_annual_consequences(impact_area_id, damage_category, asset_category, consequence_type) -- RiskType is never passed, matching every SimulationShould/TotalRiskShould test's own call, which relies on mean_expected_annual_consequences's own RiskType::Total default (a wildcard that matches every risk type, not an accumulation). method 'preview_mean_damage', args [damage_category, asset_category, impact_area_id]: calls preview_compute().ConsequenceResults.SampleMeanDamage(damage_category, asset_category, impact_area_id) verbatim (that method's own RiskType::Fail default, matching ComputeMeanEAD_Test's call which never passes a RiskType). method 'mean_aep', args [threshold_id, min_iterations, max_iterations, compute_is_deterministic (0/1)]: calls compute(cc, deterministic).MeanAEP(threshold_id), matching PerformanceTest.ComputeLeveeAEP_Test. All values PIN (gate-captured against the real C#, never hand-derived).",
+  "cases": [
+    {
+      "name": "compute_ead",
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ]
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "Structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ],
+        "additional_threshold": {
+          "threshold_id": 1,
+          "type": "DefaultExteriorStage",
+          "value": 150000
+        }
+      },
+      "assertions": [
+        {
+          "method": "mean_eac",
+          "args": [
+            1,
+            1,
+            1,
+            1,
+            "residential",
+            "Structure",
+            "Damage"
+          ],
+          "expected": 149999.99849999996,
+          "tol": 0.01,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "compute_ead_with_levee_top10",
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ]
+        },
+        "levee": {
+          "damage_category": "residential",
+          "asset_category": "Structure",
+          "xs": [
+            0,
+            9.9999,
+            10
+          ],
+          "ys": [
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                1
+              ]
+            }
+          ],
+          "top_of_levee_elevation": 100000
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "Structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "mean_eac",
+          "args": [
+            1,
+            1,
+            1,
+            1,
+            "residential",
+            "Structure",
+            "Damage"
+          ],
+          "expected": 84187.49849999994,
+          "tol": 0.014,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "compute_ead_with_levee_top400000",
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ]
+        },
+        "levee": {
+          "damage_category": "residential",
+          "asset_category": "Structure",
+          "xs": [
+            0,
+            399999.9999,
+            400000
+          ],
+          "ys": [
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                1
+              ]
+            }
+          ],
+          "top_of_levee_elevation": 100000
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "Structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "mean_eac",
+          "args": [
+            1,
+            1,
+            1,
+            1,
+            "residential",
+            "Structure",
+            "Damage"
+          ],
+          "expected": 0.0,
+          "tol": 0.0,
+          "mode": "exact"
+        }
+      ]
+    },
+    {
+      "name": "total_risk",
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            1000,
+            5
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            250,
+            500,
+            750,
+            1000
+          ],
+          "ys": [
+            {
+              "type": "Deterministic",
+              "params": [
+                10
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                11
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                13
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                17
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                17.5
+              ]
+            }
+          ]
+        },
+        "stage_damage": [
+          {
+            "damage_category": "RES",
+            "asset_category": "Structure",
+            "xs": [
+              10,
+              11,
+              13,
+              17,
+              17.5
+            ],
+            "ys": [
+              {
+                "type": "Deterministic",
+                "params": [
+                  0
+                ]
+              },
+              {
+                "type": "Deterministic",
+                "params": [
+                  0
+                ]
+              },
+              {
+                "type": "Deterministic",
+                "params": [
+                  14000
+                ]
+              },
+              {
+                "type": "Deterministic",
+                "params": [
+                  150000
+                ]
+              },
+              {
+                "type": "Deterministic",
+                "params": [
+                  500000
+                ]
+              }
+            ]
+          }
+        ],
+        "non_failure_stage_damage": [
+          {
+            "damage_category": "RES",
+            "asset_category": "Structure",
+            "xs": [
+              10,
+              11,
+              13,
+              17,
+              17.5
+            ],
+            "ys": [
+              {
+                "type": "Deterministic",
+                "params": [
+                  0
+                ]
+              },
+              {
+                "type": "Deterministic",
+                "params": [
+                  6000
+                ]
+              },
+              {
+                "type": "Deterministic",
+                "params": [
+                  8000
+                ]
+              },
+              {
+                "type": "Deterministic",
+                "params": [
+                  80000
+                ]
+              },
+              {
+                "type": "Deterministic",
+                "params": [
+                  500000
+                ]
+              }
+            ]
+          }
+        ],
+        "levee": {
+          "damage_category": "RES",
+          "asset_category": "Structure",
+          "xs": [
+            10,
+            11,
+            13,
+            17,
+            17.5
+          ],
+          "ys": [
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0.1
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0.8
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                1
+              ]
+            }
+          ],
+          "top_of_levee_elevation": 17
+        }
+      },
+      "assertions": [
+        {
+          "method": "mean_eac",
+          "args": [
+            1,
+            1,
+            1,
+            1,
+            "RES",
+            "Structure",
+            "Damage"
+          ],
+          "expected": 100149.99271999992,
+          "tol": 0.01,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "compute_eall",
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ]
+        },
+        "stage_life_loss": [
+          {
+            "damage_category": "LifeLoss",
+            "asset_category": "LifeLoss",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ],
+        "additional_threshold": {
+          "threshold_id": 0,
+          "type": "DefaultExteriorStage",
+          "value": 150000
+        }
+      },
+      "assertions": [
+        {
+          "method": "mean_eac",
+          "args": [
+            1,
+            1,
+            1,
+            1,
+            "LifeLoss",
+            "LifeLoss",
+            "LifeLoss"
+          ],
+          "expected": 149999.99849999996,
+          "tol": 0.01,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "preview_compute_lp3",
+      "construct": {
+        "impact_area_id": 0,
+        "flow_frequency": {
+          "type": "LogPearsonIII",
+          "params": [
+            3.537,
+            0.438,
+            0.075,
+            125
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            1500,
+            2120,
+            3140,
+            4210,
+            5070,
+            6240,
+            7050,
+            9680
+          ],
+          "ys": [
+            {
+              "type": "Normal",
+              "params": [
+                458,
+                1e-05,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                468.33,
+                0.312,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                469.97,
+                0.362,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                471.95,
+                0.422,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                473.06,
+                0.456,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                473.66,
+                0.474,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                474.53,
+                0.5,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                475.11,
+                0.5,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                477.4,
+                0.5,
+                1
+              ]
+            }
+          ]
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "structure",
+            "xs": [
+              460,
+              461,
+              462,
+              463,
+              464,
+              465,
+              466,
+              467,
+              468,
+              469,
+              470,
+              471,
+              472,
+              473,
+              474,
+              475,
+              476,
+              477,
+              478,
+              479
+            ],
+            "ys": [
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  1e-05,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0.04,
+                  0.16,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0.66,
+                  1.02,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  2.83,
+                  2.47,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  7.48,
+                  3.55,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  17.82,
+                  7.38,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  39.87,
+                  12.35,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  76.91,
+                  13.53,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  124.82,
+                  13.87,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  173.73,
+                  13.12,
+                  1
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "preview_mean_damage",
+          "args": [
+            "residential",
+            "structure",
+            0
+          ],
+          "expected": 20.52993305840298,
+          "tol": 0.016,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "compute_levee_aep",
+      "construct": {
+        "impact_area_id": 0,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                2,
+                10
+              ]
+            }
+          ]
+        },
+        "levee": {
+          "damage_category": "residential",
+          "asset_category": "structure",
+          "xs": [
+            0.5,
+            0.8,
+            0.9,
+            0.96,
+            0.98,
+            0.99,
+            0.996,
+            0.998
+          ],
+          "ys": [
+            {
+              "type": "Deterministic",
+              "params": [
+                0.01
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0.02
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0.05
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0.1
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0.2
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0.3
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0.4
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0.996
+              ]
+            }
+          ],
+          "top_of_levee_elevation": 0.998
+        }
+      },
+      "assertions": [
+        {
+          "method": "mean_aep",
+          "args": [
+            0,
+            1,
+            1,
+            1
+          ],
+          "expected": 0.028483000000000116,
+          "tol": 0.005,
+          "mode": "abs"
+        }
+      ]
+    }
+  ]
+}

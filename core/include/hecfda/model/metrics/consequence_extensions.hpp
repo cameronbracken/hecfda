@@ -51,6 +51,29 @@ inline std::vector<AggregatedConsequencesBinned*> filter_by_categories(
     return result;
 }
 
+// const overload, added Phase 5 Task 6 for StudyAreaConsequencesBinned::equals (needs a read-only
+// lookup so it can stay a const method, matching Threshold::equals/PerformanceByThresholds::
+// equals/AggregatedConsequencesBinned::equals's own const convention). Identical filtering logic
+// to the non-const overload above, over a const collection, returning const pointers.
+inline std::vector<const AggregatedConsequencesBinned*> filter_by_categories(
+    const std::vector<AggregatedConsequencesBinned>& consequences,
+    const std::optional<std::string>& damage_category = std::nullopt,
+    const std::optional<std::string>& asset_category = std::nullopt, int impact_area_id = -999,
+    ConsequenceType type = ConsequenceType::Damage, RiskType risk_type = RiskType::Total) {
+    std::vector<const AggregatedConsequencesBinned*> result;
+    for (const AggregatedConsequencesBinned& candidate : consequences) {
+        bool damage_matches = !damage_category.has_value() || *damage_category == candidate.damage_category();
+        bool asset_matches = !asset_category.has_value() || *asset_category == candidate.asset_category();
+        bool area_matches = impact_area_id == -999 || impact_area_id == candidate.region_id();
+        bool type_matches = type == candidate.consequence_type();
+        bool risk_matches = risk_type == RiskType::Total || risk_type == candidate.risk_type();
+        if (damage_matches && asset_matches && area_matches && type_matches && risk_matches) {
+            result.push_back(&candidate);
+        }
+    }
+    return result;
+}
+
 }  // namespace consequence_extensions
 }  // namespace metrics
 }  // namespace model

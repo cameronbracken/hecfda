@@ -1,0 +1,71 @@
+{
+  "target": "system_performance_results",
+  "kind": "system_performance_results",
+  "source_test": "HEC.FDA.ModelTest/unittests/PerformanceTest.cs (AssuranceResultStorageShould is the RNG-conformance source for case 2; cases 1 and 3 are pure-numeric SystemPerformanceResults-level oracles that don't need the full ImpactAreaScenarioSimulation, modeled on the same file's ComputeLeveeAEP_Test fragility curve for case 3 -- no upstream unit test exercises AEP/LTEP or the levee path at the SystemPerformanceResults level directly)",
+  "note": "Three case shapes selected by `construct.case_kind`, matching EvalSystemPerformanceResults in Program.cs and run_system_performance_results in test_fixtures.cpp case-for-case. (1) 'aep' -- SystemPerformanceResults(ConvergenceCriteria(min,max)), stages `aep_observations` ({iteration,result}) via AddAEPForAssurance, one PutDataIntoHistograms() call, then MeanAEP/MedianAEP/LongTermExceedanceProbability(years); only 8 of the 100-slot staging array are written (rest default to 0), matching AssuranceResultStorage's own multi_iteration_partial fixture convention. (2) 'rng_conformance' -- the PerformanceTest.AssuranceResultStorageShould pin: SystemPerformanceResults(ConvergenceCriteria(1000,10000)) (IterationCount defaults to 100, MaxIterations>=100), AddStageAssuranceHistogram(standard_probability), then `master_seed`-seeded `Random.Next()` reproduces the real test's masterSeedList loop (seeding IterationCount=100 master seeds -- the real Parallel.For only ever consumes the first IterationCount of the 1000-element seeds array, so this is an exact-prefix-equivalent simplification); for `compute_chunks` outer passes, each of the `iteration_count` seeds feeds RandomProvider(seed).NextRandom() -> standard Normal InverseCDF -> AddStageForAssurance, with one PutDataIntoHistograms() per pass (10000 total observations: the same 100 deterministic values repeated 100 times, since the inner computation never depends on the outer pass index j). assurance_of_event proves the ported DotNetRandom(1234)->RandomProvider->Normal.InverseCDF chain reproduces the real C# bit-for-bit; normal_cdf_reference is the same Normal(0,1).CDF(threshold_value) PerformanceTest.cs compares assurance_of_event against (tol .009 there), pinned from the identical C# run for an apples-to-apples cross-check. (3) 'levee' -- SystemPerformanceResults(UncertainPairedData(system_response_xs, Deterministic(system_response_ys)), ConvergenceCriteria(min,max)) with system_response_xs/ys reproducing PerformanceTest.ComputeLeveeAEP_Test's StageForNonLeveeFailureProbs/ProbLeveeFailure fragility curve verbatim (a wide, >2-point curve so the >2-Xvals-length ctor check sets _CalculatePerformanceForLevee=true); AddStageAssuranceHistogram(standard_probability) + `stage_observations` (10 of the 100-slot staging array written, rest default 0) exercise CalculateAssuranceForLevee's FP-sensitive cumulative-exceedance-times-fragility integration loop. assurance_of_event's threshold_value arg is passed but IGNORED by the levee branch (see system_performance_results.hpp's class comment) -- kept in the construct/args shape purely for interface parity with case 1.",
+  "cases": [
+    {
+      "name": "mean_aep_and_long_term_exceedance_probability",
+      "construct": {
+        "case_kind": "aep",
+        "convergence": { "min_iterations": 5, "max_iterations": 1000 },
+        "aep_observations": [
+          { "iteration": 0, "result": 0.02 },
+          { "iteration": 1, "result": 0.04 },
+          { "iteration": 2, "result": 0.05 },
+          { "iteration": 3, "result": 0.08 },
+          { "iteration": 4, "result": 0.10 },
+          { "iteration": 5, "result": 0.15 },
+          { "iteration": 6, "result": 0.20 },
+          { "iteration": 7, "result": 0.25 }
+        ]
+      },
+      "assertions": [
+        { "method": "mean_aep", "args": [], "expected": 0.008899999999999991, "tol": 1e-9, "mode": "abs" },
+        { "method": "median_aep", "args": [], "expected": 0.00010869565217391305, "tol": 1e-9, "mode": "abs" },
+        { "method": "long_term_exceedance_probability", "args": [10], "expected": 0.0855188426609319, "tol": 1e-9, "mode": "abs" },
+        { "method": "long_term_exceedance_probability", "args": [50], "expected": 0.3604510255412533, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "rng_conformance_assurance_of_event",
+      "construct": {
+        "case_kind": "rng_conformance",
+        "convergence": { "min_iterations": 1000, "max_iterations": 10000 },
+        "standard_probability": 0.998,
+        "master_seed": 1234,
+        "threshold_value": 2.88,
+        "compute_chunks": 100
+      },
+      "assertions": [
+        { "method": "assurance_of_event", "args": [], "expected": 0.99, "tol": 1e-9, "mode": "abs" },
+        { "method": "normal_cdf_reference", "args": [], "expected": 0.9980116241451057, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "levee_assurance_of_event",
+      "construct": {
+        "case_kind": "levee",
+        "convergence": { "min_iterations": 5, "max_iterations": 1000 },
+        "system_response_xs": [0.5, 0.8, 0.9, 0.96, 0.98, 0.99, 0.996, 0.998],
+        "system_response_ys": [0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.996],
+        "standard_probability": 0.98,
+        "stage_observations": [
+          { "iteration": 0, "result": 0.55 },
+          { "iteration": 1, "result": 0.60 },
+          { "iteration": 2, "result": 0.65 },
+          { "iteration": 3, "result": 0.70 },
+          { "iteration": 4, "result": 0.75 },
+          { "iteration": 5, "result": 0.80 },
+          { "iteration": 6, "result": 0.85 },
+          { "iteration": 7, "result": 0.90 },
+          { "iteration": 8, "result": 0.95 },
+          { "iteration": 9, "result": 0.98 }
+        ]
+      },
+      "assertions": [
+        { "method": "assurance_of_event", "args": [999.0], "expected": 0.994423, "tol": 1e-9, "mode": "abs" }
+      ]
+    }
+  ]
+}

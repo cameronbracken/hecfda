@@ -1,0 +1,44 @@
+{
+  "target": "performance_by_thresholds",
+  "kind": "metrics",
+  "source_test": "HEC.FDA.ModelTest/unittests/PerformanceTest.cs + DefaultThresholdShould.cs exercise PerformanceByThresholds.GetThreshold/ListOfThresholds against a real ImpactAreaScenarioSimulation; no upstream unit test builds a bare PerformanceByThresholds directly, so this fixture is planning-captured at the Threshold/PerformanceByThresholds level, modeled on those call sites (GetThreshold(id).SystemPerformanceResults.<metric>()).",
+  "note": "One case: constructs a PerformanceByThresholds, add_threshold's a DefaultExteriorStage (id 1) and an AdditionalExteriorStage (id 7) Threshold (distinct ids/values, both built via the (id, ConvergenceCriteria, ThresholdEnum, value) ctor), then get_threshold(get_threshold_id) retrieves the AdditionalExteriorStage one. threshold_value/threshold_type/threshold_id assert straight off the retrieved Threshold's own ctor-assigned fields (plain data echoes, not oracle-computed -- exact literals, not \"PIN\"). mean_aep exercises the round trip: aep_observations ({iteration,result}) are fed into the retrieved threshold's held SystemPerformanceResults via add_aep_for_assurance, one put_data_into_histograms() call, then mean_aep() proves the sub-object reached through add_threshold+get_threshold is the SAME live object the ctor built (not a copy) and that its math is wired -- pinned from the real C# via the oracle gate. Matches EvalPerformanceByThresholds in Program.cs and run_performance_by_thresholds in test_fixtures.cpp case-for-case.",
+  "cases": [
+    {
+      "name": "add_and_get_threshold_round_trip",
+      "construct": {
+        "thresholds": [
+          {
+            "id": 1,
+            "type": "DefaultExteriorStage",
+            "value": 10.5,
+            "convergence": { "min_iterations": 5, "max_iterations": 1000 }
+          },
+          {
+            "id": 7,
+            "type": "AdditionalExteriorStage",
+            "value": 12.25,
+            "convergence": { "min_iterations": 5, "max_iterations": 1000 }
+          }
+        ],
+        "get_threshold_id": 7,
+        "aep_observations": [
+          { "iteration": 0, "result": 0.02 },
+          { "iteration": 1, "result": 0.04 },
+          { "iteration": 2, "result": 0.05 },
+          { "iteration": 3, "result": 0.08 },
+          { "iteration": 4, "result": 0.10 },
+          { "iteration": 5, "result": 0.15 },
+          { "iteration": 6, "result": 0.20 },
+          { "iteration": 7, "result": 0.25 }
+        ]
+      },
+      "assertions": [
+        { "method": "threshold_value", "args": [], "expected": 12.25, "tol": 0.0, "mode": "exact" },
+        { "method": "threshold_type", "args": [], "expected": 4, "tol": 0.0, "mode": "exact" },
+        { "method": "threshold_id", "args": [], "expected": 7, "tol": 0.0, "mode": "exact" },
+        { "method": "mean_aep", "args": [], "expected": 0.008899999999999991, "tol": 1e-9, "mode": "abs" }
+      ]
+    }
+  ]
+}

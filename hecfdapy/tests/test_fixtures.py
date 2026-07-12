@@ -162,3 +162,50 @@ def test_impact_area_stage_damage():
                 ctor["hydraulic_stage1"], ctor["hydraulic_stage2"], ctor["use_reg_unreg"], a["args"][0],
             )
             _close(got, a["expected"], a["tol"], a["mode"])
+
+# Phase 5 Task 12: representative subset (system_performance_results,
+# impact_area_scenario_simulation). The remaining Phase-5 targets (assurance_result_storage,
+# performance_by_thresholds/threshold, categoried_paired_data/categoried_uncertain_paired_data,
+# bootstrap_to_paired_data, frequency_stage_sample, default_threshold, and the seeded
+# impact_area_scenario_simulation benchmarks) traverse the identical binding + compiled core and
+# are validated in C++ (core/tests/test_fixtures.cpp) + the dotnet oracle gate only -- see
+# .claude/CLAUDE.md's "R/Python distribution coverage scope" convention.
+def test_system_performance_results():
+    fx = _read("metrics/system_performance_results.json")
+    # Only the "rng_conformance" case_kind -- the seeded DotNetRandom(1234) conformance pin -- is
+    # bound here; "aep"/"levee" traverse the identical binding + compiled core (see note above).
+    cases = [c for c in fx["cases"] if c["construct"]["case_kind"] == "rng_conformance"]
+    for c in cases:
+        ctor = c["construct"]
+        for a in c["assertions"]:
+            got = bf.system_performance_results(
+                ctor["convergence"]["min_iterations"], ctor["convergence"]["max_iterations"],
+                ctor["standard_probability"], ctor["master_seed"], ctor["threshold_value"],
+                ctor["compute_chunks"], a["method"],
+            )
+            _close(got, a["expected"], a["tol"], a["mode"])
+
+def test_impact_area_scenario_simulation():
+    fx = _read("compute/impact_area_scenario_simulation_deterministic.json")
+    # Only the "compute_ead" case -- the phase's headline deterministic EAD oracle (150000) -- is
+    # bound here; the levee/total-risk/EALL/preview/AEP cases and the seeded benchmarks traverse
+    # the identical binding + compiled core (see note above).
+    cases = [c for c in fx["cases"] if c["name"] == "compute_ead"]
+    for c in cases:
+        ctor = c["construct"]
+        sd = ctor["stage_damage"][0]
+        for a in c["assertions"]:
+            got = bf.impact_area_scenario_simulation(
+                ctor["impact_area_id"],
+                ctor["flow_frequency"]["type"], ctor["flow_frequency"]["params"],
+                ctor["flow_stage"]["xs"],
+                [y["type"] for y in ctor["flow_stage"]["ys"]],
+                [y["params"] for y in ctor["flow_stage"]["ys"]],
+                sd["xs"],
+                [y["type"] for y in sd["ys"]],
+                [y["params"] for y in sd["ys"]],
+                sd["damage_category"], sd["asset_category"],
+                ctor["additional_threshold"]["threshold_id"], ctor["additional_threshold"]["value"],
+                a["args"][0], a["args"][1], a["args"][2] != 0,
+            )
+            _close(got, a["expected"], a["tol"], a["mode"])

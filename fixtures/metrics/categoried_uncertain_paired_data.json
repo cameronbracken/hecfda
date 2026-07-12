@@ -1,0 +1,79 @@
+{
+  "target": "categoried_uncertain_paired_data",
+  "kind": "categoried_uncertain_paired_data",
+  "source_test": "HEC.FDA.Model/metrics/CategoriedUncertainPairedData.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real CategoriedUncertainPairedData/AddCurveRealization/PutDataIntoHistograms/GetUncertainPairedData directly)",
+  "note": "construct is EITHER {xvals, damage_category, asset_category, consequence_type, risk_type, convergence: {min_iterations, max_iterations}} (the 6-arg compute ctor) OR {initial_curve: {xvals, yvals, damage_category, asset_category, consequence_type, risk_type}, convergence: {min_iterations, max_iterations}} (the CategoriedPairedData-delegating ctor, exercised by case 3 -- xvals/damage_category/asset_category/consequence_type/risk_type are extracted from initial_curve.FrequencyCurve/initial_curve's own labels, matching the C# ctor chain). ConvergenceCriteria is built with the 2-arg (minIterations, maxIterations) ctor (same convention as aggregated_consequences_binned.json), which pins IterationCount to the 1-or-100 binary switch documented in convergence_criteria.hpp -- case 1 uses max_iterations=50 (IterationCount=1, forcing one single-realization batch per flush) and cases 2/3 use max_iterations>=1000 (IterationCount=100, so only a handful of the 100 staging slots are ever written per flush). `realization_batches` is a list of batches; each batch is a list of {iteration, yvals} (yvals.length == xvals.length). For every batch: construct a fresh PairedData(xvals, yvals) per realization, call add_curve_realization(curve, iteration) for every realization in the batch (in order), THEN put_data_into_histograms() exactly once per batch (mirroring the real MC-loop 'stage a batch, then flush' usage this class's own doc comment requires) -- one CategoriedUncertainPairedData is built and staged per case, shared across all of that case's batches and assertions. `method` is always sample_paired_data_deterministic_yvals (args []): after every batch has been staged and flushed, calls get_uncertain_paired_data().sample_paired_data(1, true) (retrieveDeterministicRepresentation=true, so it reads each ordinate's DynamicHistogram.SampleMean via UncertainToDeterministicDistributionConverter's IHistogram branch, force_weak_monotonicity_bottom_up applied per PairedData::sample_paired_data's own contract) and asserts its Yvals. Case 1 (single_batch_size_multi_flush) exercises: IterationCount=1 (InitializeHistograms sees a single-slot temp array on the FIRST flush -> range==0 -> the 0.001-literal narrow-bin-width branch, NOT DynamicHistogram::DEFAULT_BIN_WIDTH -- see categoried_uncertain_paired_data.hpp's class comment for why those two constants differ), three sequential batches (histograms_not_constructed_ only true before the FIRST flush; later flushes accumulate into the already-built histograms), and every batch's single realization landing in the same iteration-index-0 slot (the only valid index when IterationCount==1). Case 2 (multi_realization_one_flush_wide_range) exercises: IterationCount=100, one batch with 5 realizations at iterations 0..4 using large-magnitude yvals so each ordinate's range (computed from the FULL 100-slot staged array, including the 95 untouched-zero slots -- the same staged-array quirk aggregated_consequences_binned.json's multi_iteration_wide_range case exercises) exceeds INITIAL_BIN_QUANTITY (500), taking the range/INITIAL_BIN_QUANTITY branch instead of the 0.001 literal. Case 3 (from_initial_curve_two_batches) exercises the CategoriedPairedData-delegating ctor (initial_curve's own PairedData supplies Xvals; DamageCategory/AssetCategory/ConsequenceType/RiskType come from the CategoriedPairedData, not restated separately) with two flush batches of 3 realizations each (again only 6 of 100 slots ever written, zero-contamination quirk applies again). All values PIN (gate-captured, never hand-derived) -- these are Welford-style running means over full 100-slot (or 1-slot) staged arrays with mostly-untouched-zero padding in cases 2/3, so hand-summing would not obviously reproduce IEEE-754 rounding of the online mean recurrence, exactly as aggregated_consequences_binned.json and study_area_consequences_binned.json document for their own SampleMean-derived assertions.",
+  "cases": [
+    {
+      "name": "single_batch_size_multi_flush",
+      "construct": {
+        "xvals": [10.0, 20.0],
+        "damage_category": "Residential",
+        "asset_category": "Structure",
+        "consequence_type": "Damage",
+        "risk_type": "Fail",
+        "convergence": { "min_iterations": 1, "max_iterations": 50 }
+      },
+      "realization_batches": [
+        [ { "iteration": 0, "yvals": [100.0, 200.0] } ],
+        [ { "iteration": 0, "yvals": [150.0, 250.0] } ],
+        [ { "iteration": 0, "yvals": [50.0, 300.0] } ]
+      ],
+      "assertions": [
+        { "method": "sample_paired_data_deterministic_yvals", "args": [], "expected": [100.0, 250.0], "tol": 1e-9, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "multi_realization_one_flush_wide_range",
+      "construct": {
+        "xvals": [5.0, 15.0, 25.0],
+        "damage_category": "Commercial",
+        "asset_category": "Content",
+        "consequence_type": "LifeLoss",
+        "risk_type": "Total",
+        "convergence": { "min_iterations": 5, "max_iterations": 1000 }
+      },
+      "realization_batches": [
+        [
+          { "iteration": 0, "yvals": [1000.0, 2000.0, 3000.0] },
+          { "iteration": 1, "yvals": [1500.0, 2500.0, 3500.0] },
+          { "iteration": 2, "yvals": [500.0, 1000.0, 1500.0] },
+          { "iteration": 3, "yvals": [2000.0, 4000.0, 6000.0] },
+          { "iteration": 4, "yvals": [0.0, 500.0, 1000.0] }
+        ]
+      ],
+      "assertions": [
+        { "method": "sample_paired_data_deterministic_yvals", "args": [], "expected": [49.99999999999998, 99.99999999999996, 150.0], "tol": 1e-9, "mode": "vector" }
+      ]
+    },
+    {
+      "name": "from_initial_curve_two_batches",
+      "construct": {
+        "initial_curve": {
+          "xvals": [1.0, 2.0, 3.0],
+          "yvals": [10.0, 20.0, 30.0],
+          "damage_category": "Agricultural",
+          "asset_category": "Vehicle",
+          "consequence_type": "Damage",
+          "risk_type": "Non_Fail"
+        },
+        "convergence": { "min_iterations": 2, "max_iterations": 200 }
+      },
+      "realization_batches": [
+        [
+          { "iteration": 0, "yvals": [12.0, 22.0, 33.0] },
+          { "iteration": 1, "yvals": [8.0, 18.0, 27.0] },
+          { "iteration": 2, "yvals": [15.0, 25.0, 40.0] }
+        ],
+        [
+          { "iteration": 0, "yvals": [11.0, 19.0, 31.0] },
+          { "iteration": 1, "yvals": [9.0, 21.0, 29.0] },
+          { "iteration": 2, "yvals": [14.0, 24.0, 36.0] }
+        ]
+      ],
+      "assertions": [
+        { "method": "sample_paired_data_deterministic_yvals", "args": [], "expected": [0.3449999999999999, 0.6450000000000004, 0.9799999999999998], "tol": 1e-9, "mode": "vector" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1323 @@
+{
+  "target": "simulation",
+  "kind": "simulation",
+  "source_test": "HEC.FDA.ModelTest/unittests/simulationShould.cs (ComputeEAD_Iterations), HEC.FDA.ModelTest/integrationtests/StudyDataGraphicalStageFrequencyResultsTests.cs (ComputeMeanEADWithIterations_Test), HEC.FDA.ModelTest/integrationtests/StudyDataAnalyticalFrequencyResultsTests.cs (ComputeMeanEADWithIterations_Test), HEC.FDA.ModelTest/unittests/PerformanceTest.cs (ComputeConditionalNonExceedanceProbability_Test) -- Phase 5 Task 11: the SEEDED Monte Carlo EAD + performance benchmarks, compute(cc, computeIsDeterministic=false), exercising the per-curve seeds (Task 8) through the full MC loop (Task 10). Every case uses cc.min_iterations==max_iterations wherever the upstream test allows it, so the iteration count -- and therefore the seeded value -- is exactly fixed rather than convergence-dependent; ComputeEAD_Iterations is the tightest pin (exactly 100 iterations). The `ComputeMeanEADWithIterations_Test` cases use the upstream min!=max convergence criteria verbatim (the MC loop is itself fully deterministic given the seeds, so a data-driven convergence stop still reproduces bit-for-bit against the real C#, it is just not independently fixed by construction the way the exact-100 case is).",
+  "note": "construct adds Task 11's `frequency_stage: {exceedance_probabilities, values, equivalent_record_length, using_stages_not_flows, damage_category, asset_category}` (OPTIONAL, via with_frequency_stage -- the direct graphical-stage-frequency path, mutually exclusive with flow_frequency/flow_stage in these fixtures) to the deterministic fixture's construct shape. method 'mean_eac' as in the deterministic fixture but with compute_is_deterministic=0 (seeded). method 'assurance_of_event', args [threshold_id, min_iterations, max_iterations, compute_is_deterministic (0/1), recurrence_interval]: calls compute(cc, deterministic).AssuranceOfEvent(thresholdID, recurrenceInterval), matching PerformanceTest.ComputeConditionalNonExceedanceProbability_Test's own call on its non-levee `results` (the paired levee simulation in that test is only checked for internal self-consistency against this same value within .01, not against an independent golden literal, so it is not separately re-derived here). All values PIN (gate-captured against the real C#, never hand-derived); the upstream InlineData literal is recorded per case for cross-reference only.",
+  "cases": [
+    {
+      "name": "compute_ead_iterations_100",
+      "upstream_literal": 121194.5159789352,
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "Structure"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "Structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "mean_eac",
+          "args": [
+            100,
+            100,
+            0,
+            1,
+            "residential",
+            "Structure",
+            "Damage"
+          ],
+          "expected": 121194.5159789352,
+          "tol": 0.05,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "graphical_stage_frequency_seeded",
+      "upstream_literal": 5.88,
+      "construct": {
+        "impact_area_id": 1,
+        "frequency_stage": {
+          "exceedance_probabilities": [
+            0.5,
+            0.2,
+            0.1,
+            0.04,
+            0.02,
+            0.01,
+            0.005,
+            0.002
+          ],
+          "values": [
+            370,
+            373,
+            378,
+            381,
+            384,
+            385,
+            386,
+            387
+          ],
+          "equivalent_record_length": 25,
+          "using_stages_not_flows": true,
+          "damage_category": "residential",
+          "asset_category": "content"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "xs": [
+              369.5,
+              370,
+              370.5,
+              371,
+              371.5,
+              372,
+              372.5,
+              373,
+              373.5,
+              374,
+              374.5,
+              375,
+              375.5,
+              376,
+              376.5,
+              377,
+              377.5,
+              378,
+              378.5,
+              379,
+              379.5,
+              380,
+              380.5,
+              381,
+              381.5,
+              382,
+              382.5,
+              383,
+              383.5,
+              384,
+              384.5,
+              385,
+              385.5,
+              386,
+              386.5,
+              387,
+              387.5,
+              388,
+              388.5,
+              389,
+              389.5,
+              390,
+              390.5,
+              391,
+              391.5,
+              392,
+              392.5,
+              393,
+              393.5,
+              394,
+              394.5,
+              395
+            ],
+            "ys": [
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0.03,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0.08,
+                  0.37,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0.41,
+                  0.84,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0.92,
+                  1.2,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  1.61,
+                  1.43,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  2.19,
+                  1.53,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  2.89,
+                  1.68,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  3.93,
+                  1.96,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  5.41,
+                  2.32,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  7.34,
+                  2.72,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  9.66,
+                  3.12,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  12.31,
+                  3.57,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  15.29,
+                  4.04,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  18.56,
+                  4.57,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  22.11,
+                  5.13,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  25.91,
+                  5.74,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  29.93,
+                  6.37,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  34.13,
+                  7.04,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  38.47,
+                  7.73,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  42.93,
+                  8.47,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  47.5,
+                  9.23,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  52.14,
+                  10.01,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  56.83,
+                  10.81,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  61.54,
+                  11.62,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  66.25,
+                  12.44,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  70.91,
+                  13.25,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  75.5,
+                  14.06,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  79.99,
+                  14.86,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  84.36,
+                  15.64,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  88.59,
+                  16.39,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  92.63,
+                  17.12,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  96.47,
+                  17.8,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  100.06,
+                  18.45,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  103.38,
+                  19.04,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  106.41,
+                  19.58,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  109.12,
+                  20.06,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  111.5,
+                  20.5,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  113.51,
+                  20.86,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  115.11,
+                  21.16,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  116.29,
+                  21.37,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  117.06,
+                  21.52,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  117.46,
+                  21.6,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  117.59,
+                  21.63,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  117.61,
+                  21.64,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  117.61,
+                  21.64,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  117.61,
+                  21.64,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  117.61,
+                  21.64,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  117.61,
+                  21.64,
+                  1
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "mean_eac",
+          "args": [
+            1000,
+            10000,
+            0,
+            1,
+            "residential",
+            "content",
+            "Damage"
+          ],
+          "expected": 5.794765770406256,
+          "tol": 0.09,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "lp3_analytical_seeded",
+      "upstream_literal": 21.09,
+      "construct": {
+        "impact_area_id": 0,
+        "flow_frequency": {
+          "type": "LogPearsonIII",
+          "params": [
+            3.537,
+            0.438,
+            0.075,
+            125
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            1500,
+            2120,
+            3140,
+            4210,
+            5070,
+            6240,
+            7050,
+            9680
+          ],
+          "ys": [
+            {
+              "type": "Normal",
+              "params": [
+                458,
+                1e-05,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                468.33,
+                0.312,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                469.97,
+                0.362,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                471.95,
+                0.422,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                473.06,
+                0.456,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                473.66,
+                0.474,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                474.53,
+                0.5,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                475.11,
+                0.5,
+                1
+              ]
+            },
+            {
+              "type": "Normal",
+              "params": [
+                477.4,
+                0.5,
+                1
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "structure",
+            "xs": [
+              460,
+              461,
+              462,
+              463,
+              464,
+              465,
+              466,
+              467,
+              468,
+              469,
+              470,
+              471,
+              472,
+              473,
+              474,
+              475,
+              476,
+              477,
+              478,
+              479
+            ],
+            "ys": [
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  1e-05,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0.04,
+                  0.16,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0.66,
+                  1.02,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  2.83,
+                  2.47,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  7.48,
+                  3.55,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  17.82,
+                  7.38,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  39.87,
+                  12.35,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  76.91,
+                  13.53,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  124.82,
+                  13.87,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  173.73,
+                  13.12,
+                  1
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "mean_eac",
+          "args": [
+            100,
+            10000,
+            0,
+            0,
+            "residential",
+            "structure",
+            "Damage"
+          ],
+          "expected": 20.805579308033952,
+          "tol": 0.032,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "assurance_of_event_seeded_1",
+      "upstream_literal": 0.7777,
+      "construct": {
+        "impact_area_id": 0,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                2,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "Structure",
+            "xs": [
+              0,
+              2
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ],
+        "additional_threshold": {
+          "threshold_id": 1,
+          "type": "DefaultExteriorStage",
+          "value": 1.4,
+          "cc": [
+            101,
+            10001,
+            0.001
+          ]
+        }
+      },
+      "assertions": [
+        {
+          "method": "assurance_of_event",
+          "args": [
+            1,
+            101,
+            10001,
+            0,
+            0.9,
+            0.001
+          ],
+          "expected": 0.7862376237623763,
+          "tol": 0.07,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "assurance_of_event_seeded_2",
+      "upstream_literal": 0.7575,
+      "construct": {
+        "impact_area_id": 0,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                2,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "Structure",
+            "xs": [
+              0,
+              2
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ],
+        "additional_threshold": {
+          "threshold_id": 1,
+          "type": "DefaultExteriorStage",
+          "value": 1.5,
+          "cc": [
+            101,
+            10001,
+            0.001
+          ]
+        }
+      },
+      "assertions": [
+        {
+          "method": "assurance_of_event",
+          "args": [
+            1,
+            101,
+            10001,
+            0,
+            0.99,
+            0.001
+          ],
+          "expected": 0.7656435643564357,
+          "tol": 0.07,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "assurance_of_event_seeded_3",
+      "upstream_literal": 0.7028,
+      "construct": {
+        "impact_area_id": 0,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                2,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "Structure",
+            "xs": [
+              0,
+              2
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ],
+        "additional_threshold": {
+          "threshold_id": 1,
+          "type": "DefaultExteriorStage",
+          "value": 1.4,
+          "cc": [
+            101,
+            10001,
+            0.001
+          ]
+        }
+      },
+      "assertions": [
+        {
+          "method": "assurance_of_event",
+          "args": [
+            1,
+            101,
+            10001,
+            0,
+            0.996,
+            0.001
+          ],
+          "expected": 0.7067326732673267,
+          "tol": 0.07,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "assurance_of_event_seeded_4",
+      "upstream_literal": 0.9018,
+      "construct": {
+        "impact_area_id": 0,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                2,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "Structure",
+            "xs": [
+              0,
+              2
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ],
+        "additional_threshold": {
+          "threshold_id": 1,
+          "type": "DefaultExteriorStage",
+          "value": 1.8,
+          "cc": [
+            101,
+            10001,
+            0.001
+          ]
+        }
+      },
+      "assertions": [
+        {
+          "method": "assurance_of_event",
+          "args": [
+            1,
+            101,
+            10001,
+            0,
+            0.998,
+            0.001
+          ],
+          "expected": 0.9092079207920792,
+          "tol": 0.07,
+          "mode": "rel"
+        }
+      ]
+    }
+  ]
+}
