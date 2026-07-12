@@ -1092,6 +1092,101 @@ namespace oracle_emitter {
       throw new Exception("unknown assurance_result_storage method: " + method);
     }
 
+    // SystemPerformanceResults (Phase 5 Task 2) is the system-performance metrics container --
+    // built from patched/SystemPerformanceResults.cs (see that file's header for the patch
+    // rationale: MVVM base + ReportMessage + XML dropped, everything else verbatim). Three case
+    // shapes selected by `construct.case_kind` (see fixtures/metrics/system_performance_results.json's
+    // note for the full rationale, matching run_system_performance_results in test_fixtures.cpp
+    // case-for-case):
+    //  - "aep": SystemPerformanceResults(ConvergenceCriteria), stages `aep_observations`
+    //    ({iteration, result}) via AddAEPForAssurance, PutDataIntoHistograms() once, then dispatches
+    //    mean_aep/median_aep/long_term_exceedance_probability (args [years]).
+    //  - "rng_conformance": the PerformanceTest.AssuranceResultStorageShould pin. Builds
+    //    SystemPerformanceResults(ConvergenceCriteria), AddStageAssuranceHistogram(standardProbability),
+    //    seeds `iterationCount` master seeds via `new Random(masterSeed).Next()` (matching the real
+    //    test's masterSeedList loop -- only the first IterationCount of MinIterations are ever
+    //    consumed by the real test's Parallel.For bound, so generating exactly IterationCount
+    //    reproduces the identical seed prefix), then for `computeChunks` outer passes: for each
+    //    seed, RandomProvider(seed).NextRandom() -> standard Normal InverseCDF ->
+    //    AddStageForAssurance(standardProbability, invCDF, i); PutDataIntoHistograms() once per
+    //    pass. `method: assurance_of_event` (args []) returns AssuranceOfEvent(standardProbability,
+    //    thresholdValue); `method: normal_cdf_reference` (args []) returns the same
+    //    standardNormal.CDF(thresholdValue) PerformanceTest.cs compares against, letting the
+    //    fixture pin both the exact RNG-seeded value and its theoretical cross-check from one C#
+    //    run.
+    //  - "levee": builds SystemPerformanceResults(UncertainPairedData systemResponse,
+    //    ConvergenceCriteria) from `system_response_xs`/`system_response_ys` (Deterministic-
+    //    distribution ys, matching ComputeLeveeAEP_Test's fragility curve), AddStageAssuranceHistogram
+    //    (standardProbability), stages `stage_observations` via AddStageForAssurance,
+    //    PutDataIntoHistograms() once, then dispatches `assurance_of_event` (args [thresholdValue]
+    //    -- ignored by the levee branch, kept for construct-shape parity) through
+    //    CalculateAssuranceForLevee.
+    static object EvalSystemPerformanceResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      string caseKind = c.GetProperty("case_kind").GetString();
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+
+      if (caseKind == "aep") {
+        var spr = new SystemPerformanceResults(cc);
+        foreach (var o in c.GetProperty("aep_observations").EnumerateArray()) {
+          spr.AddAEPForAssurance(D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+        }
+        spr.PutDataIntoHistograms();
+        if (method == "mean_aep") return spr.MeanAEP();
+        if (method == "median_aep") return spr.MedianAEP();
+        if (method == "long_term_exceedance_probability") return spr.LongTermExceedanceProbability((int)D(argsEl[0]));
+        throw new Exception("unknown system_performance_results (aep) method: " + method);
+      }
+
+      if (caseKind == "rng_conformance") {
+        double standardProbability = c.GetProperty("standard_probability").GetDouble();
+        int masterSeed = c.GetProperty("master_seed").GetInt32();
+        double thresholdValue = c.GetProperty("threshold_value").GetDouble();
+        int computeChunks = c.GetProperty("compute_chunks").GetInt32();
+
+        var spr = new SystemPerformanceResults(cc);
+        spr.AddStageAssuranceHistogram(standardProbability);
+
+        long iterationCount = cc.IterationCount;
+        var masterSeedList = new Random(masterSeed);
+        var seeds = new int[iterationCount];
+        for (int i = 0; i < iterationCount; i++) seeds[i] = masterSeedList.Next();
+
+        var standardNormal = new Normal();
+        for (int j = 0; j < computeChunks; j++) {
+          for (int i = 0; i < iterationCount; i++) {
+            var threadlocalRandomProvider = new RandomProvider(seeds[i]);
+            double invCDF = standardNormal.InverseCDF(threadlocalRandomProvider.NextRandom());
+            spr.AddStageForAssurance(standardProbability, invCDF, i);
+          }
+          spr.PutDataIntoHistograms();
+        }
+        if (method == "assurance_of_event") return spr.AssuranceOfEvent(standardProbability, thresholdValue);
+        if (method == "normal_cdf_reference") return standardNormal.CDF(thresholdValue);
+        throw new Exception("unknown system_performance_results (rng_conformance) method: " + method);
+      }
+
+      if (caseKind == "levee") {
+        double[] xs = DA(c.GetProperty("system_response_xs"));
+        double[] ys = DA(c.GetProperty("system_response_ys"));
+        IDistribution[] failureProbs = ys.Select(y => (IDistribution)new Deterministic(y)).ToArray();
+        var md = new CurveMetaData("x", "y", "oracle");
+        var systemResponse = new UncertainPairedData(xs, failureProbs, md);
+        double standardProbability = c.GetProperty("standard_probability").GetDouble();
+
+        var spr = new SystemPerformanceResults(systemResponse, cc);
+        spr.AddStageAssuranceHistogram(standardProbability);
+        foreach (var o in c.GetProperty("stage_observations").EnumerateArray()) {
+          spr.AddStageForAssurance(standardProbability, D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+        }
+        spr.PutDataIntoHistograms();
+        if (method == "assurance_of_event") return spr.AssuranceOfEvent(standardProbability, D(argsEl[0]));
+        throw new Exception("unknown system_performance_results (levee) method: " + method);
+      }
+      throw new Exception("unknown system_performance_results case_kind: " + caseKind);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -1144,6 +1239,7 @@ namespace oracle_emitter {
               case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
               case "assurance_result_storage": val = EvalAssuranceResultStorage(c, method, argsEl); break;
+              case "system_performance_results": val = EvalSystemPerformanceResults(c, method, argsEl); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;
               case "impact_area_stage_damage": val = EvalImpactAreaStageDamage(c, method, argsEl); break;

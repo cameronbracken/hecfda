@@ -13,11 +13,13 @@
 #include "hecfda/model/metrics/consequence_extensions.hpp"
 #include "hecfda/model/metrics/consequence_result.hpp"
 #include "hecfda/model/metrics/study_area_consequences_binned.hpp"
+#include "hecfda/model/metrics/system_performance_results.hpp"
 #include "hecfda/model/metrics/threshold_enum.hpp"
 #include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/sampling/dotnet_random.hpp"
 #include "hecfda/model/stage_damage/hydraulic_profiles.hpp"
 #include "hecfda/model/stage_damage/impact_area_stage_damage.hpp"
 #include "hecfda/model/stage_damage/scenario_stage_damage.hpp"
@@ -1943,6 +1945,140 @@ TEST_CASE("assurance_result_storage fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_assurance_result_storage(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// SystemPerformanceResults (Phase 5 Task 2) is the system-performance metrics container: AEP +
+// stage assurance histograms wrapping Task-1 AssuranceResultStorage, plus the FP-sensitive levee
+// fragility-curve integration (calculate_assurance_for_levee). Three case shapes selected by
+// `construct.case_kind` (see fixtures/metrics/system_performance_results.json's note for the full
+// rationale; mirrors EvalSystemPerformanceResults in Program.cs case-for-case):
+//  - "aep": SystemPerformanceResults(ConvergenceCriteria), stages `aep_observations` via
+//    add_aep_for_assurance, put_data_into_histograms() once, dispatches mean_aep/median_aep/
+//    long_term_exceedance_probability(years).
+//  - "rng_conformance": the PerformanceTest.AssuranceResultStorageShould RNG-port-conformance pin.
+//    Seeds `iteration_count` master seeds via DotNetRandom(master_seed).internal_sample() (the C++
+//    equivalent of C#'s parameterless `Random.Next()`, which is `InternalSample()` unscaled -- see
+//    dotnet_random.hpp), matching the real test's masterSeedList loop (only the first
+//    IterationCount of MinIterations are ever consumed by the real test's Parallel.For bound, so
+//    generating exactly IterationCount reproduces the identical seed prefix). For `compute_chunks`
+//    outer passes: for each seed, RandomProvider(seed).next_random() -> Normal(0,1).inverse_cdf()
+//    feeds add_stage_for_assurance; put_data_into_histograms() once per pass. Dispatches
+//    assurance_of_event (proving the seeded DotNetRandom(1234) -> RandomProvider -> Normal
+//    InverseCDF chain reproduces the real C#) and normal_cdf_reference (the same
+//    Normal(0,1).CDF(threshold) PerformanceTest.cs cross-checks against, pinned from the identical
+//    C# run for an apples-to-apples comparison).
+//  - "levee": SystemPerformanceResults(UncertainPairedData, ConvergenceCriteria) built from
+//    system_response_xs/ys (Deterministic-distribution ys, mirroring ComputeLeveeAEP_Test's
+//    fragility curve), stages `stage_observations` via add_stage_for_assurance,
+//    put_data_into_histograms() once, dispatches assurance_of_event through
+//    calculate_assurance_for_levee.
+static double run_system_performance_results(const json& c, const std::string& method, const json& args) {
+    using namespace hecfda::model::metrics;
+    using namespace hecfda::model::paired_data;
+    using hecfda::statistics::ConvergenceCriteria;
+    using hecfda::statistics::distributions::Deterministic;
+    using hecfda::statistics::distributions::IDistribution;
+    using hecfda::statistics::distributions::Normal;
+
+    const auto& ctor = c["construct"];
+    std::string case_kind = ctor["case_kind"].get<std::string>();
+    const auto& conv = ctor["convergence"];
+    ConvergenceCriteria cc(conv["min_iterations"].get<int>(), conv["max_iterations"].get<int>());
+
+    if (case_kind == "aep") {
+        SystemPerformanceResults spr(cc);
+        for (const auto& o : ctor["aep_observations"]) {
+            spr.add_aep_for_assurance(o["result"].get<double>(), o["iteration"].get<int>());
+        }
+        spr.put_data_into_histograms();
+        if (method == "mean_aep") return spr.mean_aep();
+        if (method == "median_aep") return spr.median_aep();
+        if (method == "long_term_exceedance_probability") {
+            return spr.long_term_exceedance_probability(args[0].get<int>());
+        }
+        FAIL("unknown system_performance_results (aep) method");
+        return 0.0;
+    }
+
+    if (case_kind == "rng_conformance") {
+        double standard_probability = ctor["standard_probability"].get<double>();
+        int master_seed = ctor["master_seed"].get<int>();
+        double threshold_value = ctor["threshold_value"].get<double>();
+        int compute_chunks = ctor["compute_chunks"].get<int>();
+
+        SystemPerformanceResults spr(cc);
+        spr.add_stage_assurance_histogram(standard_probability);
+
+        int iteration_count = cc.iteration_count();
+        hecfda::sampling::DotNetRandom master_seed_list(master_seed);
+        std::vector<int> seeds(static_cast<std::size_t>(iteration_count));
+        for (int i = 0; i < iteration_count; ++i) {
+            seeds[static_cast<std::size_t>(i)] = master_seed_list.internal_sample();
+        }
+
+        Normal standard_normal(0.0, 1.0);
+        for (int j = 0; j < compute_chunks; ++j) {
+            for (int i = 0; i < iteration_count; ++i) {
+                hecfda::model::compute::RandomProvider provider(seeds[static_cast<std::size_t>(i)]);
+                double inv_cdf = standard_normal.inverse_cdf(provider.next_random());
+                spr.add_stage_for_assurance(standard_probability, inv_cdf, i);
+            }
+            spr.put_data_into_histograms();
+        }
+        if (method == "assurance_of_event") {
+            return spr.assurance_of_event(standard_probability, threshold_value);
+        }
+        if (method == "normal_cdf_reference") {
+            return standard_normal.cdf(threshold_value);
+        }
+        FAIL("unknown system_performance_results (rng_conformance) method");
+        return 0.0;
+    }
+
+    if (case_kind == "levee") {
+        std::vector<double> xs = ctor["system_response_xs"].get<std::vector<double>>();
+        std::vector<double> ys = ctor["system_response_ys"].get<std::vector<double>>();
+        std::vector<std::unique_ptr<IDistribution>> failure_probs;
+        for (double y : ys) {
+            failure_probs.push_back(std::make_unique<Deterministic>(y));
+        }
+        UncertainPairedData system_response(xs, std::move(failure_probs));
+        double standard_probability = ctor["standard_probability"].get<double>();
+
+        SystemPerformanceResults spr(std::move(system_response), cc);
+        spr.add_stage_assurance_histogram(standard_probability);
+        for (const auto& o : ctor["stage_observations"]) {
+            spr.add_stage_for_assurance(standard_probability, o["result"].get<double>(), o["iteration"].get<int>());
+        }
+        spr.put_data_into_histograms();
+        if (method == "assurance_of_event") {
+            return spr.assurance_of_event(standard_probability, args[0].get<double>());
+        }
+        FAIL("unknown system_performance_results (levee) method");
+        return 0.0;
+    }
+    FAIL("unknown system_performance_results case_kind");
+    return 0.0;
+}
+
+TEST_CASE("system_performance_results fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/system_performance_results.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "system_performance_results");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_system_performance_results(c, a["method"].get<std::string>(), a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();

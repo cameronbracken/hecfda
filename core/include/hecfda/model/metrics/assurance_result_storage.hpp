@@ -26,19 +26,34 @@ namespace metrics {
 // Transcribed as `int` here.
 //
 // DONE_WITH_CONCERNS (scoped out, not ported; documented per repo convention):
-//  - `internal AssuranceResultStorage(string dummyAsuranceType, double
-//    standardNonExceedanceProbability)`: the "dummy" error-handling ctor. It constructs
-//    `AssuranceHistogram = new DynamicHistogram()`, the C# parameterless "ARBITRARY histogram"
-//    ctor that dynamic_histogram.hpp's own DONE_WITH_CONCERNS explicitly declined to port (a
-//    serialization/placeholder helper, not a data-collection surface). Not needed by this task's
-//    compute path (the public ConvergenceCriteria ctor below). Deferred, not permanently
-//    severed -- revisit if a later task needs an explicit "null"/error sentinel instance.
 //  - `private AssuranceResultStorage(string, double, DynamicHistogram)` and
 //    `WriteToXML()`/`ReadFromXML(XElement)`: the private ctor exists solely to feed ReadFromXML's
 //    reconstruction; both are XML (de)serialization with no equivalent surface in this port
 //    (matches the repo-wide XML severance elsewhere, e.g. convergence_criteria.hpp).
 class AssuranceResultStorage {
    public:
+    // ported from: AssuranceResultStorage.cs `internal AssuranceResultStorage(string
+    // dummyAsuranceType, double standardNonExceedanceProbability)` -- the "dummy"/placeholder
+    // ctor. Originally deferred here (Phase 5 Task 1) as not needed by the compute path; revisited
+    // for Phase 5 Task 2, whose `SystemPerformanceResults()` no-arg ctor needs it to build
+    // placeholder AEP/STAGE entries. C# builds `AssuranceHistogram = new DynamicHistogram()`, the
+    // parameterless "ARBITRARY histogram" ctor (DEFAULT_BIN_WIDTH + a fresh ConvergenceCriteria() +
+    // ten AddObservationToHistogram(0) calls) that dynamic_histogram.hpp's own DONE_WITH_CONCERNS
+    // declined to port as a class member. Reproduced here from OUTSIDE that class using only
+    // DynamicHistogram's already-ported public surface: construct via the (bin_width,
+    // convergence_criteria) 2-arg deferred-min/max ctor, then replay the ten
+    // add_observation_to_histogram(0) calls in the ctor body.
+    AssuranceResultStorage(std::string dummy_assurance_type, double standard_non_exceedance_probability)
+        : standard_non_exceedance_probability_(standard_non_exceedance_probability),
+          temp_results_(),
+          assurance_histogram_(statistics::histograms::DynamicHistogram::DEFAULT_BIN_WIDTH,
+                                statistics::ConvergenceCriteria()),
+          assurance_type_(std::move(dummy_assurance_type)) {
+        for (int i = 0; i < 10; ++i) {
+            assurance_histogram_.add_observation_to_histogram(0);
+        }
+    }
+
     // ported from: AssuranceResultStorage.cs `public AssuranceResultStorage(string assuranceType,
     // double binWidth, ConvergenceCriteria convergenceCriteria, double
     // standardNonExceedanceProbabilityForAssuranceOfTargetOrLevee = 0)` -- the compute ctor. Sizes

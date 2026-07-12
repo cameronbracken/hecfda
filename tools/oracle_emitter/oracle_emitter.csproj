@@ -134,5 +134,18 @@
          no oracle-verifiable computation (a bare enum), so it is ported to C++ directly from the
          pinned source with no emitter/fixture surface. Same auto-pickup as the patched/ files
          above, no explicit Compile Include. -->
+    <!-- Task Phase5T2: SystemPerformanceResults's real source pulls in System.Xml.Linq
+         (WriteToXML/ReadFromXML) plus HEC.MVVMFramework.Base.Events/Model.Messaging (the
+         ReportMessage/ErrorMessage call in GetAssurance) via its `: ValidationErrorLogger` base,
+         neither reachable/needed by this subset-compiled project. patched/SystemPerformanceResults.cs
+         drops the ValidationErrorLogger base, both XML-only private ctors, WriteToXML/ReadFromXML,
+         and GetAssurance's ReportMessage call (keeping its dummy-fallback return); all three public
+         ctors and every other method (AddStageAssuranceHistogram, GetAssuranceOfThresholdHistogram,
+         GetAEPHistogram, AddAEPForAssurance, AddStageForAssurance, MeanAEP, MedianAEP,
+         AEPWithGivenAssurance, AssuranceOfAEP, AssuranceIsConverged, AssuranceTestForConvergence,
+         AssuranceRemainingIterations, AssuranceOfEvent, CalculateAssuranceForLevee,
+         LongTermExceedanceProbability, ParallelResultsAreConverged, Equals,
+         PutDataIntoHistograms) are kept VERBATIM. Same auto-pickup as the patched/ files above, no
+         explicit Compile Include. -->
   </ItemGroup>
 </Project>
