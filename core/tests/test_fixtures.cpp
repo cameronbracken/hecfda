@@ -3684,6 +3684,14 @@ static double run_alternative_comparison_report_results(const json& c, const std
                                                                     ConsequenceType::Damage);
     }
 
+    // Phase 6 Task 7 review fix coverage: get_risk_types(consequence_type) filters
+    // eqad_reduced_results_list_'s consequence_result_list by ConsequenceType (like its three
+    // siblings get_impact_area_ids/get_asset_categories/get_damage_categories) -- this discriminates
+    // that filter against fixture data that mixes Damage and LifeLoss entries.
+    if (method == "get_risk_types_count") {
+        return static_cast<double>(report.get_risk_types(ConsequenceType::Damage).size());
+    }
+
     int alternative_id = args[0].get<int>();
     std::optional<std::string> damage_category = optional_string_arg(args[1]);
     std::optional<std::string> asset_category = optional_string_arg(args[2]);

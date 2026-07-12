@@ -2,7 +2,7 @@
   "target": "alternative_comparison_report_results",
   "kind": "alternative_comparison_report_results",
   "source_test": "HEC.FDA.Model/metrics/AlternativeComparisonReportResults.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real AlternativeComparisonReportResults/AlternativeResults/ScenarioResults/StudyAreaConsequencesByQuantile directly)",
-  "note": "Phase 6 Task 7. Single case constructs an AlternativeComparisonReportResults directly via the internal (withProjectAlternativeResults, withoutProjectAlternativeResults, eqadResults, baseYearEADResults, futureYearEADResults) ctor. `with_project` is a list of two AlternativeResults entries (alternative_id 1 and 2), each built the same way alternative_results.json's cases are: the (StudyAreaConsequencesByQuantile, id, analysisYears, periodOfAnalysis, isNull) 'public for testing' ctor for the AlternativeResults-level `eqad_results` field, then BaseYearScenarioResults/FutureYearScenarioResults assigned from `base_year_impact_areas`/`future_year_impact_areas` (each in the exact impact_area_scenario_results.json construct/consequence_realizations/aep_observations/stage_observations shape, one ImpactAreaScenarioResults per entry, AddResults'd into a fresh ScenarioResults in order -- identical helper reuse to alternative_results.json), and ScenariosAreIdentical=false. `without_project` is one more AlternativeResults built the same way (its own alternative_id is irrelevant -- never read by any delegator under test). `eqad_reduced_results_list`/`base_year_ead_reduced_results_list`/`future_year_ead_reduced_results_list` are each a list of {alternative_id, consequence_results} objects: for each, a StudyAreaConsequencesByQuantile is built via the (int alternativeID) ctor (the ONLY ctor that sets a real, non-zero AlternativeID) then AddExistingConsequenceResultObject-ed with the per-entry AggregatedConsequencesByQuantile results (study_area_consequences_by_quantile.json-shaped, Empirical.SampleMean force-set to each entry's own `sample_mean` field, same convention as alternative_results.json/study_area_consequences_by_quantile.json) -- this is the ONLY construction path in the real C# that produces a StudyAreaConsequencesByQuantile with both a populated ConsequenceResultList AND a meaningful AlternativeID, matching how AlternativeComparisonReport (Task 10, not yet ported) is expected to build these lists incrementally. `method` dispatches (args documented per-assertion below; ConsequenceType.Damage/RiskType.Total implicit at every level, matching how every ScenarioResults realization and reduced-results entry was built): alternative_id-taking methods (`sample_mean_eqad_reduced`/`sample_mean_base_year_ead_reduced`/`sample_mean_future_year_ead_reduced`/`sample_mean_with_project_base_year_ead`/`sample_mean_with_project_future_year_ead`/histogram-sample-mean siblings) take args=[alternative_id, damage_category_or_null, asset_category_or_null, impact_area_id]; the without-project delegators (`sample_mean_without_project_base_year_ead`/`sample_mean_without_project_future_year_ead`) take args=[damage_category_or_null, asset_category_or_null, impact_area_id] (no alternative_id -- they read `_WithoutProjectAlternativeResults` directly, proving the with/without delegation split independent of `get_consequences_reduced_results_for_given_alternative`'s list-selection logic). Exercises both with-project alternatives (1 and 2) against all three reduced-results lists, proving `get_consequences_reduced_results_for_given_alternative`'s per-alternative linear search across each of the three independently-populated lists. All values PIN, gate-captured, never hand-derived (every assertion routes through real ScenarioResults consequence-histogram binning or Empirical stacking, not a simple average of raw inputs).",
+  "note": "Phase 6 Task 7. Single case constructs an AlternativeComparisonReportResults directly via the internal (withProjectAlternativeResults, withoutProjectAlternativeResults, eqadResults, baseYearEADResults, futureYearEADResults) ctor. `with_project` is a list of two AlternativeResults entries (alternative_id 1 and 2), each built the same way alternative_results.json's cases are: the (StudyAreaConsequencesByQuantile, id, analysisYears, periodOfAnalysis, isNull) 'public for testing' ctor for the AlternativeResults-level `eqad_results` field, then BaseYearScenarioResults/FutureYearScenarioResults assigned from `base_year_impact_areas`/`future_year_impact_areas` (each in the exact impact_area_scenario_results.json construct/consequence_realizations/aep_observations/stage_observations shape, one ImpactAreaScenarioResults per entry, AddResults'd into a fresh ScenarioResults in order -- identical helper reuse to alternative_results.json), and ScenariosAreIdentical=false. `without_project` is one more AlternativeResults built the same way (its own alternative_id is irrelevant -- never read by any delegator under test). `eqad_reduced_results_list`/`base_year_ead_reduced_results_list`/`future_year_ead_reduced_results_list` are each a list of {alternative_id, consequence_results} objects: for each, a StudyAreaConsequencesByQuantile is built via the (int alternativeID) ctor (the ONLY ctor that sets a real, non-zero AlternativeID) then AddExistingConsequenceResultObject-ed with the per-entry AggregatedConsequencesByQuantile results (study_area_consequences_by_quantile.json-shaped, Empirical.SampleMean force-set to each entry's own `sample_mean` field, same convention as alternative_results.json/study_area_consequences_by_quantile.json) -- this is the ONLY construction path in the real C# that produces a StudyAreaConsequencesByQuantile with both a populated ConsequenceResultList AND a meaningful AlternativeID, matching how AlternativeComparisonReport (Task 10, not yet ported) is expected to build these lists incrementally. `method` dispatches (args documented per-assertion below; ConsequenceType.Damage/RiskType.Total implicit at every level, matching how every ScenarioResults realization and reduced-results entry was built): alternative_id-taking methods (`sample_mean_eqad_reduced`/`sample_mean_base_year_ead_reduced`/`sample_mean_future_year_ead_reduced`/`sample_mean_with_project_base_year_ead`/`sample_mean_with_project_future_year_ead`/histogram-sample-mean siblings) take args=[alternative_id, damage_category_or_null, asset_category_or_null, impact_area_id]; the without-project delegators (`sample_mean_without_project_base_year_ead`/`sample_mean_without_project_future_year_ead`) take args=[damage_category_or_null, asset_category_or_null, impact_area_id] (no alternative_id -- they read `_WithoutProjectAlternativeResults` directly, proving the with/without delegation split independent of `get_consequences_reduced_results_for_given_alternative`'s list-selection logic). Exercises both with-project alternatives (1 and 2) against all three reduced-results lists, proving `get_consequences_reduced_results_for_given_alternative`'s per-alternative linear search across each of the three independently-populated lists. All values PIN, gate-captured, never hand-derived (every assertion routes through real ScenarioResults consequence-histogram binning or Empirical stacking, not a simple average of raw inputs). `eqad_reduced_results_list` also carries a third, alternative_id-3 entry (never targeted by any alternative_id-keyed assertion) whose consequence_results mix ConsequenceType.Damage/RiskType.Total with ConsequenceType.LifeLoss/RiskType.Fail specifically to discriminate GetRiskTypes(consequenceType)'s ConsequenceType filter: `get_risk_types_count` (args=[]) returns GetRiskTypes(ConsequenceType.Damage).Count, which is 1 (just Total) when the filter is applied and would be 2 (Total, Fail) if the filter were dropped -- catching the ConsequenceType.Damage/LifeLoss confusion between this class's GetRiskTypes and the unrelated, genuinely-unfiltered AlternativeResults.GetRiskTypes().",
   "cases": [
     {
       "name": "two_with_project_alternatives",
@@ -637,6 +637,47 @@
               "sample_mean": 40.0
             }
           ]
+        },
+        {
+          "alternative_id": 3,
+          "consequence_results": [
+            {
+              "damage_category": "Residential",
+              "asset_category": "Structure",
+              "impact_area_id": 1,
+              "consequence_type": "Damage",
+              "risk_type": "Total",
+              "empirical": {
+                "probabilities": [
+                  0.5,
+                  1.0
+                ],
+                "values": [
+                  10,
+                  20
+                ]
+              },
+              "sample_mean": 15.0
+            },
+            {
+              "damage_category": "Residential",
+              "asset_category": "Structure",
+              "impact_area_id": 1,
+              "consequence_type": "LifeLoss",
+              "risk_type": "Fail",
+              "empirical": {
+                "probabilities": [
+                  0.5,
+                  1.0
+                ],
+                "values": [
+                  1,
+                  2
+                ]
+              },
+              "sample_mean": 1.5
+            }
+          ]
         }
       ],
       "base_year_ead_reduced_results_list": [
@@ -941,6 +982,13 @@
             -999
           ],
           "expected": 60,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "get_risk_types_count",
+          "args": [],
+          "expected": 1,
           "mode": "abs",
           "tol": 1e-09
         }

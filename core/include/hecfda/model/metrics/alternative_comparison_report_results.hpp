@@ -46,9 +46,11 @@ namespace metrics {
 // areas are in all three results lists ... We could cycle through each of the three lists, but that
 // seems unnecessary"). Distinct values are collected in first-seen order via a nested nested loop +
 // linear `std::find`, mirroring `AlternativeResults`'s own `get_impact_area_ids`/etc. (LINQ
-// `SelectMany(...).Distinct()` ported the same way there). `get_risk_types`, like
-// `AlternativeResults::get_risk_types`, has NO `ConsequenceType` filter (matches C#'s unfiltered
-// `.Select(...)`).
+// `SelectMany(...).Distinct()` ported the same way there). `get_risk_types`, like its three
+// siblings above, DOES filter by `ConsequenceType`
+// (`.Where(r => r.ConsequenceType == consequenceType)` in C#) -- do not confuse this with the
+// different, genuinely-unfiltered parameterless `AlternativeResults::get_risk_types()` on the
+// unrelated `AlternativeResults` class.
 //
 // `has_reduced_results_of_type`/`get_reduced_alternative_ids`/`get_reduced_impact_area_ids`: all
 // three walk `_BaseYearEADReducedResultsList` THEN `_FutureYearEADReducedResultsList` (C#'s
@@ -61,14 +63,17 @@ namespace metrics {
 // get_base_year_results` -> `_BaseYearEADReducedResultsList`), or future-year EAD reduced
 // (`get_ead_results && !get_base_year_results` -> `_FutureYearEADReducedResultsList`) -- the fourth
 // combination (`!get_ead_results && get_base_year_results`, i.e. "give me base-year results but NOT
-// EAD results") is illogical and throws (`System.ArgumentException` -> `std::invalid_argument`,
-// matching `CategoriedUncertainPairedData::add_curve_realization`'s established ArgumentException
-// mapping). On a miss (no entry in the selected list has a matching AlternativeID), C# returns a
-// dummy `new StudyAreaConsequencesByQuantile()` (`IsNull == true`) after a `ReportMessage(...)`
-// side-channel notification -- SEVERED MVVM (see below); the dummy-on-miss RETURN contract is kept
-// verbatim (this class is copyable, so returning a fresh default-constructed instance by value on a
-// miss costs nothing and matches upstream exactly -- this method never throws on a miss, only on
-// the illogical-combination case above).
+// EAD results") is coded to throw (`System.ArgumentException` -> `std::invalid_argument`, matching
+// `CategoriedUncertainPairedData::add_curve_realization`'s established ArgumentException mapping)
+// -- but the preceding `!get_ead_results` branch already catches both values of
+// get_base_year_results, so this trailing throw is UNREACHABLE dead code in both the C# source and
+// this port; transcribed faithfully rather than removed (see "Faithful upstream bugs" in
+// .claude/CLAUDE.md). On a miss (no entry in the selected list has a matching AlternativeID), C#
+// returns a dummy `new StudyAreaConsequencesByQuantile()` (`IsNull == true`) after a
+// `ReportMessage(...)` side-channel notification -- SEVERED MVVM (see below); the dummy-on-miss
+// RETURN contract is kept verbatim (this class is copyable, so returning a fresh
+// default-constructed instance by value on a miss costs nothing and matches upstream exactly --
+// this method never throws on a miss; the illogical-combination throw above is unreachable).
 //
 // `get_alternative_results` (private, `GetAlternativeResults` in C#) searches
 // `_WithProjectAlternativeResults` by AlternativeID. Unlike the StudyAreaConsequencesByQuantile
@@ -185,13 +190,13 @@ class AlternativeComparisonReportResults {
 
     // ported from: AlternativeComparisonReportResults.cs `public List<RiskType> GetRiskTypes(
     // ConsequenceType consequenceType = ConsequenceType.Damage)`. Distinct RiskType (first-seen
-    // order), NO ConsequenceType filter (matches C#'s unfiltered `.Select(...)`, same as
-    // AlternativeResults::get_risk_types).
+    // order), filtered by ConsequenceType (`.Where(r => r.ConsequenceType == consequenceType)`),
+    // same filter form as get_impact_area_ids/get_asset_categories/get_damage_categories above.
     std::vector<RiskType> get_risk_types(ConsequenceType consequence_type = ConsequenceType::Damage) const {
-        (void)consequence_type;
         std::vector<RiskType> types;
         for (const StudyAreaConsequencesByQuantile& x : eqad_reduced_results_list_) {
             for (const AggregatedConsequencesByQuantile& r : x.consequence_result_list()) {
+                if (r.consequence_type() != consequence_type) continue;
                 if (std::find(types.begin(), types.end(), r.risk_type()) == types.end()) {
                     types.push_back(r.risk_type());
                 }

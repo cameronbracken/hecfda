@@ -1717,6 +1717,16 @@ namespace oracle_emitter {
         return report.SampleMeanWithoutProjectFutureYearEAD(ia0, dc0, ac0, ConsequenceType.Damage);
       }
 
+      // Phase 6 Task 7 review fix coverage: GetRiskTypes(consequenceType) filters
+      // _EqadReducedResultsList's ConsequenceResultList by ConsequenceType (like its three
+      // siblings GetImpactAreaIDs/GetAssetCategories/GetDamageCategories), so the count returned
+      // here for ConsequenceType.Damage must be strictly smaller than the unfiltered count when
+      // the fixture data mixes Damage and LifeLoss entries -- that difference is what the C++
+      // fixture pins to catch a missing filter.
+      if (method == "get_risk_types_count") {
+        return (double)report.GetRiskTypes(ConsequenceType.Damage).Count;
+      }
+
       int alternativeID = argsEl[0].GetInt32();
       string damageCategory = OptionalString(argsEl[1]);
       string assetCategory = OptionalString(argsEl[2]);
