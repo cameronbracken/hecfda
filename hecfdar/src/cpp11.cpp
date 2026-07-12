@@ -47,15 +47,31 @@ extern "C" SEXP _hecfdar_hecfda_structure(SEXP oc_name, SEXP oc_damage_category,
     return cpp11::as_sexp(hecfda_structure(cpp11::as_cpp<cpp11::decay_t<std::string>>(oc_name), cpp11::as_cpp<cpp11::decay_t<std::string>>(oc_damage_category), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(struct_depths), cpp11::as_cpp<cpp11::decay_t<cpp11::strings>>(struct_types), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(struct_params), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(content_depths), cpp11::as_cpp<cpp11::decay_t<cpp11::strings>>(content_types), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(content_params), cpp11::as_cpp<cpp11::decay_t<std::string>>(ffe_dist), cpp11::as_cpp<cpp11::decay_t<double>>(ffe_std_or_min), cpp11::as_cpp<cpp11::decay_t<double>>(ffe_max), cpp11::as_cpp<cpp11::decay_t<std::string>>(sv_dist), cpp11::as_cpp<cpp11::decay_t<double>>(sv_std_or_min), cpp11::as_cpp<cpp11::decay_t<double>>(sv_max), cpp11::as_cpp<cpp11::decay_t<std::string>>(csvr_dist), cpp11::as_cpp<cpp11::decay_t<double>>(csvr_std_or_min), cpp11::as_cpp<cpp11::decay_t<double>>(csvr_central), cpp11::as_cpp<cpp11::decay_t<double>>(csvr_max), cpp11::as_cpp<cpp11::decay_t<int>>(sample_iteration), cpp11::as_cpp<cpp11::decay_t<bool>>(sample_compute_is_deterministic), cpp11::as_cpp<cpp11::decay_t<std::string>>(fid), cpp11::as_cpp<cpp11::decay_t<double>>(first_floor_elevation), cpp11::as_cpp<cpp11::decay_t<double>>(val_struct), cpp11::as_cpp<cpp11::decay_t<std::string>>(st_damcat), cpp11::as_cpp<cpp11::decay_t<std::string>>(occtype), cpp11::as_cpp<cpp11::decay_t<int>>(impact_area_id), cpp11::as_cpp<cpp11::decay_t<double>>(val_cont), cpp11::as_cpp<cpp11::decay_t<double>>(val_vehic), cpp11::as_cpp<cpp11::decay_t<double>>(val_other), cpp11::as_cpp<cpp11::decay_t<double>>(ground_elevation), cpp11::as_cpp<cpp11::decay_t<std::string>>(method), cpp11::as_cpp<cpp11::decay_t<double>>(wse)));
   END_CPP11
 }
+// glue.cpp
+double hecfda_consequence_result(std::string damage_category, cpp11::list increments, std::string method, std::string compare_damage_category, cpp11::list compare_increments);
+extern "C" SEXP _hecfdar_hecfda_consequence_result(SEXP damage_category, SEXP increments, SEXP method, SEXP compare_damage_category, SEXP compare_increments) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(hecfda_consequence_result(cpp11::as_cpp<cpp11::decay_t<std::string>>(damage_category), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(increments), cpp11::as_cpp<cpp11::decay_t<std::string>>(method), cpp11::as_cpp<cpp11::decay_t<std::string>>(compare_damage_category), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(compare_increments)));
+  END_CPP11
+}
+// glue.cpp
+double hecfda_impact_area_stage_damage(int impact_area_id, std::string damage_category, std::string asset_category, double hydraulic_stage1, double hydraulic_stage2, bool use_reg_unreg, double stage);
+extern "C" SEXP _hecfdar_hecfda_impact_area_stage_damage(SEXP impact_area_id, SEXP damage_category, SEXP asset_category, SEXP hydraulic_stage1, SEXP hydraulic_stage2, SEXP use_reg_unreg, SEXP stage) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(hecfda_impact_area_stage_damage(cpp11::as_cpp<cpp11::decay_t<int>>(impact_area_id), cpp11::as_cpp<cpp11::decay_t<std::string>>(damage_category), cpp11::as_cpp<cpp11::decay_t<std::string>>(asset_category), cpp11::as_cpp<cpp11::decay_t<double>>(hydraulic_stage1), cpp11::as_cpp<cpp11::decay_t<double>>(hydraulic_stage2), cpp11::as_cpp<cpp11::decay_t<bool>>(use_reg_unreg), cpp11::as_cpp<cpp11::decay_t<double>>(stage)));
+  END_CPP11
+}
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
-    {"_hecfdar_hecfda_dist_eval",            (DL_FUNC) &_hecfdar_hecfda_dist_eval,             4},
-    {"_hecfdar_hecfda_paired_f",             (DL_FUNC) &_hecfdar_hecfda_paired_f,              4},
-    {"_hecfdar_hecfda_rng_sequence",         (DL_FUNC) &_hecfdar_hecfda_rng_sequence,          2},
-    {"_hecfdar_hecfda_structure",            (DL_FUNC) &_hecfdar_hecfda_structure,            32},
-    {"_hecfdar_hecfda_upd_sample_integrate", (DL_FUNC) &_hecfdar_hecfda_upd_sample_integrate,  4},
-    {"_hecfdar_hecfda_value_uncertainty",    (DL_FUNC) &_hecfdar_hecfda_value_uncertainty,     5},
+    {"_hecfdar_hecfda_consequence_result",       (DL_FUNC) &_hecfdar_hecfda_consequence_result,        5},
+    {"_hecfdar_hecfda_dist_eval",                (DL_FUNC) &_hecfdar_hecfda_dist_eval,                 4},
+    {"_hecfdar_hecfda_impact_area_stage_damage", (DL_FUNC) &_hecfdar_hecfda_impact_area_stage_damage,  7},
+    {"_hecfdar_hecfda_paired_f",                 (DL_FUNC) &_hecfdar_hecfda_paired_f,                  4},
+    {"_hecfdar_hecfda_rng_sequence",             (DL_FUNC) &_hecfdar_hecfda_rng_sequence,              2},
+    {"_hecfdar_hecfda_structure",                (DL_FUNC) &_hecfdar_hecfda_structure,                32},
+    {"_hecfdar_hecfda_upd_sample_integrate",     (DL_FUNC) &_hecfdar_hecfda_upd_sample_integrate,      4},
+    {"_hecfdar_hecfda_value_uncertainty",        (DL_FUNC) &_hecfdar_hecfda_value_uncertainty,         5},
     {NULL, NULL, 0}
 };
 }

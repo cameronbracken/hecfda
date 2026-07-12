@@ -16,6 +16,9 @@ using HEC.FDA.Model.compute;
 using HEC.FDA.Model.utilities;
 using HEC.FDA.Model.extensions;
 using HEC.FDA.Model.structures;
+using HEC.FDA.Model.metrics;
+using HEC.FDA.Model.hydraulics;
+using HEC.FDA.Model.stageDamage;
 
 namespace oracle_emitter {
   class Program {
@@ -476,15 +479,45 @@ namespace oracle_emitter {
         ? new ValueRatioWithUncertainty(csvrDist, csvrStdOrMin, csvrCentral, csvrMax.GetDouble())
         : new ValueRatioWithUncertainty(csvrDist, csvrStdOrMin, csvrCentral);
 
-      return OccupancyType.Builder()
+      var builder = OccupancyType.Builder()
         .WithName(c.GetProperty("name").GetString())
         .WithDamageCategory(c.GetProperty("damage_category").GetString())
         .WithStructureDepthPercentDamage(structUpd)
         .WithContentDepthPercentDamage(contentUpd)
         .WithFirstFloorElevationUncertainty(ffe)
         .WithStructureValueUncertainty(sv)
-        .WithContentToStructureValueRatio(csvr)
-        .Build();
+        .WithContentToStructureValueRatio(csvr);
+
+      // Optional: vehicle/other depth-percent-damage + value uncertainty (Phase 4 Task 2's
+      // inventory_compute_damages fixture is the first construct to use these; occupancy_type.json
+      // and inventory.json's existing cases omit them, matching OccupancyType's C# default of
+      // ComputeVehicleDamage/ComputeOtherDamage == false until the corresponding With* is called).
+      if (c.TryGetProperty("vehicle_damages", out var vehicleDamagesEl)) {
+        IDistribution[] vehicleDamages = DistArray(vehicleDamagesEl);
+        builder = builder.WithVehicleDepthPercentDamage(new UncertainPairedData(depths, vehicleDamages, md));
+      }
+      if (c.TryGetProperty("other_damages", out var otherDamagesEl)) {
+        IDistribution[] otherDamages = DistArray(otherDamagesEl);
+        builder = builder.WithOtherDepthPercentDamage(new UncertainPairedData(depths, otherDamages, md));
+      }
+      if (c.TryGetProperty("vehicle_value", out var vvC)) {
+        var vvDist = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), vvC.GetProperty("dist").GetString());
+        double vvStdOrMin = vvC.GetProperty("std_or_min").GetDouble();
+        var vv = vvC.TryGetProperty("max", out var vvMax)
+          ? new ValueUncertainty(vvDist, vvStdOrMin, vvMax.GetDouble())
+          : new ValueUncertainty(vvDist, vvStdOrMin);
+        builder = builder.WithVehicleValueUncertainty(vv);
+      }
+      if (c.TryGetProperty("other_value", out var ovC)) {
+        var ovDist = (IDistributionEnum)Enum.Parse(typeof(IDistributionEnum), ovC.GetProperty("dist").GetString());
+        double ovStdOrMin = ovC.GetProperty("std_or_min").GetDouble();
+        var ov = ovC.TryGetProperty("max", out var ovMax)
+          ? new ValueUncertainty(ovDist, ovStdOrMin, ovMax.GetDouble())
+          : new ValueUncertainty(ovDist, ovStdOrMin);
+        builder = builder.WithOtherValueUncertainty(ov);
+      }
+
+      return builder.Build();
     }
     static object EvalOccupancyType(JsonElement caseEl, JsonElement assertionEl, string method, JsonElement argsEl) {
       var c = caseEl.GetProperty("construct");
@@ -640,6 +673,399 @@ namespace oracle_emitter {
       throw new Exception("unknown inventory method: " + method);
     }
 
+    // Inventory.ComputeDamages/AggregateResults (Phase 4 Task 2): re-added to patched/Inventory.cs
+    // (Phase 3 severed them, pending ConsequenceResult -- Task 1). `construct` extends MakeInventory's
+    // shape (occ_types/structures/[price_index]) with `wses` ([profile][structure] float matrix),
+    // `analysis_year`, `damage_category`, and `sample` ([iteration, computeIsDeterministic] fed to
+    // SampleOccupancyTypes). Every assertion for a case builds a fresh Inventory + samples once, then
+    // calls ComputeDamages(wses, analysisYear, damageCategory, det) and returns one of the four
+    // per-profile damage arrays (`compute_damages_struct/_content/_vehicle/_other`) -- the true
+    // struct/content/vehicle/other totals per ConsequenceResult, in that semantic order (see
+    // patched/Inventory.cs's ComputeDamages for the faithful store/AggregateResults-argument swap
+    // this fixture is designed to lock).
+    static object EvalInventoryComputeDamages(JsonElement caseEl, string method) {
+      var c = caseEl.GetProperty("construct");
+      var inv = MakeInventory(c);
+      var sampleArgs = c.GetProperty("sample");
+      var det = inv.SampleOccupancyTypes(sampleArgs[0].GetInt64(), sampleArgs[1].GetDouble() != 0.0);
+      var wses = new List<float[]>();
+      foreach (var pf in c.GetProperty("wses").EnumerateArray()) {
+        wses.Add(pf.EnumerateArray().Select(x => (float)x.GetDouble()).ToArray());
+      }
+      int analysisYear = c.GetProperty("analysis_year").GetInt32();
+      string damageCategory = c.GetProperty("damage_category").GetString();
+      var results = inv.ComputeDamages(wses, analysisYear, damageCategory, det);
+      if (method == "compute_damages_struct") return results.Select(r => r.StructureDamage).ToArray();
+      if (method == "compute_damages_content") return results.Select(r => r.ContentDamage).ToArray();
+      if (method == "compute_damages_vehicle") return results.Select(r => r.VehicleDamage).ToArray();
+      if (method == "compute_damages_other") return results.Select(r => r.OtherDamage).ToArray();
+      throw new Exception("unknown inventory_compute_damages method: " + method);
+    }
+
+    // ConsequenceResult (Phase 4 Task 1) is a plain per-structure damage accumulator, not an
+    // IDistribution, constructed directly here like ValueUncertainty/Structure above. `construct`
+    // is {"damage_category": "<name>"}; `increments` is a list of [structureDamage, contentDamage,
+    // vehicleDamage, otherDamage] tuples applied in order via IncrementConsequence. `method`
+    // dispatches one of the eight accessors; the four *Quantity accessors return int, boxed as
+    // double via implicit cast for the shared double-comparison harness. `equals` builds a second
+    // ConsequenceResult from the case's `compare_to` block (same {construct, increments} shape)
+    // and returns 1.0/0.0 for cr.Equals(cr2). ConsequenceResult.cs is compiled directly into this
+    // project (see the csproj `<Compile Include=...>`, not referenced via a built assembly), so
+    // the `internal` Equals is directly accessible -- no reflection needed.
+    static object EvalConsequenceResult(JsonElement caseEl, string method) {
+      var c = caseEl.GetProperty("construct");
+      var cr = new ConsequenceResult(c.GetProperty("damage_category").GetString());
+      foreach (var inc in caseEl.GetProperty("increments").EnumerateArray()) {
+        cr.IncrementConsequence(D(inc[0]), D(inc[1]), D(inc[2]), D(inc[3]));
+      }
+      if (method == "structure_damage") return cr.StructureDamage;
+      if (method == "content_damage") return cr.ContentDamage;
+      if (method == "vehicle_damage") return cr.VehicleDamage;
+      if (method == "other_damage") return cr.OtherDamage;
+      if (method == "damaged_structures_quantity") return (double)cr.DamagedStructuresQuantity;
+      if (method == "damaged_contents_quantity") return (double)cr.DamagedContentsQuantity;
+      if (method == "damaged_vehicles_quantity") return (double)cr.DamagedVehiclesQuantity;
+      if (method == "damaged_others_quantity") return (double)cr.DamagedOthersQuantity;
+      if (method == "equals") {
+        var c2 = caseEl.GetProperty("compare_to").GetProperty("construct");
+        var cr2 = new ConsequenceResult(c2.GetProperty("damage_category").GetString());
+        foreach (var inc in caseEl.GetProperty("compare_to").GetProperty("increments").EnumerateArray()) {
+          cr2.IncrementConsequence(D(inc[0]), D(inc[1]), D(inc[2]), D(inc[3]));
+        }
+        return cr.Equals(cr2) ? 1.0 : 0.0;
+      }
+      throw new Exception("unknown consequence_result method: " + method);
+    }
+
+    // HydraulicProfiles (Phase 4 Task 5): the hydraulics-as-arrays input boundary +
+    // CorrectDryStructureWSEs. The patched/HydraulicDataset.cs static methods reproduce the
+    // pure-numeric correction with no disk-backed IHydraulicProfile objects. `construct` is
+    // {probabilities, ground_elevations, wses_by_profile} ([profile][structure] raw WSEs).
+    // "profile_probabilities" (args []) returns `probabilities` unchanged (an ordering sanity
+    // check); "get_corrected_wses" (args []) runs HydraulicDataset.CorrectAllProfiles (the
+    // per-profile driving loop from GetHydraulicDatasetInFloatsWithProbabilities, calling
+    // CorrectDryStructureWSEs against each next profile, then the last profile against
+    // groundElevs alone) and returns the corrected [profile][structure] matrix as nested
+    // double[][] (JSON nested arrays, matching the fixture's "matrix" mode expected shape).
+    static object EvalHydraulicProfiles(JsonElement caseEl, string method) {
+      var c = caseEl.GetProperty("construct");
+      double[] probabilities = DA(c.GetProperty("probabilities"));
+      if (method == "profile_probabilities") return probabilities;
+      if (method == "get_corrected_wses") {
+        var waterData = new List<float[]>();
+        foreach (var pf in c.GetProperty("wses_by_profile").EnumerateArray()) {
+          waterData.Add(pf.EnumerateArray().Select(x => (float)x.GetDouble()).ToArray());
+        }
+        float[] groundElevs = c.GetProperty("ground_elevations").EnumerateArray()
+            .Select(x => (float)x.GetDouble()).ToArray();
+        var corrected = HydraulicDataset.CorrectAllProfiles(waterData, groundElevs);
+        return corrected.Select(row => row.Select(v => (double)v).ToArray()).ToArray();
+      }
+      throw new Exception("unknown hydraulic_profiles method: " + method);
+    }
+
+    // ImpactAreaStageDamage GEOMETRY (Phase 4 Task 6) -- built from patched/ImpactAreaStageDamage.cs
+    // (see that file's header for the patch rationale: HydraulicDataset -> List<double>
+    // _ProfileProbabilities, MVVM base + ReportMessage severed to thrown exceptions, Compute()/CSV
+    // methods dropped as out of this task's scope). Two case shapes: (a) 'extrapolate_from_above'/
+    // 'extrapolate_from_below' call the two public static helpers directly, no ImpactAreaStageDamage
+    // construction. (b) 'tractable_geometry' builds a tractable 2-structure Residential Inventory
+    // (mirroring TractableStageDamageTests.cs's residential occ-type/structure data -- content is
+    // NOT read by any geometry method, see fixtures/stage_damage/stage_damage_geometry.json's note)
+    // + a graphical STAGE frequency (UsingStagesNotFlows=true) over `probabilities`/
+    // `graphical_stages` with `equivalent_record_length`, and mock per-profile WSEs built the same
+    // way TractableStageDamageTests.ComputeStagesAtStructures does (profile 0 = {hydraulic_stage1,
+    // hydraulic_stage2}, each subsequent profile = previous + 1), one profile per `probabilities`
+    // entry -- feeding `_ProfileProbabilities` directly with `probabilities` (this patch's
+    // HydraulicDataset replacement).
+    static Inventory MakeTractableResidentialInventory(int impactAreaID) {
+      double[] depths = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+      IDistribution[] structDamages = { new Deterministic(0), new Deterministic(10), new Deterministic(20), new Deterministic(30), new Deterministic(40), new Deterministic(50), new Deterministic(60), new Deterministic(70), new Deterministic(80), new Deterministic(90), new Deterministic(100) };
+      IDistribution[] contentDamages = { new Deterministic(0), new Deterministic(5), new Deterministic(15), new Deterministic(25), new Deterministic(35), new Deterministic(45), new Deterministic(55), new Deterministic(65), new Deterministic(75), new Deterministic(85), new Deterministic(95) };
+      var md = new CurveMetaData("x", "y", "oracle");
+      var structUpd = new UncertainPairedData(depths, structDamages, md);
+      var contentUpd = new UncertainPairedData(depths, contentDamages, md);
+
+      var residential = OccupancyType.Builder()
+        .WithName("Residential")
+        .WithDamageCategory("Residential")
+        .WithStructureDepthPercentDamage(structUpd)
+        .WithContentDepthPercentDamage(contentUpd)
+        .WithContentToStructureValueRatio(new ValueRatioWithUncertainty(50))
+        .Build();
+
+      var occTypes = new Dictionary<string, OccupancyType> { { "Residential", residential } };
+      var structures = new List<Structure> {
+        new Structure("1", firstFloorElevation: 14, val_struct: 100, st_damcat: "Residential", occtype: "Residential", impactAreaID: impactAreaID, groundElevation: 12),
+        new Structure("2", firstFloorElevation: 15, val_struct: 200, st_damcat: "Residential", occtype: "Residential", impactAreaID: impactAreaID, groundElevation: 12),
+      };
+      return new Inventory(occTypes, structures);
+    }
+
+    static object EvalStageDamageGeometry(JsonElement caseEl, string method, JsonElement argsEl) {
+      if (method == "extrapolate_from_above") {
+        float[] input = argsEl[0].EnumerateArray().Select(x => (float)x.GetDouble()).ToArray();
+        float upperInterval = (float)D(argsEl[1]);
+        int stepCount = argsEl[2].GetInt32();
+        return ImpactAreaStageDamage.ExtrapolateFromAboveAtIndexLocation(input, upperInterval, stepCount).Select(v => (double)v).ToArray();
+      }
+      if (method == "extrapolate_from_below") {
+        float[] input = argsEl[0].EnumerateArray().Select(x => (float)x.GetDouble()).ToArray();
+        float interval = (float)D(argsEl[1]);
+        int i = argsEl[2].GetInt32();
+        int numInterpolated = argsEl[3].GetInt32();
+        return ImpactAreaStageDamage.ExtrapolateFromBelowStagesAtIndexLocation(input, interval, i, numInterpolated).Select(v => (double)v).ToArray();
+      }
+
+      var c = caseEl.GetProperty("construct");
+      int impactAreaID = c.GetProperty("impact_area_id").GetInt32();
+      double[] probabilities = DA(c.GetProperty("probabilities"));
+      double[] graphicalStages = DA(c.GetProperty("graphical_stages"));
+      int erl = c.GetProperty("equivalent_record_length").GetInt32();
+      float stage1 = (float)c.GetProperty("hydraulic_stage1").GetDouble();
+      float stage2 = (float)c.GetProperty("hydraulic_stage2").GetDouble();
+
+      var stageFrequencyMd = new CurveMetaData("probability", "stages", "graphical stage frequency");
+      var stageFrequency = new GraphicalUncertainPairedData(probabilities, graphicalStages, erl, stageFrequencyMd, usingStagesNotFlows: true);
+
+      var inventory = MakeTractableResidentialInventory(impactAreaID);
+      // hydraulic_stage1/hydraulic_stage2 (mirroring TractableStageDamageTests.
+      // ComputeStagesAtStructures's mock per-structure WSEs) are accepted above for fixture-shape
+      // parity with the C++ test's mock HydraulicProfiles construction, but are NOT read here:
+      // no geometry method (verified against the C# source) reads per-profile WSE values, only
+      // _ProfileProbabilities -- see patched/ImpactAreaStageDamage.cs's header.
+      _ = stage1;
+      _ = stage2;
+
+      var impactAreaStageDamage = new ImpactAreaStageDamage(impactAreaID, inventory, probabilities.ToList(), new List<float[]>(), analysisYear: 9999,
+        analyticalFlowFrequency: null, graphicalFrequency: stageFrequency, dischargeStage: null, unregulatedRegulated: null, usingMockData: true);
+
+      if (method == "compute_stages_at_index_location") return impactAreaStageDamage.ComputeStagesAtIndexLocation(probabilities.ToList());
+      if (method == "bottom_extrapolation_points") return (double)impactAreaStageDamage.BottomExtrapolationPoints;
+      if (method == "central_interpolation_points") return (double)impactAreaStageDamage.CentralInterpolationPoints;
+      if (method == "top_extrapolation_points") return (double)impactAreaStageDamage.TopExtrapolationPoints;
+      if (method == "min_stage_for_area") return impactAreaStageDamage.MinStageForArea;
+      if (method == "max_stage_for_area") return impactAreaStageDamage.MaxStageForArea;
+      throw new Exception("unknown stage_damage_geometry method: " + method);
+    }
+
+    // ImpactAreaStageDamage.Compute() (Phase 4 Task 7, the headline oracle) -- reproduces
+    // TractableStageDamageTests.TrackStageDamageTest. MakeTractableCommercialInventory mirrors
+    // MakeTractableResidentialInventory above (fid 3/4, FFE 17/18, val 300/400, Commercial occ type
+    // CSVR 120, reusing residentialContentAndCommercialStructureDamage {0,5,15,...,95} as the
+    // COMMERCIAL STRUCTURE curve, matching TractableStageDamageTests' array reuse verbatim).
+    static Inventory MakeTractableCommercialInventory(int impactAreaID) {
+      double[] depths = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+      IDistribution[] structDamages = { new Deterministic(0), new Deterministic(5), new Deterministic(15), new Deterministic(25), new Deterministic(35), new Deterministic(45), new Deterministic(55), new Deterministic(65), new Deterministic(75), new Deterministic(85), new Deterministic(95) };
+      IDistribution[] contentDamages = { new Deterministic(0), new Deterministic(0), new Deterministic(10), new Deterministic(20), new Deterministic(30), new Deterministic(40), new Deterministic(50), new Deterministic(60), new Deterministic(70), new Deterministic(80), new Deterministic(90) };
+      var md = new CurveMetaData("x", "y", "oracle");
+      var structUpd = new UncertainPairedData(depths, structDamages, md);
+      var contentUpd = new UncertainPairedData(depths, contentDamages, md);
+
+      var commercial = OccupancyType.Builder()
+        .WithName("Commercial")
+        .WithDamageCategory("Commercial")
+        .WithStructureDepthPercentDamage(structUpd)
+        .WithContentDepthPercentDamage(contentUpd)
+        .WithContentToStructureValueRatio(new ValueRatioWithUncertainty(120))
+        .Build();
+
+      var occTypes = new Dictionary<string, OccupancyType> { { "Commercial", commercial } };
+      var structures = new List<Structure> {
+        new Structure("3", firstFloorElevation: 17, val_struct: 300, st_damcat: "Commercial", occtype: "Commercial", impactAreaID: impactAreaID, groundElevation: 12),
+        new Structure("4", firstFloorElevation: 18, val_struct: 400, st_damcat: "Commercial", occtype: "Commercial", impactAreaID: impactAreaID, groundElevation: 12),
+      };
+      return new Inventory(occTypes, structures);
+    }
+
+    // Shared tractable-ImpactAreaStageDamage construction helper (Phase 4 Task 7 originally,
+    // factored out in Task 8 so EvalScenarioStageDamage's `construct.impact_areas` list can build
+    // each entry the identical way EvalImpactAreaStageDamage does). `iaEl` is one
+    // {impact_area_id, damage_category, hydraulic_stage1, hydraulic_stage2, use_reg_unreg} object
+    // (asset_category is a selection key, not a construction input, so it is read by the caller,
+    // not here).
+    static ImpactAreaStageDamage BuildImpactAreaStageDamageFromJson(JsonElement iaEl) {
+      int impactAreaID = iaEl.GetProperty("impact_area_id").GetInt32();
+      string damageCategory = iaEl.GetProperty("damage_category").GetString();
+      float stage1 = (float)iaEl.GetProperty("hydraulic_stage1").GetDouble();
+      float stage2 = (float)iaEl.GetProperty("hydraulic_stage2").GetDouble();
+      bool useRegUnreg = iaEl.GetProperty("use_reg_unreg").GetBoolean();
+
+      double[] probabilities = { .5, .2, .1, .04, .02, .01, .004, .002 };
+      var inventory = damageCategory == "Residential" ? MakeTractableResidentialInventory(impactAreaID) : MakeTractableCommercialInventory(impactAreaID);
+      var wsesByProfile = ComputeStagesAtStructures(stage1, stage2, probabilities);
+
+      double[] graphicalStages = { 12, 13, 14, 15, 16, 17, 18, 19 };
+      var stageFrequencyMd = new CurveMetaData("probability", "stages", "graphical stage frequency");
+      var stageFrequency = new GraphicalUncertainPairedData(probabilities, graphicalStages, 50, stageFrequencyMd, usingStagesNotFlows: true);
+
+      double[] inflows = { 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900 };
+      var flowFrequencyMd = new CurveMetaData("probability", "discharge", "graphical flow frequency");
+      var flowFrequency = new GraphicalUncertainPairedData(probabilities, inflows, 50, flowFrequencyMd, usingStagesNotFlows: false);
+
+      IDistribution[] outflows = { new Deterministic(120), new Deterministic(130), new Deterministic(140), new Deterministic(150), new Deterministic(160), new Deterministic(170), new Deterministic(180), new Deterministic(190) };
+      var unregRegMd = new CurveMetaData("unregulated", "regulated", "reg unreg function");
+      var unregReg = new UncertainPairedData(inflows, outflows, unregRegMd);
+
+      double[] flows = { 120, 130, 140, 150, 160, 170, 180, 190 };
+      IDistribution[] stages = { new Deterministic(12), new Deterministic(13), new Deterministic(14), new Deterministic(15), new Deterministic(16), new Deterministic(17), new Deterministic(18), new Deterministic(19) };
+      var dischargeStageMd = new CurveMetaData("discharge", "stage", "stage discharge function");
+      var dischargeStage = new UncertainPairedData(flows, stages, dischargeStageMd);
+
+      return new ImpactAreaStageDamage(impactAreaID, inventory, probabilities.ToList(), wsesByProfile, analysisYear: 9999,
+        analyticalFlowFrequency: null,
+        graphicalFrequency: useRegUnreg ? flowFrequency : stageFrequency,
+        dischargeStage: useRegUnreg ? dischargeStage : null,
+        unregulatedRegulated: useRegUnreg ? unregReg : null,
+        usingMockData: true);
+    }
+
+    static object EvalImpactAreaStageDamage(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      string damageCategory = c.GetProperty("damage_category").GetString();
+      string assetCategory = c.GetProperty("asset_category").GetString();
+      var impactAreaStageDamage = BuildImpactAreaStageDamageFromJson(c);
+
+      var (damageUpds, _) = impactAreaStageDamage.Compute(computeIsDeterministic: true);
+      UncertainPairedData target = damageUpds.FirstOrDefault(u => u.CurveMetaData.DamageCategory == damageCategory && u.CurveMetaData.AssetCategory == assetCategory);
+      if (target == null) throw new Exception($"impact_area_stage_damage: no UncertainPairedData for damage_category={damageCategory}, asset_category={assetCategory}");
+      IPairedData sampled = target.SamplePairedData(iterationNumber: 1, retrieveDeterministicRepresentation: true);
+
+      if (method == "f") return sampled.f(D(argsEl[0]));
+      throw new Exception("unknown impact_area_stage_damage method: " + method);
+    }
+
+    // ScenarioStageDamage.Compute() (Phase 4 Task 8) -- the thin outer loop wrapping Task 7's
+    // ImpactAreaStageDamage.Compute() across every impact area, built from
+    // patched/ScenarioStageDamage.cs (CSV/ProgressReporter/Stopwatch dropped, the Compute() loop
+    // itself verbatim -- see that file's header). `construct.impact_areas` is a list of the same
+    // shape EvalImpactAreaStageDamage's `construct` uses, one entry per impact area, each built via
+    // the shared BuildImpactAreaStageDamageFromJson helper above. `select` (case-level default,
+    // overridable per assertion via the assertion's own `select`) is
+    // {impact_area_id, damage_category, asset_category}, identifying which UncertainPairedData in
+    // the concatenated Item1 (damage) result list `method: 'f'` (args [stage]) samples and
+    // evaluates. `method: 'result_count'` (args []) returns the total Item1 list length, confirming
+    // the AddRange-equivalent concatenation across impact areas.
+    static object EvalScenarioStageDamage(JsonElement caseEl, JsonElement assertionEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var impactAreaStageDamages = c.GetProperty("impact_areas").EnumerateArray()
+          .Select(BuildImpactAreaStageDamageFromJson).ToList();
+      var scenario = new ScenarioStageDamage(impactAreaStageDamages);
+      var (damageUpds, _) = scenario.Compute(computeIsDeterministic: true);
+
+      if (method == "result_count") return (double)damageUpds.Count;
+      if (method == "f") {
+        JsonElement sel = assertionEl.TryGetProperty("select", out var selEl) ? selEl : caseEl.GetProperty("select");
+        int impactAreaID = sel.GetProperty("impact_area_id").GetInt32();
+        string damageCategory = sel.GetProperty("damage_category").GetString();
+        string assetCategory = sel.GetProperty("asset_category").GetString();
+        UncertainPairedData target = damageUpds.FirstOrDefault(u =>
+            u.CurveMetaData.ImpactAreaID == impactAreaID &&
+            u.CurveMetaData.DamageCategory == damageCategory &&
+            u.CurveMetaData.AssetCategory == assetCategory);
+        if (target == null) throw new Exception($"scenario_stage_damage: no UncertainPairedData for impact_area_id={impactAreaID}, damage_category={damageCategory}, asset_category={assetCategory}");
+        IPairedData sampled = target.SamplePairedData(iterationNumber: 1, retrieveDeterministicRepresentation: true);
+        return sampled.f(D(argsEl[0]));
+      }
+      throw new Exception("unknown scenario_stage_damage method: " + method);
+    }
+
+    // ported from: TractableStageDamageTests.cs's ComputeStagesAtStructures(stage1, stage2):
+    // profile 0 = {stage1, stage2}; each subsequent profile's per-structure WSE = previous + 1.
+    // One profile per `probabilities` entry.
+    static List<float[]> ComputeStagesAtStructures(float stage1, float stage2, double[] probabilities) {
+      List<float[]> stages = new() { new float[] { stage1, stage2 } };
+      for (int i = 0; i < probabilities.Length - 1; i++) {
+        float[] previous = stages[i];
+        stages.Add(new float[] { previous[0] + 1, previous[1] + 1 });
+      }
+      return stages;
+    }
+
+    // AggregatedConsequencesBinned (Phase 4 Task 3) is the histogram-staging Monte Carlo
+    // accumulator -- built from patched/AggregatedConsequencesBinned.cs (see that file's header
+    // for why it's a patched local copy: WriteToXML/ReadFromXML/
+    // ConvertToSingleEmpiricalDistributionOfConsequences dropped, everything else verbatim).
+    // `construct` is {damage_category, asset_category, convergence: {min_iterations,
+    // max_iterations}, impact_area_id, consequence_type, risk_type}, matching the
+    // (string, string, ConvergenceCriteria, int, ConsequenceType, RiskType) compute ctor;
+    // ConvergenceCriteria uses the 2-arg (minIterations, maxIterations) ctor, same as
+    // EvalInventory's `generate_then_sample_struct_yvals` case. `realizations` is a list of
+    // {iteration, damage, count} applied in order via AddConsequenceRealization before a single
+    // PutDataIntoHistogram() call; one object is built and staged per case, shared across all of
+    // that case's assertions (mirrors run_aggregated_consequences_binned in test_fixtures.cpp).
+    // `method` dispatches SampleMeanExpectedAnnualConsequences (args []),
+    // ConsequenceExceededWithProbabilityQ (args [q]), or QuantityExceededWithProbabilityQ
+    // (args [q]) -- all three are `internal`, but Program.cs is compiled directly against
+    // patched/AggregatedConsequencesBinned.cs (not a built assembly), so no reflection is needed.
+    static object EvalAggregatedConsequencesBinned(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+      var consequenceType = Enum.Parse<ConsequenceType>(c.GetProperty("consequence_type").GetString());
+      var riskType = Enum.Parse<RiskType>(c.GetProperty("risk_type").GetString());
+      var acb = new AggregatedConsequencesBinned(c.GetProperty("damage_category").GetString(), c.GetProperty("asset_category").GetString(), cc, c.GetProperty("impact_area_id").GetInt32(), consequenceType, riskType);
+      foreach (var r in caseEl.GetProperty("realizations").EnumerateArray()) {
+        acb.AddConsequenceRealization(D(r.GetProperty("damage")), r.GetProperty("iteration").GetInt64(), r.GetProperty("count").GetInt32());
+      }
+      acb.PutDataIntoHistogram();
+      if (method == "sample_mean_expected_annual_consequences") return acb.SampleMeanExpectedAnnualConsequences();
+      if (method == "consequence_exceeded_with_probability_q") return acb.ConsequenceExceededWithProbabilityQ(D(argsEl[0]));
+      if (method == "quantity_exceeded_with_probability_q") return acb.QuantityExceededWithProbabilityQ(D(argsEl[0]));
+      throw new Exception("unknown aggregated_consequences_binned method: " + method);
+    }
+
+    // StudyAreaConsequencesBinned (Phase 4 Task 4) is the collection wrapper over
+    // per-asset-category AggregatedConsequencesBinned results -- built from
+    // patched/StudyAreaConsequencesBinned.cs + patched/ConsequenceExtensions.cs (see those files'
+    // headers for the patch rationale: XML/quantile-result methods dropped as genuine compile
+    // blockers, GetAggregateEmpiricalDistribution/SampleMeanDamage/ConsequenceExceededWithProbabilityQ
+    // dropped to match the C++ port's scope). `construct` is {damage_category, impact_area_id,
+    // convergence: {min_iterations, max_iterations}, asset_categories: [...]}; one
+    // AggregatedConsequencesBinned is built per asset_category (ConsequenceType.Damage/
+    // RiskType.Fail, matching GetConsequenceResult's own defaults), collected into a
+    // StudyAreaConsequencesBinned via its (List<AggregatedConsequencesBinned>) ctor.
+    // `consequence_results` is a list of {iteration, increments: [[structureDamage, contentDamage,
+    // vehicleDamage, otherDamage], ...]}; each entry builds a fresh ConsequenceResult(damageCategory),
+    // replays every increment tuple via IncrementConsequence (same convention as
+    // EvalConsequenceResult), then feeds it through the stage-damage AddConsequenceRealization(
+    // ConsequenceResult, damageCategory, impactAreaID, iteration) overload. PutDataIntoHistograms()
+    // runs once after every consequence_results entry is applied, then ToUncertainPairedData(xs,
+    // [study], impactAreaID) is called once per assertion (fresh per assertion, matching
+    // run_study_area_consequences_binned in test_fixtures.cpp). `args[0]` indexes into the
+    // construct's asset_categories list (GetDamageCategories/GetAssetCategories walk
+    // ConsequenceResultList in construction order, so this indexing is deterministic). `method`
+    // dispatches to_uncertain_paired_data_damage_yvals or to_uncertain_paired_data_quantity_yvals,
+    // each returning SamplePairedData(0, true)'s (deterministic, monotonicity-forced) Yvals.
+    static object EvalStudyAreaConsequencesBinned(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+      string damageCategory = c.GetProperty("damage_category").GetString();
+      int impactAreaID = c.GetProperty("impact_area_id").GetInt32();
+      var assetCategories = c.GetProperty("asset_categories").EnumerateArray().Select(x => x.GetString()).ToList();
+      var results = assetCategories.Select(assetCategory =>
+        new AggregatedConsequencesBinned(damageCategory, assetCategory, cc, impactAreaID, ConsequenceType.Damage, RiskType.Fail)).ToList();
+      var study = new StudyAreaConsequencesBinned(results);
+
+      foreach (var realization in caseEl.GetProperty("consequence_results").EnumerateArray()) {
+        var cr = new ConsequenceResult(damageCategory);
+        foreach (var inc in realization.GetProperty("increments").EnumerateArray()) {
+          cr.IncrementConsequence(D(inc[0]), D(inc[1]), D(inc[2]), D(inc[3]));
+        }
+        study.AddConsequenceRealization(cr, damageCategory, impactAreaID, realization.GetProperty("iteration").GetInt32());
+      }
+      study.PutDataIntoHistograms();
+
+      double[] xs = DA(caseEl.GetProperty("xs"));
+      var (damageUpds, quantityUpds) = StudyAreaConsequencesBinned.ToUncertainPairedData(xs.ToList(), new List<StudyAreaConsequencesBinned> { study }, impactAreaID);
+
+      int assetIndex = (int)D(argsEl[0]);
+      if (method == "to_uncertain_paired_data_damage_yvals") return damageUpds[assetIndex].SamplePairedData(0, true).Yvals.ToArray();
+      if (method == "to_uncertain_paired_data_quantity_yvals") return quantityUpds[assetIndex].SamplePairedData(0, true).Yvals.ToArray();
+      throw new Exception("unknown study_area_consequences_binned method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -687,6 +1113,14 @@ namespace oracle_emitter {
               case "occupancy_type": val = EvalOccupancyType(c, a, method, argsEl); break;
               case "structure": val = EvalStructure(c, method, argsEl); break;
               case "inventory": val = EvalInventory(c, a, method, argsEl); break;
+              case "inventory_compute_damages": val = EvalInventoryComputeDamages(c, method); break;
+              case "consequence_result": val = EvalConsequenceResult(c, method); break;
+              case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
+              case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
+              case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
+              case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;
+              case "impact_area_stage_damage": val = EvalImpactAreaStageDamage(c, method, argsEl); break;
+              case "scenario_stage_damage": val = EvalScenarioStageDamage(c, a, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

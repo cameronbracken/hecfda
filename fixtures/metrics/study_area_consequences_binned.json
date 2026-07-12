@@ -1,0 +1,49 @@
+{
+  "target": "study_area_consequences_binned",
+  "kind": "study_area_consequences_binned",
+  "source_test": "HEC.FDA.Model/metrics/StudyAreaConsequencesBinned.cs + Extensions/ConsequenceExtensions.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real StudyAreaConsequencesBinned/AddConsequenceRealization/PutDataIntoHistograms/ToUncertainPairedData directly)",
+  "note": "construct = {damage_category, impact_area_id, convergence: {min_iterations, max_iterations}, asset_categories: [\"Structure\",\"Content\",\"Vehicle\",\"Other\"]}, building one AggregatedConsequencesBinned per asset_category (in that order, matching StudyAreaConsequencesBinned's asset-category iteration order in AddConsequenceRealization) via the (string,string,ConvergenceCriteria,int,ConsequenceType,RiskType) compute ctor with consequence_type=Damage, risk_type=Fail (StudyAreaConsequencesBinned's own GetConsequenceResult defaults), then StudyAreaConsequencesBinned(List<AggregatedConsequencesBinned>). `consequence_results` is a list of {iteration, increments: [[structureDamage, contentDamage, vehicleDamage, otherDamage], ...]}; each entry builds one ConsequenceResult(damage_category), applies every increment tuple via IncrementConsequence in order (so a realization's quantity counters follow ConsequenceResult's own '>0 per call' semantics, matching consequence_result.json's convention), then calls StudyAreaConsequencesBinned.AddConsequenceRealization(consequenceResult, damage_category, impact_area_id, iteration) -- the stage-damage 4-way-split overload. After every consequence_results entry is applied, PutDataIntoHistograms() runs exactly once (matching AggregatedConsequencesBinned's own 'staged batch' convention), then ToUncertainPairedData(xs, [studyAreaConsequencesBinned], impact_area_id) is called once per assertion (fresh construction per assertion, mirroring run_uncertain_paired_data_ops's convention) and the deterministic-sampled ('sample_paired_data(0, true)' == PairedData::sample_paired_data_raw_deterministic's monotonicity-forced sibling) yvals of the requested (damage|quantity) UncertainPairedData are asserted -- since `xs` has exactly one point, this reduces to that one asset category's consequence (or damaged-element-quantity) histogram SampleMean via UncertainToDeterministicDistributionConverter's IHistogram branch (Deterministic(histogram.SampleMean)), transcribed with no monotonicity effect (single-point curves are trivially monotone). `method` is `to_uncertain_paired_data_damage_yvals` or `to_uncertain_paired_data_quantity_yvals`; `args` is [assetCategoryIndex] indexing into the case's asset_categories list (0=Structure,1=Content,2=Vehicle,3=Other), selecting which of the four (single damage_category x 4 asset_category) UncertainPairedData pairs ToUncertainPairedData produced (GetDamageCategories/GetAssetCategories walk ConsequenceResultList in first-seen == construction order, so this indexing is deterministic). All values PIN (gate-captured, never hand-derived) -- the DynamicHistogram SampleMean this exercises is a Welford-style running mean over the full 100-slot (IterationCount, from ConvergenceCriteria(5,1000)) staged array, most of it untouched zeros (only 3 of 100 iterations are realized here, deliberately exercising the same staged-array zero-contamination quirk aggregated_consequences_binned.json's multi_iteration_wide_range case does), so hand-summing would not obviously reproduce IEEE-754 rounding of the online mean recurrence.",
+  "cases": [
+    {
+      "name": "single_damage_category_four_asset_categories",
+      "construct": {
+        "damage_category": "Residential",
+        "impact_area_id": 5,
+        "convergence": { "min_iterations": 5, "max_iterations": 1000 },
+        "asset_categories": ["Structure", "Content", "Vehicle", "Other"]
+      },
+      "consequence_results": [
+        {
+          "iteration": 0,
+          "increments": [
+            [100.0, 50.0, 20.0, 10.0]
+          ]
+        },
+        {
+          "iteration": 1,
+          "increments": [
+            [200.0, 0.0, 30.0, 0.0],
+            [50.0, 75.0, 0.0, 5.0]
+          ]
+        },
+        {
+          "iteration": 2,
+          "increments": [
+            [0.0, 40.0, 0.0, 15.0]
+          ]
+        }
+      ],
+      "xs": [10.0],
+      "assertions": [
+        { "method": "to_uncertain_paired_data_damage_yvals", "args": [0], "expected": [3.4999999999999987], "tol": 1e-9, "mode": "vector" },
+        { "method": "to_uncertain_paired_data_damage_yvals", "args": [1], "expected": [1.6499999999999995], "tol": 1e-9, "mode": "vector" },
+        { "method": "to_uncertain_paired_data_damage_yvals", "args": [2], "expected": [0.49999999999999983], "tol": 1e-9, "mode": "vector" },
+        { "method": "to_uncertain_paired_data_damage_yvals", "args": [3], "expected": [0.3000000000000001], "tol": 1e-9, "mode": "vector" },
+        { "method": "to_uncertain_paired_data_quantity_yvals", "args": [0], "expected": [0.030000000000000013], "tol": 1e-9, "mode": "vector" },
+        { "method": "to_uncertain_paired_data_quantity_yvals", "args": [1], "expected": [0.030000000000000013], "tol": 1e-9, "mode": "vector" },
+        { "method": "to_uncertain_paired_data_quantity_yvals", "args": [2], "expected": [0.02000000000000002], "tol": 1e-9, "mode": "vector" },
+        { "method": "to_uncertain_paired_data_quantity_yvals", "args": [3], "expected": [0.030000000000000013], "tol": 1e-9, "mode": "vector" }
+      ]
+    }
+  ]
+}

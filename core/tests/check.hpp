@@ -25,6 +25,11 @@ inline bool compare_by_mode(const std::vector<double>& got, const std::vector<do
                             double tol, const std::string& mode) {
     if (mode == "vector") {
         return close_vec(got, expected, tol);
+    } else if (mode == "matrix") {
+        // Matrix comparison: caller flattens both the produced [row][col] result and the
+        // fixture's nested "expected" array into row-major flat vectors before calling here;
+        // the elementwise comparison itself is identical to "vector" mode.
+        return close_vec(got, expected, tol);
     } else if (mode == "rel") {
         if (got.size() != 1 || expected.size() != 1) return false;
         return close_rel(got[0], expected[0], tol);

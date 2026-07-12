@@ -1,0 +1,111 @@
+{
+  "target": "consequence_result",
+  "kind": "consequence_result",
+  "source_test": "HEC.FDA.Model/metrics/ConsequenceResult.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real ConsequenceResult/IncrementConsequence directly)",
+  "note": "construct = {damage_category}, matching ConsequenceResult(string damageCategory). `increments` is a list of [structureDamage, contentDamage, vehicleDamage, otherDamage] tuples applied in order via IncrementConsequence before every assertion in the case (each assertion reconstructs a fresh ConsequenceResult and replays the full increment list, so assertions within a case are independent of each other and of dispatch order). Assertion `method` dispatches an accessor: structure_damage/content_damage/vehicle_damage/other_damage (doubles) or damaged_structures_quantity/damaged_contents_quantity/damaged_vehicles_quantity/damaged_others_quantity (ints, returned as doubles), or `equals`, which builds a second ConsequenceResult from the case's `compare_to` block (same {construct, increments} shape) and returns 1.0/0.0 for the primary object's Equals(second). Cases exercise: (1) multi-call accumulation with all four channels active, (2) zero and negative inputs to confirm the `> 0` quantity-counter guard only fires on strictly positive values (damage totals still accumulate negatives), (3) a single call with all four channels positive so every quantity counter increments exactly once, (4) equals coverage for the faithfulness fix reproducing C# Double.Equals (NaN-aware, not `==`) in the port's equals(): identical objects, a differing damage value, and a differing damage_category.",
+  "cases": [
+    {
+      "name": "accumulate_multiple_increments",
+      "construct": { "damage_category": "dc" },
+      "increments": [
+        [100.5, 50.25, 0, 0],
+        [0, 0, 25.75, 10.1],
+        [0, 0, 0, 0],
+        [200, 75, 15, 5]
+      ],
+      "assertions": [
+        { "method": "structure_damage", "args": [], "expected": 300.5, "tol": 0.0, "mode": "exact" },
+        { "method": "content_damage", "args": [], "expected": 125.25, "tol": 0.0, "mode": "exact" },
+        { "method": "vehicle_damage", "args": [], "expected": 40.75, "tol": 0.0, "mode": "exact" },
+        { "method": "other_damage", "args": [], "expected": 15.1, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_structures_quantity", "args": [], "expected": 2, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_contents_quantity", "args": [], "expected": 2, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_vehicles_quantity", "args": [], "expected": 2, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_others_quantity", "args": [], "expected": 2, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "zero_and_negative_do_not_increment_quantity",
+      "construct": { "damage_category": "dc2" },
+      "increments": [
+        [0, -5, 0, 0],
+        [-10, 0, -3, -1]
+      ],
+      "assertions": [
+        { "method": "structure_damage", "args": [], "expected": -10, "tol": 0.0, "mode": "exact" },
+        { "method": "content_damage", "args": [], "expected": -5, "tol": 0.0, "mode": "exact" },
+        { "method": "vehicle_damage", "args": [], "expected": -3, "tol": 0.0, "mode": "exact" },
+        { "method": "other_damage", "args": [], "expected": -1, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_structures_quantity", "args": [], "expected": 0, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_contents_quantity", "args": [], "expected": 0, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_vehicles_quantity", "args": [], "expected": 0, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_others_quantity", "args": [], "expected": 0, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "single_call_all_four_positive",
+      "construct": { "damage_category": "dc3" },
+      "increments": [
+        [1, 2, 3, 4]
+      ],
+      "assertions": [
+        { "method": "structure_damage", "args": [], "expected": 1, "tol": 0.0, "mode": "exact" },
+        { "method": "content_damage", "args": [], "expected": 2, "tol": 0.0, "mode": "exact" },
+        { "method": "vehicle_damage", "args": [], "expected": 3, "tol": 0.0, "mode": "exact" },
+        { "method": "other_damage", "args": [], "expected": 4, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_structures_quantity", "args": [], "expected": 1, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_contents_quantity", "args": [], "expected": 1, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_vehicles_quantity", "args": [], "expected": 1, "tol": 0.0, "mode": "exact" },
+        { "method": "damaged_others_quantity", "args": [], "expected": 1, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "equals_identical",
+      "construct": { "damage_category": "dc4" },
+      "increments": [
+        [10, 20, 30, 40]
+      ],
+      "compare_to": {
+        "construct": { "damage_category": "dc4" },
+        "increments": [
+          [10, 20, 30, 40]
+        ]
+      },
+      "assertions": [
+        { "method": "equals", "args": [], "expected": 1, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "equals_differ_damage_value",
+      "construct": { "damage_category": "dc4" },
+      "increments": [
+        [10, 20, 30, 40]
+      ],
+      "compare_to": {
+        "construct": { "damage_category": "dc4" },
+        "increments": [
+          [10, 20, 30, 41]
+        ]
+      },
+      "assertions": [
+        { "method": "equals", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "equals_differ_damage_category",
+      "construct": { "damage_category": "dc4" },
+      "increments": [
+        [10, 20, 30, 40]
+      ],
+      "compare_to": {
+        "construct": { "damage_category": "dc5" },
+        "increments": [
+          [10, 20, 30, 40]
+        ]
+      },
+      "assertions": [
+        { "method": "equals", "args": [], "expected": 0, "tol": 0.0, "mode": "bool" }
+      ]
+    }
+  ]
+}

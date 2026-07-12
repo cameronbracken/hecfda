@@ -1,0 +1,207 @@
+{
+  "target": "stage_damage_geometry",
+  "kind": "stage_damage_geometry",
+  "source_test": "StageDamageShould.cs (ExtrapolateFromAboveShould/ExtrapolateFromBelowShould -- the two static-helper cases) and TractableStageDamageTests.cs (the tractable Residential occ-type/structure/graphical-stage-frequency data reused to build the geometry case).",
+  "note": "Phase 4 Task 6 -- ImpactAreaStageDamage GEOMETRY only (ctor + EstablishAggregationStages + the pure stage-interval helpers). Two case groups: (a) 'extrapolate_from_above'/'extrapolate_from_below' exercise the two public static helpers directly with no ImpactAreaStageDamage construction, args [inputArray, interval-or-upperInterval, i-or-stepCount, (numInterpolated for 'below' only)]; their expected values are transcribed straight from StageDamageShould.cs's [InlineData] and are still gate-routed (dispatched through the real C# static methods), not merely copy-pasted on faith. (b) 'tractable_geometry' constructs a real ImpactAreaStageDamage: graphical STAGE frequency (UsingStagesNotFlows=true) over 'probabilities'/'graphical_stages' with 'equivalent_record_length', impactAreaID='impact_area_id', usingMockData=true, and a tractable 2-structure Residential Inventory + mock HydraulicProfiles built the same way TractableStageDamageTests.ComputeStagesAtStructures(stage1, stage2) does: profile 0 = {hydraulic_stage1, hydraulic_stage2} at probabilities[0], each subsequent profile's per-structure WSE = previous profile's + 1, one profile per 'probabilities' entry. Inventory content is NOT read by any geometry method (verified against the C# source -- EstablishAggregationStages/IdentifyCentralStageFrequencyAtIndexLocation/IdentifyMinAndMaxStageWithUncertainty/SetCoordinateQuantity/ComputeStagesAtIndexLocation touch only _StageFrequency/_HydraulicDataset.HydraulicProfiles, never Inventory/Structures), so its exact composition is a realism/reuse choice (TractableStageDamageTests' residentialStructureInventory), not a value the assertions depend on. 'compute_stages_at_index_location' passes hydraulics_.profile_probabilities() (== the constructed HydraulicProfiles' probabilities, matching what Task 7's Compute() will pass via wsesAtEachStructureByProfile.Item1). All (b) values gate-captured, never hand-derived.",
+  "cases": [
+    {
+      "name": "extrapolate_from_above",
+      "construct": {},
+      "assertions": [
+        {
+          "method": "extrapolate_from_above",
+          "args": [
+            [
+              5,
+              4,
+              3
+            ],
+            1,
+            5
+          ],
+          "expected": [
+            10,
+            9,
+            8
+          ],
+          "tol": 0.0,
+          "mode": "vector"
+        }
+      ]
+    },
+    {
+      "name": "extrapolate_from_below",
+      "construct": {},
+      "assertions": [
+        {
+          "method": "extrapolate_from_below",
+          "args": [
+            [
+              500,
+              400,
+              300
+            ],
+            1,
+            5,
+            50
+          ],
+          "expected": [
+            455,
+            355,
+            255
+          ],
+          "tol": 0.0,
+          "mode": "vector"
+        }
+      ]
+    },
+    {
+      "name": "tractable_geometry",
+      "construct": {
+        "impact_area_id": 34,
+        "probabilities": [
+          0.5,
+          0.2,
+          0.1,
+          0.04,
+          0.02,
+          0.01,
+          0.004,
+          0.002
+        ],
+        "graphical_stages": [
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "equivalent_record_length": 50,
+        "hydraulic_stage1": 13,
+        "hydraulic_stage2": 14
+      },
+      "assertions": [
+        {
+          "method": "compute_stages_at_index_location",
+          "args": [],
+          "expected": [
+            11.981664956326696,
+            11.986248717422697,
+            11.990832478518698,
+            11.995416239614698,
+            12.000000000710699,
+            12.25,
+            12.5,
+            12.75,
+            13,
+            13.25,
+            13.5,
+            13.75,
+            14,
+            14.25,
+            14.5,
+            14.75,
+            15,
+            15.25,
+            15.5,
+            15.75,
+            16,
+            16.25,
+            16.5,
+            16.75,
+            17,
+            17.25,
+            17.5,
+            17.75,
+            18,
+            18.25,
+            18.5,
+            18.75,
+            19,
+            19.246053045603777,
+            19.49210578760817,
+            19.738158529612566,
+            19.98421127161696,
+            20.23026305994704,
+            20.476315801951433,
+            20.722368543955827,
+            20.968421285960222,
+            21.214474027964616,
+            21.460526293131853,
+            21.706579035136247,
+            21.952631300303484,
+            22.198684042307878,
+            22.444736784312273,
+            22.69078904947951,
+            22.936841791483904,
+            23.182894533488298,
+            23.428946798655534,
+            23.67499954065993,
+            23.921052282664323,
+            24.16710454783156,
+            24.413157289835954,
+            24.65921003184035,
+            24.905262297007585,
+            25.15131503901198,
+            25.397367542597795,
+            25.64342004618361,
+            25.889472788188005,
+            26.13552529177382,
+            26.381577795359636,
+            26.62763053736403,
+            26.873683040949846,
+            27.11973554453566,
+            27.365788167330766,
+            27.61184079012587,
+            27.857893293711687,
+            28.10394591650679,
+            28.349998479697252,
+            28.596051042887712,
+            28.842103635880495,
+            29.088156213972116
+          ],
+          "tol": 0.0,
+          "mode": "vector"
+        },
+        {
+          "method": "bottom_extrapolation_points",
+          "args": [],
+          "expected": 4,
+          "tol": 0.0,
+          "mode": "exact"
+        },
+        {
+          "method": "central_interpolation_points",
+          "args": [],
+          "expected": 4,
+          "tol": 0.0,
+          "mode": "exact"
+        },
+        {
+          "method": "top_extrapolation_points",
+          "args": [],
+          "expected": 42,
+          "tol": 0.0,
+          "mode": "exact"
+        },
+        {
+          "method": "min_stage_for_area",
+          "args": [],
+          "expected": 11.981664956326696,
+          "tol": 0.0,
+          "mode": "abs"
+        },
+        {
+          "method": "max_stage_for_area",
+          "args": [],
+          "expected": 29.334208792063738,
+          "tol": 0.0,
+          "mode": "abs"
+        }
+      ]
+    }
+  ]
+}

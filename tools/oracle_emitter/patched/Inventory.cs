@@ -6,10 +6,6 @@
 //  - Both shapefile/terrain constructors -- need StructureFactory/RASHelper/Projection/
 //    Geospatial.GDALAssist/RasMapperLib, none reachable from this subset-compiled project (same
 //    rationale as patched/Structure.cs's dropped ctors).
-//  - ComputeDamages/AggregateResults -> List<ConsequenceResult> and the backing
-//    _invertedWSEL/_strucParallelCollection/_contentParallelCollection/_otherParallelCollection/
-//    _vehicleParallelCollection/_occTypeIndices fields -- needs HEC.FDA.Model.metrics
-//    (ConsequenceResult, Phase 5) and Utility.Parallel.SmartFor.
 //  - GetPointMs() -- needs PointMs/Structure.Point (spatial, and Structure's own Point property
 //    is already dropped in patched/Structure.cs).
 //  - StructureDetails/ProduceDetails-based output -- needs Structure.ProduceDetailsHeader
@@ -22,7 +18,18 @@
 // GetErrorMessages, MessageHub, MessageReportedEventHandler/MessageEventArgs) is already reachable
 // transitively through the existing HEC.FDA.Statistics project reference (same chain
 // OccupancyType.cs -- itself unpatched -- already relies on).
+//
+// Phase 4 Task 2 RE-ADDS ComputeDamages/AggregateResults -> List<ConsequenceResult> (severed above
+// pending HEC.FDA.Model.metrics.ConsequenceResult, which Phase 4 Task 1 ported), VERBATIM except
+// `Utility.Parallel.SmartFor(nStruc, ...)` -> a plain serial `for` over structures -- the emitter
+// runs single-threaded, no reachable `Utility.Parallel`. The backing
+// _invertedWSEL/_strucParallelCollection/_contentParallelCollection/_otherParallelCollection/
+// _vehicleParallelCollection/_occTypeIndices fields and their null/size-mismatch reallocation
+// guards are kept, matching the real C# exactly (see the corresponding C++ inventory.hpp comment
+// for why the C++ port uses plain per-call locals instead -- a deliberate, documented deviation
+// there, not here: the emitter mirrors the real C# 1:1 so it stays a faithful oracle).
 using System.Collections.Generic;
+using HEC.FDA.Model.metrics;
 using HEC.MVVMFramework.Base.Enumerations;
 using HEC.MVVMFramework.Base.Events;
 using HEC.MVVMFramework.Base.Implementations;
@@ -136,6 +143,112 @@ namespace HEC.FDA.Model.structures
             }
 
             return deterministicOccupancyTypes;
+        }
+
+        // ported from: Inventory.cs's private scratch fields backing ComputeDamages/AggregateResults.
+        // NOT SAFE TO CALL ComputeDamages IN PARALLEL (see ComputeDamages below) -- transcribed
+        // verbatim, unlike the C++ port, which uses per-call locals instead (documented deviation,
+        // see inventory.hpp).
+        private float[,] _invertedWSEL; // [struc, pf]
+        private double[,] _strucParallelCollection;
+        private double[,] _contentParallelCollection;
+        private double[,] _otherParallelCollection;
+        private double[,] _vehicleParallelCollection;
+        private int[] _occTypeIndices;
+
+        // ported from: Inventory.cs public List<ConsequenceResult> ComputeDamages(List<float[]> wses,
+        // int analysisYear, string damageCategory, List<DeterministicOccupancyType>
+        // deterministicOccupancyType). VERBATIM except `Utility.Parallel.SmartFor(nStruc, ...)` ->
+        // a serial `for` over structures (see file header) -- everything else, INCLUDING the
+        // other/vehicle store swap 5 lines from the bottom, is transcribed exactly.
+        public List<ConsequenceResult> ComputeDamages(List<float[]> wses, int analysisYear, string damageCategory, List<DeterministicOccupancyType> deterministicOccupancyType)
+        {
+            List<ConsequenceResult> aggregateConsequenceResults = new();
+            //assume each structure has a corresponding index to the depth
+
+            int nPf = wses.Count;
+            int nStruc = wses[0].Length;
+            // NOT SAFE TO CALL THIS METHOD IN PARALLEL
+            if (_invertedWSEL == null || _invertedWSEL.GetLength(0) != nStruc || _invertedWSEL.GetLength(1) != nPf)
+            {
+                _invertedWSEL = new float[nStruc, nPf];
+            }
+
+            for (int i = 0; i < nPf; i++)
+            {
+                var pf = wses[i];
+                for (int j = 0; j < nStruc; j++)
+                {
+                    _invertedWSEL[j, i] = pf[j];
+                }
+            }
+
+            if (_strucParallelCollection == null || _strucParallelCollection.GetLength(0) != nPf || _strucParallelCollection.GetLength(1) != nStruc)
+            {
+                _strucParallelCollection = new double[nPf, nStruc];
+            }
+            if (_contentParallelCollection == null || _contentParallelCollection.GetLength(0) != nPf || _contentParallelCollection.GetLength(1) != nStruc)
+            {
+                _contentParallelCollection = new double[nPf, nStruc];
+            }
+            if (_otherParallelCollection == null || _otherParallelCollection.GetLength(0) != nPf || _otherParallelCollection.GetLength(1) != nStruc)
+            {
+                _otherParallelCollection = new double[nPf, nStruc];
+            }
+            if (_vehicleParallelCollection == null || _vehicleParallelCollection.GetLength(0) != nPf || _vehicleParallelCollection.GetLength(1) != nStruc)
+            {
+                _vehicleParallelCollection = new double[nPf, nStruc];
+            }
+
+            if (_occTypeIndices == null || _occTypeIndices.Length != nStruc)
+            {
+                _occTypeIndices = new int[nStruc];
+                for (int i = 0; i < nStruc; i++)
+                {
+                    var struc = Structures[i];
+                    int occc = struc.FindOccTypeIndex(deterministicOccupancyType);
+                    _occTypeIndices[i] = occc;
+                }
+            }
+
+            // DEVIATION from C#: Utility.Parallel.SmartFor(nStruc, (start, end) => {...}, 256)
+            // replaced with a plain serial for-loop over the same range -- no reachable
+            // Utility.Parallel in this subset-compiled emitter project. Body unchanged.
+            for (int i = 0; i < nStruc; i++)
+            {
+                DeterministicOccupancyType dt = null;
+                var dtIdx = _occTypeIndices[i];
+                dt = deterministicOccupancyType[dtIdx];
+                for (int j = 0; j < nPf; j++)
+                {
+                    float wse = _invertedWSEL[i, j];
+                    if (wse != -9999)
+                    {
+                        var (structDamage, contDamage, vehicleDamage, otherDamage) = Structures[i].ComputeDamage(wse, dt, PriceIndex, analysisYear);
+                        _strucParallelCollection[j, i] = (structDamage);
+                        _contentParallelCollection[j, i] = (contDamage);
+                        _otherParallelCollection[j, i] = (vehicleDamage);
+                        _vehicleParallelCollection[j, i] = (otherDamage);
+                    }
+                }
+            }
+            return AggregateResults(wses, damageCategory, aggregateConsequenceResults, _strucParallelCollection, _contentParallelCollection, _otherParallelCollection, _vehicleParallelCollection);
+        }
+
+        // ported from: Inventory.cs private List<ConsequenceResult> AggregateResults(...). VERBATIM.
+        private List<ConsequenceResult> AggregateResults(List<float[]> wses, string damageCategory, List<ConsequenceResult> aggregateConsequenceResults, double[,] structureParallelCollection,
+            double[,] contentParallelCollection, double[,] otherParallelCollection, double[,] vehicleParallelCollection)
+        {
+            for (int j = 0; j < wses.Count; j++)
+            {
+                ConsequenceResult aggregateConsequenceResult = new(damageCategory);
+                for (int i = 0; i < Structures.Count; i++)
+                {
+                    aggregateConsequenceResult.IncrementConsequence(structureParallelCollection[j, i], contentParallelCollection[j, i], otherParallelCollection[j, i], vehicleParallelCollection[j, i]);
+                }
+                aggregateConsequenceResults.Add(aggregateConsequenceResult);
+            }
+            return aggregateConsequenceResults;
         }
         #endregion
 

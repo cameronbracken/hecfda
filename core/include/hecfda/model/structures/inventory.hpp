@@ -3,11 +3,14 @@
 #ifndef HECFDA_MODEL_STRUCTURES_INVENTORY_HPP
 #define HECFDA_MODEL_STRUCTURES_INVENTORY_HPP
 #include <algorithm>
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
+#include "hecfda/model/metrics/consequence_result.hpp"
 #include "hecfda/model/structures/deterministic_occupancy_type.hpp"
 #include "hecfda/model/structures/occupancy_type.hpp"
 #include "hecfda/model/structures/structure.hpp"
@@ -27,17 +30,16 @@ namespace structures {
 //    map, occTypes, priceIndex, projectionFilePath)` and its terrain-path overload) -- need
 //    StructureFactory/RASHelper/Projection/GDALAssist/RasMapperLib. Only the in-memory ctor
 //    (`Inventory(occTypes, structures, priceIndex)`) is ported.
-//  - `ComputeDamages`/`AggregateResults` -> `List<ConsequenceResult>` and the four
-//    `_*ParallelCollection`/`_invertedWSEL`/`_occTypeIndices` fields backing it (needs
-//    HEC.FDA.Model.metrics.ConsequenceResult, Phase 5) and `Utility.Parallel.SmartFor`.
 //  - `GetPointMs()` (needs `PointMs`/`structure.Point`, spatial).
 //  - `StructureDetails`/`ProduceDetails` (CSV, needs `Structure.ProduceDetailsHeader` -- already
 //    severed in structure.hpp).
-//  - `GetErrorsFromProperties()` (both overloads) and `ResetStructureWaterIndexTracking()`: string-
-//    message plumbing / a thin wrapper around `Structure::reset_index_tracking()` with no numeric
-//    effect of its own; omitted the same way OccupancyType::get_errors_from_properties() is kept
-//    but Inventory's two overloads (near-duplicates, differing only by an unused-here impact-area-
-//    id message) are not, since nothing in this port's numeric surface consumes them.
+//  - `GetErrorsFromProperties()` (both overloads): string-message plumbing; omitted the same way
+//    OccupancyType::get_errors_from_properties() is kept but Inventory's two overloads
+//    (near-duplicates, differing only by an unused-here impact-area-id message) are not, since
+//    nothing in this port's numeric surface consumes them.
+//    (`ResetStructureWaterIndexTracking()` was ALSO listed here through Task 6, when it was still
+//    a genuine no-op for this port's surface -- Task 7 un-severs it; see
+//    reset_structure_water_index_tracking() below for why it turned out to matter.)
 //  - `MessageReport`/`ReportMessage` (MVVM messaging, blanket severance).
 //
 // STORAGE / MOVE-SEMANTICS DECISIONS (Task 6):
@@ -214,6 +216,113 @@ class Inventory {
         return deterministic_occupancy_types;
     }
 
+    // ported from: Inventory.cs public List<ConsequenceResult> ComputeDamages(List<float[]> wses,
+    // int analysisYear, string damageCategory, List<DeterministicOccupancyType>
+    // deterministicOccupancyType). One `ConsequenceResult` per water-surface-elevation profile
+    // (`wses[profile][structure]`), the per-structure damage sum for that profile.
+    //
+    // FAITHFUL QUIRK (transcribed verbatim -- do NOT "fix"): C# stores into the "other"/"vehicle"
+    // scratch collections with the values SWAPPED --
+    //   _otherParallelCollection[j, i]   = vehicleDamage;   // note: vehicleDamage, not otherDamage
+    //   _vehicleParallelCollection[j, i] = otherDamage;     // note: otherDamage, not vehicleDamage
+    // -- and then calls `AggregateResults(..., _otherParallelCollection, _vehicleParallelCollection)`,
+    // positionally binding them to AggregateResults' `(otherParallelCollection,
+    // vehicleParallelCollection)` parameters, which are in turn read into `IncrementConsequence(
+    // structureParallelCollection[j,i], contentParallelCollection[j,i], otherParallelCollection[j,i],
+    // vehicleParallelCollection[j,i])` -- whose THIRD positional parameter is actually named
+    // `vehicleDamage` and FOURTH `otherDamage` (see ConsequenceResult::increment_consequence's
+    // signature). Traced symbol-by-symbol, the store-swap and the AggregateResults argument-position
+    // wiring compose to the IDENTITY: the true vehicle value (stored under the "other" name) lands
+    // back in increment_consequence's `vehicle_damage` parameter, and the true other value (stored
+    // under the "vehicle" name) lands back in `other_damage`. Net effect: `ConsequenceResult::
+    // vehicle_damage()`/`other_damage()` end up numerically CORRECT despite the confusingly-swapped
+    // intermediate variable names -- two "bugs" that cancel. This is transcribed exactly (mirroring
+    // the store step AND the aggregate_results parameter wiring below) rather than collapsed to the
+    // equivalent direct call, both for structural-mirroring fidelity (see CLAUDE.md) and so a future
+    // upstream fix to ONE side (e.g. renaming the arrays without touching the call site, or vice
+    // versa) breaks this port's tests instead of silently diverging. Locked by
+    // fixtures/stage_damage/inventory_compute_damages.json, which uses an occupancy type with
+    // DISTINCT nonzero vehicle/other depth-percent-damage curves so the wiring is actually observed,
+    // not just "both present".
+    //
+    // DEVIATIONS from C#:
+    //  (a) `Utility.Parallel.SmartFor(nStruc, ...)` -> a serial `for` loop over structures. Each
+    //      structure's damage/store is independent of every other (writes are index-addressed, no
+    //      shared mutable state besides the scratch collections' fixed preallocated shape), so
+    //      serial vs. parallel execution order does not affect the result.
+    //  (b) The C# `_invertedWSEL`/`_strucParallelCollection`/`_contentParallelCollection`/
+    //      `_otherParallelCollection`/`_vehicleParallelCollection`/`_occTypeIndices` are Inventory
+    //      MEMBER fields, reused/resized across calls and explicitly marked "NOT SAFE TO CALL IN
+    //      PARALLEL" in the C# comment (a mutable-scratch-buffer reuse optimization). This port uses
+    //      plain per-call LOCALS instead: every element is written exactly once before being read in
+    //      both versions, so there is no cross-call state to reuse, and the serial single-threaded
+    //      C++ port has no concurrent-call hazard to guard against either -- locals are simpler and
+    //      behavior-preserving.
+    std::vector<hecfda::model::metrics::ConsequenceResult> compute_damages(
+        const std::vector<std::vector<float>>& wses, int analysis_year, const std::string& damage_category,
+        const std::vector<DeterministicOccupancyType>& deterministic_occupancy_types) {
+        std::size_t n_pf = wses.size();
+        std::size_t n_struc = wses[0].size();
+
+        // invertedWSEL[struc][pf] = wses[pf][struc] (structure-major inversion, matching C#'s
+        // `_invertedWSEL[j, i] = pf[j]` loop).
+        std::vector<std::vector<float>> inverted_wsel(n_struc, std::vector<float>(n_pf));
+        for (std::size_t i = 0; i < n_pf; ++i) {
+            const auto& pf = wses[i];
+            for (std::size_t j = 0; j < n_struc; ++j) {
+                inverted_wsel[j][i] = pf[j];
+            }
+        }
+
+        std::vector<std::vector<double>> struc_collection(n_pf, std::vector<double>(n_struc, 0.0));
+        std::vector<std::vector<double>> content_collection(n_pf, std::vector<double>(n_struc, 0.0));
+        std::vector<std::vector<double>> other_collection(n_pf, std::vector<double>(n_struc, 0.0));
+        std::vector<std::vector<double>> vehicle_collection(n_pf, std::vector<double>(n_struc, 0.0));
+
+        std::vector<int> occ_type_indices(n_struc);
+        for (std::size_t i = 0; i < n_struc; ++i) {
+            occ_type_indices[i] = structures_[i].find_occ_type_index(deterministic_occupancy_types);
+        }
+
+        // DEVIATION (a): serial over structures, replacing `Utility.Parallel.SmartFor`.
+        for (std::size_t i = 0; i < n_struc; ++i) {
+            const DeterministicOccupancyType& dt =
+                deterministic_occupancy_types[static_cast<std::size_t>(occ_type_indices[i])];
+            for (std::size_t j = 0; j < n_pf; ++j) {
+                float wse = inverted_wsel[i][j];
+                if (wse != -9999) {
+                    auto [struct_damage, cont_damage, vehicle_damage, other_damage] =
+                        structures_[i].compute_damage(wse, dt, price_index_, analysis_year);
+                    struc_collection[j][i] = struct_damage;
+                    content_collection[j][i] = cont_damage;
+                    // FAITHFUL SWAP -- see method comment above: "other" stores the vehicle value,
+                    // "vehicle" stores the other value.
+                    other_collection[j][i] = vehicle_damage;
+                    vehicle_collection[j][i] = other_damage;
+                }
+            }
+        }
+
+        return aggregate_results(wses, damage_category, struc_collection, content_collection, other_collection,
+                                  vehicle_collection);
+    }
+
+    // ported from: Inventory.cs internal void ResetStructureWaterIndexTracking(). Task 6's class
+    // comment called this a "no numeric effect" severance -- true THEN (nothing in that task's
+    // geometry-only surface called compute_damage), but Task 7's compute loop calls
+    // Structure::compute_damage repeatedly per Monte Carlo iteration via the sequential-search
+    // cursor overload PairedData::f(x, ref index) (see structure.hpp's class comment): that cursor
+    // only walks forward and is only correct when queried in ascending depth-above-first-floor
+    // order within one pass (lower -> middle -> upper stages, which IS ascending WSE order).
+    // Between chunk iterations the pass restarts from the lowest stage, so the cursor MUST be
+    // reset back to 1 or it stays stuck high from the previous iteration and interpolates the
+    // wrong segment. Un-severed here; ported now that Task 7 is the first real caller.
+    void reset_structure_water_index_tracking() {
+        for (auto& structure : structures_) {
+            structure.reset_index_tracking();
+        }
+    }
+
     // ported from: Inventory.cs public void Validate(). Transcribed verbatim, INCLUDING the
     // faithful bug: the OccTypes loop raises `ErrorLevel` when a failing occupancy type's level is
     // higher, but never sets `HasErrors = true` for it (unlike the Structures loop just below,
@@ -271,6 +380,37 @@ class Inventory {
     // class comment for why this is folded directly in rather than a shared base class).
     bool has_errors_ = false;
     ErrorLevel error_level_ = ErrorLevel::Unassigned;
+
+    // ported from: Inventory.cs private List<ConsequenceResult> AggregateResults(List<float[]> wses,
+    // string damageCategory, List<ConsequenceResult> aggregateConsequenceResults, double[,]
+    // structureParallelCollection, double[,] contentParallelCollection, double[,]
+    // otherParallelCollection, double[,] vehicleParallelCollection). Parameter names mirror the C#
+    // signature (structure/content/other/vehicle) EXACTLY -- see compute_damages' doc comment: the
+    // 3rd/4th arguments compute_damages passes in are the swapped collections, and this method's own
+    // increment_consequence call reproduces the exact same positional wiring as C#'s
+    // IncrementConsequence call, so the two swaps compose the way the class comment documents. The
+    // `aggregate_consequence_results` C# out-parameter (built empty by the caller and appended to)
+    // is simplified to a plain return value here -- purely a calling-convention difference with no
+    // behavioral effect, since C# never reads it before passing it in.
+    std::vector<hecfda::model::metrics::ConsequenceResult> aggregate_results(
+        const std::vector<std::vector<float>>& wses, const std::string& damage_category,
+        const std::vector<std::vector<double>>& structure_parallel_collection,
+        const std::vector<std::vector<double>>& content_parallel_collection,
+        const std::vector<std::vector<double>>& other_parallel_collection,
+        const std::vector<std::vector<double>>& vehicle_parallel_collection) {
+        std::vector<hecfda::model::metrics::ConsequenceResult> aggregate_consequence_results;
+        aggregate_consequence_results.reserve(wses.size());
+        for (std::size_t j = 0; j < wses.size(); ++j) {
+            hecfda::model::metrics::ConsequenceResult aggregate_consequence_result(damage_category);
+            for (std::size_t i = 0; i < structures_.size(); ++i) {
+                aggregate_consequence_result.increment_consequence(
+                    structure_parallel_collection[j][i], content_parallel_collection[j][i],
+                    other_parallel_collection[j][i], vehicle_parallel_collection[j][i]);
+            }
+            aggregate_consequence_results.push_back(std::move(aggregate_consequence_result));
+        }
+        return aggregate_consequence_results;
+    }
 };
 
 }  // namespace structures

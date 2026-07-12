@@ -23,3 +23,11 @@ hecfda_value_uncertainty <- function(dist, std_or_min, max, method, args) {
 hecfda_structure <- function(oc_name, oc_damage_category, struct_depths, struct_types, struct_params, content_depths, content_types, content_params, ffe_dist, ffe_std_or_min, ffe_max, sv_dist, sv_std_or_min, sv_max, csvr_dist, csvr_std_or_min, csvr_central, csvr_max, sample_iteration, sample_compute_is_deterministic, fid, first_floor_elevation, val_struct, st_damcat, occtype, impact_area_id, val_cont, val_vehic, val_other, ground_elevation, method, wse) {
   .Call(`_hecfdar_hecfda_structure`, oc_name, oc_damage_category, struct_depths, struct_types, struct_params, content_depths, content_types, content_params, ffe_dist, ffe_std_or_min, ffe_max, sv_dist, sv_std_or_min, sv_max, csvr_dist, csvr_std_or_min, csvr_central, csvr_max, sample_iteration, sample_compute_is_deterministic, fid, first_floor_elevation, val_struct, st_damcat, occtype, impact_area_id, val_cont, val_vehic, val_other, ground_elevation, method, wse)
 }
+
+hecfda_consequence_result <- function(damage_category, increments, method, compare_damage_category, compare_increments) {
+  .Call(`_hecfdar_hecfda_consequence_result`, damage_category, increments, method, compare_damage_category, compare_increments)
+}
+
+hecfda_impact_area_stage_damage <- function(impact_area_id, damage_category, asset_category, hydraulic_stage1, hydraulic_stage2, use_reg_unreg, stage) {
+  .Call(`_hecfdar_hecfda_impact_area_stage_damage`, impact_area_id, damage_category, asset_category, hydraulic_stage1, hydraulic_stage2, use_reg_unreg, stage)
+}

@@ -12,11 +12,23 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURES = os.path.join(ROOT, "fixtures")
 
 
+def _flatten(x):
+    """Row-major flatten one level of nesting (for mode=='matrix' [row][col] arrays)."""
+    if isinstance(x, list) and x and isinstance(x[0], list):
+        return [v for row in x for v in row]
+    return x
+
+
 def close(got, exp, tol, mode):
     if mode == "vector":
         if len(got) != len(exp):
             return False
         return all(abs(a - b) <= max(tol, 1e-15) for a, b in zip(got, exp))
+    if mode == "matrix":
+        got_flat, exp_flat = _flatten(got), _flatten(exp)
+        if len(got_flat) != len(exp_flat):
+            return False
+        return all(abs(a - b) <= max(tol, 1e-15) for a, b in zip(got_flat, exp_flat))
     if mode == "rel":
         denom = abs(exp) if exp else 1.0
         return abs(got - exp) / denom <= (tol if tol else 1e-15)

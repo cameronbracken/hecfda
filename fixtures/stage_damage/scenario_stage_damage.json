@@ -1,0 +1,80 @@
+{
+  "target": "scenario_stage_damage",
+  "kind": "scenario_stage_damage",
+  "source_test": "Phase 4 Task 8 -- ScenarioStageDamage.Compute() outer loop. No dedicated upstream unit test covers ScenarioStageDamage directly (TractableStageDamageTests exercises ImpactAreaStageDamage.Compute() only); this fixture wraps Task 7's tractable ImpactAreaStageDamage construction in a ScenarioStageDamage to confirm the outer loop's AddRange-equivalent concatenation reproduces the identical per-impact-area curve, and to exercise the loop across TWO impact areas.",
+  "note": "`construct.impact_areas` is a list of {impact_area_id, damage_category, asset_category, hydraulic_stage1, hydraulic_stage2, use_reg_unreg} objects, each built into an ImpactAreaStageDamage exactly as impact_area_stage_damage.json's cases are (same tractable Residential/Commercial inventories, same mock hydraulics, same graphical stage/flow frequency construction) -- see that fixture's note for the full construction detail. All impact areas here use use_reg_unreg=false (the graphical-stage-frequency path) since Task 7 already cross-checked the reg/unreg compose-chain path; this task's target is the OUTER loop, not a new frequency-path permutation. ScenarioStageDamage wraps the resulting list, `compute(compute_is_deterministic=true)` is called once per case, and assertions read from the SAME compute-result pair (built once per case, not per assertion, matching this file's other multi-assertion-per-object fixtures e.g. aggregated_consequences_binned.json). `select` (case-level default, overridable per-assertion) is {impact_area_id, damage_category, asset_category} identifying which UncertainPairedData in the `.first` (damage) result list to evaluate; `method: 'f'` with `args: [stage]` calls sample_paired_data(1, true).f(stage) on that curve, exactly as impact_area_stage_damage.json does. `method: 'result_count'` (args []) returns the total length of the `.first` result list, verifying AddRange concatenation count. Case 1 (single_impact_area) reproduces impact_area_stage_damage.json's residential_structure_no_reg_unreg case (impact_area_id=34, Residential/Structure, stages 12..19 -> {0,0,30,60,90,120,150,180}) through the Scenario wrapper, with one impact area contributing exactly 4 UncertainPairedData (Structure/Content/Other/Vehicle, one damage category). Case 2 (two_impact_areas) duplicates that SAME impact area construction under a second impact_area_id (99) to exercise concatenation: asserts BOTH curves (impact_area_id 34 and 99) independently reproduce the identical {30, 180} values at stages 14/19, and result_count is 8 (2 impact areas x 4 asset categories), confirming AddRange doubles the list length rather than aliasing/overwriting. All `expected` values gate-captured from the real, patched Compute() (never hand-derived).",
+  "cases": [
+    {
+      "name": "single_impact_area",
+      "construct": {
+        "impact_areas": [
+          {
+            "impact_area_id": 34,
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "hydraulic_stage1": 13,
+            "hydraulic_stage2": 14,
+            "use_reg_unreg": false
+          }
+        ]
+      },
+      "select": { "impact_area_id": 34, "damage_category": "Residential", "asset_category": "Structure" },
+      "assertions": [
+        { "method": "f", "args": [12], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [13], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [14], "expected": 30, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [15], "expected": 60, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [16], "expected": 90, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [17], "expected": 120, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [18], "expected": 150, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [19], "expected": 180, "tol": 0.05, "mode": "rel" },
+        { "method": "result_count", "args": [], "expected": 4, "tol": 0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "two_impact_areas",
+      "construct": {
+        "impact_areas": [
+          {
+            "impact_area_id": 34,
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "hydraulic_stage1": 13,
+            "hydraulic_stage2": 14,
+            "use_reg_unreg": false
+          },
+          {
+            "impact_area_id": 99,
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "hydraulic_stage1": 13,
+            "hydraulic_stage2": 14,
+            "use_reg_unreg": false
+          }
+        ]
+      },
+      "select": { "impact_area_id": 34, "damage_category": "Residential", "asset_category": "Structure" },
+      "assertions": [
+        { "method": "f", "args": [14], "expected": 30, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [19], "expected": 180, "tol": 0.05, "mode": "rel" },
+        {
+          "select": { "impact_area_id": 99, "damage_category": "Residential", "asset_category": "Structure" },
+          "method": "f",
+          "args": [14],
+          "expected": 30,
+          "tol": 0.05,
+          "mode": "rel"
+        },
+        {
+          "select": { "impact_area_id": 99, "damage_category": "Residential", "asset_category": "Structure" },
+          "method": "f",
+          "args": [19],
+          "expected": 180,
+          "tol": 0.05,
+          "mode": "rel"
+        },
+        { "method": "result_count", "args": [], "expected": 8, "tol": 0, "mode": "exact" }
+      ]
+    }
+  ]
+}

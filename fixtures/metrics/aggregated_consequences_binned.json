@@ -1,0 +1,73 @@
+{
+  "target": "aggregated_consequences_binned",
+  "kind": "aggregated_consequences_binned",
+  "source_test": "HEC.FDA.Model/metrics/AggregatedConsequencesBinned.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real AggregatedConsequencesBinned/PutDataIntoHistogram/AddConsequenceRealization directly)",
+  "note": "construct = {damage_category, asset_category, convergence: {min_iterations, max_iterations}, impact_area_id, consequence_type, risk_type}, matching the AggregatedConsequencesBinned(string, string, ConvergenceCriteria, int, ConsequenceType, RiskType) compute ctor; ConvergenceCriteria is built with the 2-arg (minIterations, maxIterations) ctor (ZAlpha/Tolerance left at their defaults), exactly as the inventory fixture's `generate_then_sample_struct_yvals` case does. `consequence_type`/`risk_type` are the C# enum member names (ConsequenceType: UNASSIGNED/Damage/LifeLoss/All; RiskType: Fail/Non_Fail/Total/Unassigned). `realizations` is a list of {iteration, damage, count} applied in order via AddConsequenceRealization(damage, iteration, count) before a single PutDataIntoHistogram() call. Every assertion in a case reuses the same constructed-and-staged object (not rebuilt per assertion), since PutDataIntoHistogram is only meaningful called once per staged batch. Assertion `method` dispatches sample_mean_expected_annual_consequences (args []), consequence_exceeded_with_probability_q (args [q]), or quantity_exceeded_with_probability_q (args [q]). Cases: (1) single_iteration_narrow_range -- IterationCount pinned to 1 via the ConvergenceCriteria quirk (MaxIterations < 100 forces IterationCount = 1), so the one realization fills the entire staging array and the range-based bin-width branch sees range == 0 (< INITIAL_BIN_QUANTITY), exercising the DynamicHistogram::DEFAULT_BIN_WIDTH branch cleanly with no staged-array-zero contamination; (2) multi_iteration_wide_range -- IterationCount defaults to 100 (MaxIterations >= 100), only 6 of the 100 staging slots are written, so the unwritten 0.0 slots participate in PutDataIntoHistogram's min/max and pull the range to [0, 3000], exercising the range/INITIAL_BIN_QUANTITY branch and the staged-array quirk documented in aggregated_consequences_binned.hpp; (3) negative_and_mixed_values -- IterationCount 100 again, negative and positive realizations plus the untouched-zero slots, still under INITIAL_BIN_QUANTITY (range 175), LifeLoss/Non_Fail enum coverage.",
+  "cases": [
+    {
+      "name": "single_iteration_narrow_range",
+      "construct": {
+        "damage_category": "Structure",
+        "asset_category": "Residential",
+        "convergence": { "min_iterations": 1, "max_iterations": 50 },
+        "impact_area_id": 7,
+        "consequence_type": "Damage",
+        "risk_type": "Fail"
+      },
+      "realizations": [
+        { "iteration": 0, "damage": 42.5, "count": 3 }
+      ],
+      "assertions": [
+        { "method": "sample_mean_expected_annual_consequences", "args": [], "expected": 42.5, "tol": 1e-9, "mode": "abs" },
+        { "method": "consequence_exceeded_with_probability_q", "args": [0.5], "expected": 42.5, "tol": 1e-9, "mode": "abs" },
+        { "method": "quantity_exceeded_with_probability_q", "args": [0.5], "expected": 3, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "multi_iteration_wide_range",
+      "construct": {
+        "damage_category": "Content",
+        "asset_category": "Commercial",
+        "convergence": { "min_iterations": 5, "max_iterations": 1000 },
+        "impact_area_id": 12,
+        "consequence_type": "Damage",
+        "risk_type": "Fail"
+      },
+      "realizations": [
+        { "iteration": 0, "damage": 1000, "count": 5 },
+        { "iteration": 1, "damage": 2000, "count": 8 },
+        { "iteration": 2, "damage": 1500, "count": 3 },
+        { "iteration": 3, "damage": 3000, "count": 10 },
+        { "iteration": 4, "damage": 500, "count": 2 },
+        { "iteration": 5, "damage": 2500, "count": 7 }
+      ],
+      "assertions": [
+        { "method": "sample_mean_expected_annual_consequences", "args": [], "expected": 104.99999999999996, "tol": 1e-9, "mode": "abs" },
+        { "method": "consequence_exceeded_with_probability_q", "args": [0.5], "expected": 3.1914893617021276, "tol": 1e-9, "mode": "abs" },
+        { "method": "quantity_exceeded_with_probability_q", "args": [0.5], "expected": 0.5319148936170213, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "negative_and_mixed_values",
+      "construct": {
+        "damage_category": "LifeSafety",
+        "asset_category": "Vehicle",
+        "convergence": { "min_iterations": 3, "max_iterations": 200 },
+        "impact_area_id": 3,
+        "consequence_type": "LifeLoss",
+        "risk_type": "Non_Fail"
+      },
+      "realizations": [
+        { "iteration": 0, "damage": -100, "count": 1 },
+        { "iteration": 1, "damage": 50, "count": 2 },
+        { "iteration": 2, "damage": -25, "count": 0 },
+        { "iteration": 3, "damage": 75, "count": 3 }
+      ],
+      "assertions": [
+        { "method": "sample_mean_expected_annual_consequences", "args": [], "expected": 0, "tol": 1e-9, "mode": "abs" },
+        { "method": "consequence_exceeded_with_probability_q", "args": [0.5], "expected": 0.05000000000000285, "tol": 1e-9, "mode": "abs" },
+        { "method": "quantity_exceeded_with_probability_q", "args": [0.5], "expected": 0.5154639175257731, "tol": 1e-9, "mode": "abs" }
+      ]
+    }
+  ]
+}

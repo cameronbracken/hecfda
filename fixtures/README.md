@@ -21,7 +21,10 @@ Each file: one JSON object.
 ```
 
 Comparison `mode`: `abs | rel | exact | bool | vector | matrix`.
-`exact` uses `tol == 0.0` (also matches NaN==NaN). Every `kind: mc_*` case MUST carry a seed.
+`exact` uses `tol == 0.0` (also matches NaN==NaN). `matrix` compares a nested `[row][col]`
+`expected` array (e.g. a `[profile][structure]` result) against a same-shaped produced result;
+every runner flattens both row-major into a flat elementwise comparison, so it behaves exactly
+like `vector` once flattened. Every `kind: mc_*` case MUST carry a seed.
 Monte Carlo fixtures (kind `mc_*`) carry the seed in the case-level `seed` field; runners read the
 seed from there, not from an assertion's `args`.
 Method/target strings map to each language's API via a small per-runner dispatch table.
