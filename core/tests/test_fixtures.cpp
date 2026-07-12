@@ -10,6 +10,7 @@
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/extensions/graphical_distribution.hpp"
 #include "hecfda/model/metrics/aggregated_consequences_binned.hpp"
+#include "hecfda/model/metrics/aggregated_consequences_by_quantile.hpp"
 #include "hecfda/model/metrics/assurance_result_storage.hpp"
 #include "hecfda/model/metrics/categoried_paired_data.hpp"
 #include "hecfda/model/metrics/categoried_uncertain_paired_data.hpp"
@@ -1956,6 +1957,62 @@ TEST_CASE("aggregated_consequences_binned fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_aggregated_consequences_binned(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for AggregatedConsequencesByQuantile (Phase 6 Task 2): the Empirical-backed
+// quantile-result leaf, sibling to AggregatedConsequencesBinned above. `construct` is
+// {damage_category, asset_category, empirical: {probabilities, values}, impact_area_id,
+// consequence_type, risk_type}, matching the (string, string, Empirical, int, ConsequenceType,
+// RiskType) compute ctor; the Empirical is built via the two-array (probabilities, values) ctor,
+// reusing parse_consequence_type/parse_risk_type above. `method` dispatches
+// consequence_sample_mean (args []) or consequence_exceeded_with_probability_q (args [q]). See
+// fixtures/metrics/aggregated_consequences_by_quantile.json's note for what each case exercises.
+static hecfda::model::metrics::AggregatedConsequencesByQuantile make_aggregated_consequences_by_quantile(
+    const json& ctor) {
+    using namespace hecfda::model::metrics;
+    const auto& emp = ctor["empirical"];
+    hecfda::statistics::distributions::Empirical empirical(emp["probabilities"].get<std::vector<double>>(),
+                                                             emp["values"].get<std::vector<double>>());
+    return AggregatedConsequencesByQuantile(
+        ctor["damage_category"].get<std::string>(), ctor["asset_category"].get<std::string>(),
+        std::move(empirical), ctor["impact_area_id"].get<int>(),
+        parse_consequence_type(ctor["consequence_type"].get<std::string>()),
+        parse_risk_type(ctor["risk_type"].get<std::string>()));
+}
+
+static double run_aggregated_consequences_by_quantile(const json& c, const std::string& method,
+                                                        const json& args) {
+    auto acq = make_aggregated_consequences_by_quantile(c["construct"]);
+    if (method == "consequence_sample_mean") {
+        return acq.consequence_sample_mean();
+    }
+    if (method == "consequence_exceeded_with_probability_q") {
+        return acq.consequence_exceeded_with_probability_q(args[0].get<double>());
+    }
+    auto msg = std::string("unknown aggregated_consequences_by_quantile method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("aggregated_consequences_by_quantile fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/aggregated_consequences_by_quantile.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "aggregated_consequences_by_quantile");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_aggregated_consequences_by_quantile(c, a["method"].get<std::string>(), a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();

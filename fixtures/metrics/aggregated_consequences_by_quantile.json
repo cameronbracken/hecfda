@@ -1,0 +1,44 @@
+{
+  "target": "aggregated_consequences_by_quantile",
+  "kind": "aggregated_consequences_by_quantile",
+  "source_test": "HEC.FDA.Model/metrics/AggregatedConsequencesByQuantile.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real AggregatedConsequencesByQuantile/Empirical directly)",
+  "note": "construct = {damage_category, asset_category, empirical: {probabilities, values}, impact_area_id, consequence_type, risk_type}, matching the AggregatedConsequencesByQuantile(string, string, Empirical, int, ConsequenceType, RiskType) ctor; the Empirical is built via the two-array (probabilities, values) ctor. `consequence_type`/`risk_type` are the C# enum member names (ConsequenceType: UNASSIGNED/Damage/LifeLoss/All; RiskType: Fail/Non_Fail/Total/Unassigned). Assertion `method` dispatches consequence_sample_mean (args []) -> Empirical.SampleMean (0.0, never set by either ported ctor -- see empirical.hpp; kept as a case to pin the faithful zero rather than assuming it), or consequence_exceeded_with_probability_q (args [q]) -> Empirical.InverseCDF(1-q). Cases: (1) uniform_deciles -- a 10-point evenly-spaced Empirical (probabilities 0.1..1.0, values 100..1000), Damage/Fail; non-exceedance probability 1-0.5=0.5 lands exactly on an interior CumulativeProbabilities grid point (0.5), exercising InverseCDF's exact-hit-via-Array.BinarySearch branch; (2) narrow_three_point -- a 3-point Empirical (probabilities 0.2/0.6/0.9, values 10/25/60), LifeLoss/Total; non-exceedance 0.5 falls strictly between the 0.2 and 0.6 grid points, exercising InverseCDF's interpolation branch instead.",
+  "cases": [
+    {
+      "name": "uniform_deciles",
+      "construct": {
+        "damage_category": "Structure",
+        "asset_category": "Residential",
+        "empirical": {
+          "probabilities": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+          "values": [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+        },
+        "impact_area_id": 7,
+        "consequence_type": "Damage",
+        "risk_type": "Fail"
+      },
+      "assertions": [
+        { "method": "consequence_sample_mean", "args": [], "expected": 0, "tol": 1e-9, "mode": "abs" },
+        { "method": "consequence_exceeded_with_probability_q", "args": [0.5], "expected": 500, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "narrow_three_point",
+      "construct": {
+        "damage_category": "LifeSafety",
+        "asset_category": "Vehicle",
+        "empirical": {
+          "probabilities": [0.2, 0.6, 0.9],
+          "values": [10, 25, 60]
+        },
+        "impact_area_id": 3,
+        "consequence_type": "LifeLoss",
+        "risk_type": "Total"
+      },
+      "assertions": [
+        { "method": "consequence_sample_mean", "args": [], "expected": 0, "tol": 1e-9, "mode": "abs" },
+        { "method": "consequence_exceeded_with_probability_q", "args": [0.5], "expected": 21.25, "tol": 1e-9, "mode": "abs" }
+      ]
+    }
+  ]
+}

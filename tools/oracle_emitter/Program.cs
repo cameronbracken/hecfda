@@ -1047,6 +1047,29 @@ namespace oracle_emitter {
       throw new Exception("unknown aggregated_consequences_binned method: " + method);
     }
 
+    // AggregatedConsequencesByQuantile (Phase 6 Task 2) is the Empirical-backed quantile-result
+    // leaf, sibling to AggregatedConsequencesBinned above -- built straight from the real
+    // AggregatedConsequencesByQuantile.cs (compiled unpatched, see oracle_emitter.csproj's Task
+    // Phase6T2 comment: it's a clean POCO, no MVVM/XML surface). `construct` is
+    // {damage_category, asset_category, empirical: {probabilities, values}, impact_area_id,
+    // consequence_type, risk_type}, matching the (string, string, Empirical, int, ConsequenceType,
+    // RiskType) ctor; the Empirical is built via the two-array (probabilities, values) ctor, same
+    // as EvalEmpirical above. `method` dispatches ConsequenceSampleMean (args []) or
+    // ConsequenceExceededWithProbabilityQ (args [q]) -- both `internal`, but AggregatedConsequences
+    // ByQuantile.cs is compiled directly into THIS project via a Compile Include (same assembly),
+    // so no reflection is needed (mirrors EvalAggregatedConsequencesBinned).
+    static object EvalAggregatedConsequencesByQuantile(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var emp = c.GetProperty("empirical");
+      var empirical = new Empirical(DA(emp.GetProperty("probabilities")), DA(emp.GetProperty("values")));
+      var consequenceType = Enum.Parse<ConsequenceType>(c.GetProperty("consequence_type").GetString());
+      var riskType = Enum.Parse<RiskType>(c.GetProperty("risk_type").GetString());
+      var acq = new AggregatedConsequencesByQuantile(c.GetProperty("damage_category").GetString(), c.GetProperty("asset_category").GetString(), empirical, c.GetProperty("impact_area_id").GetInt32(), consequenceType, riskType);
+      if (method == "consequence_sample_mean") return acq.ConsequenceSampleMean();
+      if (method == "consequence_exceeded_with_probability_q") return acq.ConsequenceExceededWithProbabilityQ(D(argsEl[0]));
+      throw new Exception("unknown aggregated_consequences_by_quantile method: " + method);
+    }
+
     // StudyAreaConsequencesBinned (Phase 4 Task 4) is the collection wrapper over
     // per-asset-category AggregatedConsequencesBinned results -- built from
     // patched/StudyAreaConsequencesBinned.cs + patched/ConsequenceExtensions.cs (see those files'
@@ -1698,6 +1721,7 @@ namespace oracle_emitter {
               case "inventory_compute_damages": val = EvalInventoryComputeDamages(c, method); break;
               case "consequence_result": val = EvalConsequenceResult(c, method); break;
               case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
+              case "aggregated_consequences_by_quantile": val = EvalAggregatedConsequencesByQuantile(c, method, argsEl); break;
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
               case "categoried_uncertain_paired_data": val = EvalCategoriedUncertainPairedData(c, method, argsEl); break;
               case "assurance_result_storage": val = EvalAssuranceResultStorage(c, method, argsEl); break;

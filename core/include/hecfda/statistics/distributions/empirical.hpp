@@ -35,9 +35,6 @@ namespace distributions {
 //  - `IsMonotonicallyIncreasing`: a public static utility that is never actually called anywhere in
 //    Empirical.cs itself (AddRules() has only a `//TODO: Add rule to test if not monotonically
 //    increasing` comment, never wired up) -- dead/unused in the ported surface, so not transcribed.
-//  - The default parameterless `Empirical()` ctor: exists in C# only for reflection/XML
-//    round-tripping (`ReadFromXML` etc., itself out of scope); not needed by any consumer of the
-//    two data-bearing ctors.
 //
 // PDF has a genuine upstream QUIRK, transcribed verbatim (not "fixed"): it uses
 // `Quantiles.ToList().IndexOf(x)` (an EXACT-value linear scan, .NET semantics: returns -1 -- always
@@ -56,6 +53,19 @@ namespace distributions {
 // distCompared.CumulativeProbabilities). See the `equals()` comment below for the C++ analogue.
 class Empirical : public ContinuousDistribution {
    public:
+    // ported from: Empirical.cs `public Empirical()` -- the default ctor. Restored here (Phase 6
+    // Task 2) after being SEVERED through Phase 5 as "not needed by any consumer of the two
+    // data-bearing ctors": AggregatedConsequencesByQuantile's null/dummy ctor
+    // (`AggregatedConsequencesByQuantile()`) is that consumer now, needing an "empty" Empirical.
+    // Matches C# exactly: a raw field-setter that does NOT call build_from_properties()/
+    // add_rules() (unlike the two data-bearing ctors below), leaving every numeric field at its
+    // C# default of 0 (which is also this class's own member-initializer default, see the private
+    // section below) and both arrays at the single-element {0.0}. sample_size_ (inherited from
+    // ContinuousDistribution, which defaults it to 1) is explicitly reset to 0 here to match C#'s
+    // `Int64 SampleSize` -- never assigned by the default ctor, so it keeps the CLR's
+    // default(Int64) == 0, not ContinuousDistribution's own unrelated default.
+    Empirical() : cumulative_probabilities_({0.0}), quantiles_({0.0}) { sample_size_ = 0; }
+
     // ported from: Empirical.cs Empirical(double[] probabilities, double[] observationValues).
     // "The probabilities and observation values must be in ascending order, and are assumed to be
     // linked as coordinates. Counts should be equal." (upstream doc comment; not re-validated
