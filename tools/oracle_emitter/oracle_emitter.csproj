@@ -168,5 +168,14 @@
          patched/ files above, no explicit Compile Include for the patched pair. -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/utilities/Attributes/DisplayNameAttribute.cs" />
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/ThresholdEnum.cs" />
+    <!-- Task Phase5T4: CategoriedUncertainPairedData's real source pulls in System.Xml.Linq
+         (WriteToXML/ReadFromXML), neither reachable/needed by this subset-compiled project.
+         patched/CategoriedUncertainPairedData.cs drops exactly that (and the now-unused
+         System.Xml.Linq using); both fields, both ctors, AddCurveRealization,
+         PutDataIntoHistograms, GetUncertainPairedData, and InitializeHistograms are kept
+         VERBATIM. CategoriedPairedData.cs (21 lines: one ctor, five auto-properties, no XML/MVVM)
+         compiles unpatched. Same auto-pickup as the patched/ files above, no explicit Compile
+         Include for the patched file. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/CategoriedPairedData.cs" />
   </ItemGroup>
 </Project>

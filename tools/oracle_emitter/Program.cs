@@ -1066,6 +1066,59 @@ namespace oracle_emitter {
       throw new Exception("unknown study_area_consequences_binned method: " + method);
     }
 
+    // CategoriedPairedData + CategoriedUncertainPairedData (Phase 5 Task 4) is the per-
+    // (damageCategory, assetCategory, ConsequenceType, RiskType) damage/FN-frequency curve
+    // accumulator -- built from patched/CategoriedUncertainPairedData.cs (see that file's header
+    // for why it's a patched local copy: WriteToXML/ReadFromXML dropped, everything else
+    // verbatim); CategoriedPairedData.cs (21 lines, no XML/MVVM) compiles unpatched. `construct`
+    // is EITHER {xvals, damage_category, asset_category, consequence_type, risk_type, convergence:
+    // {min_iterations, max_iterations}} (the 6-arg compute ctor) OR {initial_curve: {xvals, yvals,
+    // damage_category, asset_category, consequence_type, risk_type}, convergence: {min_iterations,
+    // max_iterations}} (the CategoriedPairedData-delegating ctor). `realization_batches` is a list
+    // of batches, each a list of {iteration, yvals}: for every batch, build a fresh
+    // PairedData(xvals, yvals) per realization and AddCurveRealization it in order, then
+    // PutDataIntoHistograms() exactly once per batch -- one object is built and staged per case,
+    // shared across every batch and assertion (mirrors run_categoried_uncertain_paired_data in
+    // test_fixtures.cpp). `method` is always sample_paired_data_deterministic_yvals (args []):
+    // GetUncertainPairedData().SamplePairedData(1, true).Yvals.
+    static object EvalCategoriedUncertainPairedData(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+
+      CategoriedUncertainPairedData cupd;
+      if (c.TryGetProperty("initial_curve", out var icEl)) {
+        var initialCurve = new PairedData(DA(icEl.GetProperty("xvals")), DA(icEl.GetProperty("yvals")));
+        var initial = new CategoriedPairedData(
+          initialCurve,
+          icEl.GetProperty("damage_category").GetString(),
+          icEl.GetProperty("asset_category").GetString(),
+          Enum.Parse<ConsequenceType>(icEl.GetProperty("consequence_type").GetString()),
+          Enum.Parse<RiskType>(icEl.GetProperty("risk_type").GetString()));
+        cupd = new CategoriedUncertainPairedData(initial, cc);
+      } else {
+        cupd = new CategoriedUncertainPairedData(
+          DA(c.GetProperty("xvals")),
+          c.GetProperty("damage_category").GetString(),
+          c.GetProperty("asset_category").GetString(),
+          Enum.Parse<ConsequenceType>(c.GetProperty("consequence_type").GetString()),
+          Enum.Parse<RiskType>(c.GetProperty("risk_type").GetString()),
+          cc);
+      }
+
+      double[] xvals = cupd.Xvals.ToArray();
+      foreach (var batch in caseEl.GetProperty("realization_batches").EnumerateArray()) {
+        foreach (var r in batch.EnumerateArray()) {
+          var curve = new PairedData(xvals, DA(r.GetProperty("yvals")));
+          cupd.AddCurveRealization(curve, r.GetProperty("iteration").GetInt64());
+        }
+        cupd.PutDataIntoHistograms();
+      }
+
+      if (method == "sample_paired_data_deterministic_yvals") return cupd.GetUncertainPairedData().SamplePairedData(1, true).Yvals.ToArray();
+      throw new Exception("unknown categoried_uncertain_paired_data method: " + method);
+    }
+
     // AssuranceResultStorage (Phase 5 Task 1) is the histogram-staging Monte Carlo accumulator for
     // one assurance metric -- built from patched/AssuranceResultStorage.cs (see that file's header
     // for why it's a patched local copy: WriteToXML/ReadFromXML and the XML-only private ctor
@@ -1278,6 +1331,7 @@ namespace oracle_emitter {
               case "consequence_result": val = EvalConsequenceResult(c, method); break;
               case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
+              case "categoried_uncertain_paired_data": val = EvalCategoriedUncertainPairedData(c, method, argsEl); break;
               case "assurance_result_storage": val = EvalAssuranceResultStorage(c, method, argsEl); break;
               case "system_performance_results": val = EvalSystemPerformanceResults(c, method, argsEl); break;
               case "performance_by_thresholds": val = EvalPerformanceByThresholds(c, method, argsEl); break;

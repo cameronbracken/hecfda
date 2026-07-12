@@ -10,6 +10,8 @@
 #include "hecfda/model/extensions/graphical_distribution.hpp"
 #include "hecfda/model/metrics/aggregated_consequences_binned.hpp"
 #include "hecfda/model/metrics/assurance_result_storage.hpp"
+#include "hecfda/model/metrics/categoried_paired_data.hpp"
+#include "hecfda/model/metrics/categoried_uncertain_paired_data.hpp"
 #include "hecfda/model/metrics/consequence_extensions.hpp"
 #include "hecfda/model/metrics/consequence_result.hpp"
 #include "hecfda/model/metrics/performance_by_thresholds.hpp"
@@ -2777,6 +2779,89 @@ TEST_CASE("scenario_stage_damage fixture") {
             if (!hecfda_test::compare_by_mode({got}, {expected}, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + method;
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for CategoriedPairedData + CategoriedUncertainPairedData (Phase 5 Task 4): the
+// per-(damageCategory, assetCategory, ConsequenceType, RiskType) damage/FN-frequency curve
+// accumulator the EAD compute loop batches MC realizations into. `construct` is EITHER
+// {xvals, damage_category, asset_category, consequence_type, risk_type, convergence:
+// {min_iterations, max_iterations}} (the 6-arg compute ctor) OR {initial_curve: {xvals, yvals,
+// damage_category, asset_category, consequence_type, risk_type}, convergence: {min_iterations,
+// max_iterations}} (the CategoriedPairedData-delegating ctor); ConvergenceCriteria uses the 2-arg
+// (minIterations, maxIterations) ctor, same convention as run_aggregated_consequences_binned.
+// `realization_batches` is a list of batches, each a list of {iteration, yvals}: for every batch,
+// construct a fresh PairedData(xvals, yvals) per realization and add_curve_realization it in
+// order, THEN put_data_into_histograms() exactly once per batch -- one
+// CategoriedUncertainPairedData is built and staged per case, shared across every batch and
+// assertion (mirrors run_aggregated_consequences_binned/run_study_area_consequences_binned's
+// "one staged object per case" convention). `method` is always
+// sample_paired_data_deterministic_yvals (args []): get_uncertain_paired_data().sample_paired_data(
+// 1, true)'s (deterministic, monotonicity-forced) Yvals. See
+// fixtures/metrics/categoried_uncertain_paired_data.json's note for what each case exercises (the
+// 0.001-literal vs range/INITIAL_BIN_QUANTITY bin-width branches, the multi-flush-batch
+// accumulation path, the CategoriedPairedData-delegating ctor, and the staged-array zero-
+// contamination quirk).
+static hecfda::model::metrics::CategoriedUncertainPairedData make_categoried_uncertain_paired_data(
+    const json& ctor) {
+    using namespace hecfda::model::metrics;
+    const auto& conv = ctor["convergence"];
+    hecfda::statistics::ConvergenceCriteria cc(conv["min_iterations"].get<int>(),
+                                                conv["max_iterations"].get<int>());
+    if (ctor.contains("initial_curve")) {
+        const auto& ic = ctor["initial_curve"];
+        hecfda::model::paired_data::PairedData curve(ic["xvals"].get<std::vector<double>>(),
+                                                       ic["yvals"].get<std::vector<double>>());
+        CategoriedPairedData initial(std::move(curve), ic["damage_category"].get<std::string>(),
+                                      ic["asset_category"].get<std::string>(),
+                                      parse_consequence_type(ic["consequence_type"].get<std::string>()),
+                                      parse_risk_type(ic["risk_type"].get<std::string>()));
+        return CategoriedUncertainPairedData(initial, cc);
+    }
+    return CategoriedUncertainPairedData(
+        ctor["xvals"].get<std::vector<double>>(), ctor["damage_category"].get<std::string>(),
+        ctor["asset_category"].get<std::string>(),
+        parse_consequence_type(ctor["consequence_type"].get<std::string>()),
+        parse_risk_type(ctor["risk_type"].get<std::string>()), cc);
+}
+
+static std::vector<double> run_categoried_uncertain_paired_data(const json& c, const std::string& method) {
+    using namespace hecfda::model::metrics;
+    CategoriedUncertainPairedData cupd = make_categoried_uncertain_paired_data(c["construct"]);
+    for (const auto& batch : c["realization_batches"]) {
+        for (const auto& r : batch) {
+            hecfda::model::paired_data::PairedData curve(cupd.xvals(),
+                                                           r["yvals"].get<std::vector<double>>());
+            cupd.add_curve_realization(curve, r["iteration"].get<std::int64_t>());
+        }
+        cupd.put_data_into_histograms();
+    }
+    if (method == "sample_paired_data_deterministic_yvals") {
+        return cupd.get_uncertain_paired_data().sample_paired_data(1, true).yvals();
+    }
+    auto msg = std::string("unknown categoried_uncertain_paired_data method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("categoried_uncertain_paired_data fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/categoried_uncertain_paired_data.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "categoried_uncertain_paired_data");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_categoried_uncertain_paired_data(c, a["method"].get<std::string>());
+            std::vector<double> exp = a["expected"].get<std::vector<double>>();
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());
             }
         }
