@@ -1914,6 +1914,94 @@ namespace oracle_emitter {
       throw new Exception("unknown alternative_comparison_report method: " + method);
     }
 
+    // End-to-end capstone (Phase 6 Task 11): the FULL simulated pipeline -- Scenario.Compute ->
+    // Alternative.AnnualizationCompute -> AlternativeComparisonReport.ComputeAlternativeComparisonReport
+    // -- built from impact-area SIMULATIONS (via BuildSimulation, same construct shape every
+    // simulation-target fixture uses), unlike alternative.json/alternative_comparison_report.json's
+    // direct ScenarioResults/AlternativeResults construction. Three case `kind`s, args always []
+    // (every parameter comes off the case object itself, not `args`), see
+    // fixtures/alternatives/end_to_end.json's `note` for full construction detail per kind.
+    static object EvalEndToEnd(JsonElement caseEl, string method, JsonElement argsEl) {
+      var conv = caseEl.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+      bool computeIsDeterministic = caseEl.GetProperty("compute_is_deterministic").GetBoolean();
+      string kind = caseEl.GetProperty("kind").GetString();
+
+      ScenarioResults ComputeOneImpactArea(JsonElement simConstruct) {
+        var sim = BuildSimulation(simConstruct);
+        var scenario = new Scenario(new List<ImpactAreaScenarioSimulation> { sim });
+        return scenario.Compute(cc, computeIsDeterministic);
+      }
+
+      if (kind == "annualization") {
+        ScenarioResults baseResults = ComputeOneImpactArea(caseEl.GetProperty("base_construct"));
+        ScenarioResults futureResults = ComputeOneImpactArea(caseEl.GetProperty("future_construct"));
+        AlternativeResults alt = Alternative.AnnualizationCompute(
+            D(caseEl.GetProperty("discount_rate")), caseEl.GetProperty("period_of_analysis").GetInt32(),
+            caseEl.GetProperty("alternative_id").GetInt32(), baseResults, futureResults,
+            caseEl.GetProperty("base_year").GetInt32(), caseEl.GetProperty("future_year").GetInt32());
+
+        int impactAreaID = caseEl.GetProperty("impact_area_id").GetInt32();
+        string damCat = caseEl.GetProperty("damage_category").GetString();
+        string assetCat = caseEl.GetProperty("asset_category").GetString();
+        double q = D(caseEl.GetProperty("exceedance_probability"));
+
+        if (method == "sample_mean_eqad") return alt.SampleMeanEqad(impactAreaID, damCat, assetCat);
+        if (method == "eqad_exceeded_with_probability_q") return alt.EqadExceededWithProbabilityQ(q, impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_base_year_ead") return alt.SampleMeanBaseYearEAD(impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_future_year_ead") return alt.SampleMeanFutureYearEAD(impactAreaID, damCat, assetCat);
+        if (method == "base_year_ead_exceeded_with_probability_q") return alt.BaseYearEADDamageExceededWithProbabilityQ(q, impactAreaID, damCat, assetCat);
+        if (method == "future_year_ead_exceeded_with_probability_q") return alt.FutureYearEADDamageExceededWithProbabilityQ(q, impactAreaID, damCat, assetCat);
+        throw new Exception("unknown end_to_end annualization method: " + method);
+      }
+
+      if (kind == "comparison_report") {
+        ScenarioResults withoutBase = ComputeOneImpactArea(caseEl.GetProperty("without_base_construct"));
+        ScenarioResults withoutFuture = ComputeOneImpactArea(caseEl.GetProperty("without_future_construct"));
+        ScenarioResults withBase = ComputeOneImpactArea(caseEl.GetProperty("with_base_construct"));
+        ScenarioResults withFuture = ComputeOneImpactArea(caseEl.GetProperty("with_future_construct"));
+
+        double discountRate = D(caseEl.GetProperty("discount_rate"));
+        int poa = caseEl.GetProperty("period_of_analysis").GetInt32();
+        int baseYear = caseEl.GetProperty("base_year").GetInt32();
+        int futureYear = caseEl.GetProperty("future_year").GetInt32();
+        int withoutAltId = caseEl.GetProperty("without_alternative_id").GetInt32();
+        int withAltId = caseEl.GetProperty("with_alternative_id").GetInt32();
+
+        AlternativeResults without = Alternative.AnnualizationCompute(discountRate, poa, withoutAltId, withoutBase, withoutFuture, baseYear, futureYear);
+        AlternativeResults with = Alternative.AnnualizationCompute(discountRate, poa, withAltId, withBase, withFuture, baseYear, futureYear);
+
+        AlternativeComparisonReportResults report = AlternativeComparisonReport.ComputeAlternativeComparisonReport(
+            without, new List<AlternativeResults> { with });
+
+        int impactAreaID = caseEl.GetProperty("impact_area_id").GetInt32();
+        string damCat = caseEl.GetProperty("damage_category").GetString();
+        string assetCat = caseEl.GetProperty("asset_category").GetString();
+        double q = D(caseEl.GetProperty("exceedance_probability"));
+
+        if (method == "eqad_reduced_exceeded_with_probability_q") return report.EqadReducedExceededWithProbabilityQ(q, withAltId, impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_base_year_ead_reduced") return report.SampleMeanBaseYearEADReduced(withAltId, impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_future_year_ead_reduced") return report.SampleMeanFutureYearEADReduced(withAltId, impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_without_project_base_year_ead") return report.SampleMeanWithoutProjectBaseYearEAD(impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_base_year_ead_without_alt") return without.SampleMeanBaseYearEAD(impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_with_project_eqad") return report.SampleMeanWithProjectEqad(withAltId, impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_eqad_with_alt") return with.SampleMeanEqad(impactAreaID, damCat, assetCat);
+        throw new Exception("unknown end_to_end comparison_report method: " + method);
+      }
+
+      if (kind == "muncie") {
+        ScenarioResults results = ComputeOneImpactArea(caseEl.GetProperty("construct"));
+        int impactAreaID = caseEl.GetProperty("impact_area_id").GetInt32();
+        if (method == "mean_eac") {
+          string damCat = argsEl[0].GetString();
+          return results.SampleMeanExpectedAnnualConsequences(impactAreaID, damCat);
+        }
+        throw new Exception("unknown end_to_end muncie method: " + method);
+      }
+
+      throw new Exception("unknown end_to_end kind: " + kind);
+    }
+
     // ImpactAreaScenarioSimulation (Phase 5 Task 7): the skeleton + fluent SimulationBuilder +
     // CanCompute + InitializeConsequenceHistograms surface only -- see
     // patched/ImpactAreaScenarioSimulation.cs's header for what's kept/dropped and why. `construct`
@@ -2237,6 +2325,7 @@ namespace oracle_emitter {
               case "alternative_comparison_report": val = EvalAlternativeComparisonReport(c, method, argsEl); break;
               case "simulation": val = EvalSimulation(c, method, argsEl); break;
               case "scenario": val = EvalScenario(c, method, argsEl); break;
+              case "end_to_end": val = EvalEndToEnd(c, method, argsEl); break;
               case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;

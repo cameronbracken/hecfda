@@ -4482,3 +4482,161 @@ TEST_CASE("impact_area_scenario_simulation_seeded fixture") {
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// End-to-end capstone (Phase 6 Task 11): the FULL simulated pipeline -- Scenario::compute ->
+// Alternative::annualization_compute -> AlternativeComparisonReport::compute_alternative_comparison_
+// report -- built from impact-area SIMULATIONS via build_simulation (the same construct shape every
+// simulation-target fixture above uses), unlike alternative.json/alternative_comparison_report.json's
+// direct ScenarioResults/AlternativeResults construction. See fixtures/alternatives/end_to_end.json's
+// `note` for the full per-kind construction detail and upstream test provenance.
+static hecfda::model::metrics::ScenarioResults run_end_to_end_scenario(
+    const json& sim_construct, const hecfda::statistics::ConvergenceCriteria& cc, bool compute_is_deterministic) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::scenarios::Scenario;
+    std::vector<ImpactAreaScenarioSimulation> simulations;
+    simulations.push_back(build_simulation(sim_construct));
+    Scenario scenario(std::move(simulations));
+    return scenario.compute(cc, compute_is_deterministic);
+}
+
+static double run_end_to_end(const json& c, const std::string& method, const json& args) {
+    using namespace hecfda::model::metrics;
+    using namespace hecfda::model::alternatives;
+    using namespace hecfda::model::alternative_comparison_report;
+
+    const auto& conv = c["convergence"];
+    hecfda::statistics::ConvergenceCriteria cc(conv["min_iterations"].get<int>(), conv["max_iterations"].get<int>());
+    bool compute_is_deterministic = c["compute_is_deterministic"].get<bool>();
+    std::string kind = c["kind"].get<std::string>();
+
+    if (kind == "annualization") {
+        ScenarioResults base_results = run_end_to_end_scenario(c["base_construct"], cc, compute_is_deterministic);
+        ScenarioResults future_results = run_end_to_end_scenario(c["future_construct"], cc, compute_is_deterministic);
+        AlternativeResults alt = Alternative::annualization_compute(
+            c["discount_rate"].get<double>(), c["period_of_analysis"].get<int>(), c["alternative_id"].get<int>(),
+            &base_results, &future_results, c["base_year"].get<int>(), c["future_year"].get<int>());
+
+        int impact_area_id = c["impact_area_id"].get<int>();
+        std::string damage_category = c["damage_category"].get<std::string>();
+        std::string asset_category = c["asset_category"].get<std::string>();
+        double q = c["exceedance_probability"].get<double>();
+
+        if (method == "sample_mean_eqad") return alt.sample_mean_eqad(impact_area_id, damage_category, asset_category);
+        if (method == "eqad_exceeded_with_probability_q") {
+            return alt.eqad_exceeded_with_probability_q(q, impact_area_id, damage_category, asset_category);
+        }
+        if (method == "sample_mean_base_year_ead") {
+            return alt.sample_mean_base_year_ead(impact_area_id, damage_category, asset_category);
+        }
+        if (method == "sample_mean_future_year_ead") {
+            return alt.sample_mean_future_year_ead(impact_area_id, damage_category, asset_category);
+        }
+        if (method == "base_year_ead_exceeded_with_probability_q") {
+            return alt.base_year_ead_exceeded_with_probability_q(q, impact_area_id, damage_category, asset_category);
+        }
+        if (method == "future_year_ead_exceeded_with_probability_q") {
+            return alt.future_year_ead_exceeded_with_probability_q(q, impact_area_id, damage_category, asset_category);
+        }
+        auto msg = std::string("unknown end_to_end annualization method: ") + method;
+        FAIL(msg.c_str());
+        return 0.0;
+    }
+
+    if (kind == "comparison_report") {
+        ScenarioResults without_base = run_end_to_end_scenario(c["without_base_construct"], cc, compute_is_deterministic);
+        ScenarioResults without_future = run_end_to_end_scenario(c["without_future_construct"], cc, compute_is_deterministic);
+        ScenarioResults with_base = run_end_to_end_scenario(c["with_base_construct"], cc, compute_is_deterministic);
+        ScenarioResults with_future = run_end_to_end_scenario(c["with_future_construct"], cc, compute_is_deterministic);
+
+        double discount_rate = c["discount_rate"].get<double>();
+        int poa = c["period_of_analysis"].get<int>();
+        int base_year = c["base_year"].get<int>();
+        int future_year = c["future_year"].get<int>();
+        int without_alt_id = c["without_alternative_id"].get<int>();
+        int with_alt_id = c["with_alternative_id"].get<int>();
+
+        AlternativeResults without = Alternative::annualization_compute(
+            discount_rate, poa, without_alt_id, &without_base, &without_future, base_year, future_year);
+        AlternativeResults with = Alternative::annualization_compute(
+            discount_rate, poa, with_alt_id, &with_base, &with_future, base_year, future_year);
+
+        int impact_area_id = c["impact_area_id"].get<int>();
+        std::string damage_category = c["damage_category"].get<std::string>();
+        std::string asset_category = c["asset_category"].get<std::string>();
+        double q = c["exceedance_probability"].get<double>();
+
+        // Cross-check values must be pulled out BEFORE `without`/`with` are moved into
+        // compute_alternative_comparison_report below -- AlternativeResults is move-only.
+        double without_base_year_ead_direct =
+            without.sample_mean_base_year_ead(impact_area_id, damage_category, asset_category);
+        double with_eqad_direct = with.sample_mean_eqad(impact_area_id, damage_category, asset_category);
+
+        std::vector<AlternativeResults> with_list;
+        with_list.push_back(std::move(with));
+        AlternativeComparisonReportResults report = AlternativeComparisonReport::compute_alternative_comparison_report(
+            std::move(without), std::move(with_list));
+
+        if (method == "eqad_reduced_exceeded_with_probability_q") {
+            return report.eqad_reduced_exceeded_with_probability_q(q, with_alt_id, impact_area_id, damage_category,
+                                                                     asset_category);
+        }
+        if (method == "sample_mean_base_year_ead_reduced") {
+            return report.sample_mean_base_year_ead_reduced(with_alt_id, impact_area_id, damage_category, asset_category);
+        }
+        if (method == "sample_mean_future_year_ead_reduced") {
+            return report.sample_mean_future_year_ead_reduced(with_alt_id, impact_area_id, damage_category, asset_category);
+        }
+        if (method == "sample_mean_without_project_base_year_ead") {
+            return report.sample_mean_without_project_base_year_ead(impact_area_id, damage_category, asset_category);
+        }
+        if (method == "sample_mean_base_year_ead_without_alt") {
+            return without_base_year_ead_direct;
+        }
+        if (method == "sample_mean_with_project_eqad") {
+            return report.sample_mean_with_project_eqad(with_alt_id, impact_area_id, damage_category, asset_category);
+        }
+        if (method == "sample_mean_eqad_with_alt") {
+            return with_eqad_direct;
+        }
+        auto msg = std::string("unknown end_to_end comparison_report method: ") + method;
+        FAIL(msg.c_str());
+        return 0.0;
+    }
+
+    if (kind == "muncie") {
+        ScenarioResults results = run_end_to_end_scenario(c["construct"], cc, compute_is_deterministic);
+        int impact_area_id = c["impact_area_id"].get<int>();
+        if (method == "mean_eac") {
+            std::string damage_category = args[0].get<std::string>();
+            return results.sample_mean_expected_annual_consequences(impact_area_id, damage_category);
+        }
+        auto msg = std::string("unknown end_to_end muncie method: ") + method;
+        FAIL(msg.c_str());
+        return 0.0;
+    }
+
+    auto msg = std::string("unknown end_to_end kind: ") + kind;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("end_to_end fixture") {
+    std::ifstream f(fixtures_dir() + "/alternatives/end_to_end.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "end_to_end");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_end_to_end(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}

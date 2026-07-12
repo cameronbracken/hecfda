@@ -1,0 +1,2658 @@
+{
+  "target": "end_to_end",
+  "kind": "end_to_end",
+  "source_test": "HEC.FDA.ModelTest/unittests/AlternativeTest.cs (AlternativeResults_Test), HEC.FDA.ModelTest/unittests/AlternativeComparisonReportTests.cs (ComputeEqad), HEC.FDA.ModelTest/integrationtests/DefaultDataComputeOutcomes.cs (WithoutAnalytical_ScenarioResults) -- Phase 6 Task 11 capstone: the FULL simulated pipeline, Scenario.Compute -> Alternative.AnnualizationCompute -> AlternativeComparisonReport.ComputeAlternativeComparisonReport, built from impact-area simulations (not direct ScenarioResults/AlternativeResults construction like alternative.json/alternative_comparison_report.json use) -- proving the whole chain end to end.",
+  "note": "Three case `kind`s, all dispatched by run_end_to_end/EvalEndToEnd, all reusing build_simulation/BuildSimulation (the same construct shape every simulation-target fixture uses: impact_area_id, flow_frequency, flow_stage, stage_damage, optional levee) so no new simulation-construction glue is needed -- only the outer Scenario->Alternative->Report wiring is new. Every UncertainPairedData construct (flow_stage/levee, not just stage_damage) carries a non-null damage_category/asset_category -- mirrors the upstream tests' own reuse of ONE shared CurveMetaData object across flow_stage AND stage_damage (e.g. AlternativeTest.cs's `metaData` field), and matters structurally, not just cosmetically: ImpactAreaScenarioSimulation.PopulateRandomNumbers only calls GenerateRandomNumbers for a curve whose CurveMetaData.IsNull is false (ImpactAreaScenarioSimulation.cs:277) -- a flow_stage left with the default null CurveMetaData silently skips random-number population and null-refs on first SamplePairedData call under a SEEDED compute (harmless for the deterministic annualization/comparison_report cases below, fatal for the seeded muncie case, so all three kinds tag it consistently). `annualization` (AlternativeResults_Test): builds base_construct/future_construct (3-node StageXs={0,150000,300000} stage-damage on a 2-node Uniform flow-stage over Uniform(0,100000,1000) flow frequency, future damages scaled by futureDamageFractionOfExistingDamage), computes each via a single-impact-area Scenario with cc(iterations,iterations) and computeIsDeterministic=true, then Alternative::annualization_compute(discount_rate, period_of_analysis, alternative_id, &base, &future, base_year, future_year). Asserts sample_mean_eqad/eqad_exceeded_with_probability_q(0.5)/sample_mean_base_year_ead/sample_mean_future_year_ead/base_year_ead_exceeded_with_probability_q(0.5)/future_year_ead_exceeded_with_probability_q(0.5) -- all PIN, cross-checked against the upstream InlineData literals {208213.8061 (futYr 2072, frac 2.0), 239260.1814 (futYr 2050, frac 2.0), 150000 (frac 1.0, base==future so EAD==EqAD, both futYr rows)} within the test's own 0.01 relative tolerance. `comparison_report` (AlternativeComparisonReportTests.ComputeEqad): builds without-project (no levee) and with-project (levee: Deterministic(0) below top, Deterministic(1) at top, StageXs={0,15,30}, top_of_levee_elevation=7.5) base/future constructs, computes each via its own single-impact-area Scenario(cc(1,iterations), deterministic), annualizes both sides via annualization_compute, then AlternativeComparisonReport::compute_alternative_comparison_report(without, [with]). Asserts eqad_reduced_exceeded_with_probability_q(0.5)/sample_mean_base_year_ead_reduced/sample_mean_future_year_ead_reduced -- PIN, cross-checked against the upstream InlineData literals {51442 (futYr 2072), 59410 (futYr 2050), base-year-reduced 36500, future-year-reduced 75000} within the test's own 0.1 relative tolerance -- plus two EXACT cross-check pairs (each PIN'd independently, verify identical by inspection, matching the C# test's own Assert.Equal(...) with no tolerance): report.sample_mean_without_project_base_year_ead == the without-project AlternativeResults' own sample_mean_base_year_ead, and report.sample_mean_with_project_eqad == the with-project AlternativeResults' own sample_mean_eqad. `muncie` (DefaultDataComputeOutcomes.WithoutAnalytical_ScenarioResults): the Muncie synthetic default-curve-data integration test -- LogPearsonIII(3.707,.24,-.475,48) flow frequency, a 17-point Triangular stage-discharge curve, and TWO 40-point Normal stage-damage curves (Residential, Commercial), computed via a single-impact-area Scenario with cc(50000,50000) SEEDED (computeIsDeterministic=false, matching the upstream test's default `ConvergenceCriteria(maxIterations: 50000)` which leaves minIterations at its own 50000 default, so min==max==50000 -- an exactly-fixed, non-convergence-dependent iteration count), asserting ScenarioResults::sample_mean_expected_annual_consequences(damage_category) for Commercial/Residential -- PIN, cross-checked against the upstream literals {310937.1 commercial, 295506.53 residential} within the test's own loose 0.11 relative tolerance (a Monte Carlo smoke test, not a tight pin, per the upstream test's own tolerance). Measured full-suite ctest runtime with this case included stayed under ~10s, so NO iteration-count reduction was needed -- the full upstream 50000 is used verbatim. Only WithoutAnalytical_ScenarioResults is ported; the sibling AnalyticalWithRegUnreg_ScenarioResults test requires WithInflowOutflow (a regulated/unregulated flow transform the simulation builder does not yet expose), out of scope for this capstone per the task brief's 'keep ONE representative Muncie case' allowance. All `expected: \"PIN\"` values are gate-captured against the real, patched C# Scenario/Alternative/AlternativeComparisonReport, never hand-derived; the literals named above are cross-checks against the upstream test's own (looser) InlineData/expected values, not the fixture's actual pinned literals.",
+  "cases": [
+    {
+      "name": "alternative_results_test_futyr2072_frac2",
+      "kind": "annualization",
+      "convergence": {
+        "min_iterations": 1,
+        "max_iterations": 1
+      },
+      "compute_is_deterministic": true,
+      "base_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                300000,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "content"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "xs": [
+              0,
+              150000,
+              300000
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "future_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                300000,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "content"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "xs": [
+              0,
+              150000,
+              300000
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000.0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000.0,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "discount_rate": 0.0275,
+      "period_of_analysis": 50,
+      "base_year": 2023,
+      "future_year": 2072,
+      "alternative_id": 1,
+      "impact_area_id": 1,
+      "damage_category": "residential",
+      "asset_category": "content",
+      "exceedance_probability": 0.5,
+      "assertions": [
+        {
+          "method": "sample_mean_eqad",
+          "args": [],
+          "expected": 208213.80403259431,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "eqad_exceeded_with_probability_q",
+          "args": [],
+          "expected": 208213.80403259431,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_base_year_ead",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_future_year_ead",
+          "args": [],
+          "expected": 299999.997,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "base_year_ead_exceeded_with_probability_q",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "future_year_ead_exceeded_with_probability_q",
+          "args": [],
+          "expected": 299999.997,
+          "tol": 0.01,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "alternative_results_test_futyr2050_frac2",
+      "kind": "annualization",
+      "convergence": {
+        "min_iterations": 1,
+        "max_iterations": 1
+      },
+      "compute_is_deterministic": true,
+      "base_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                300000,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "content"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "xs": [
+              0,
+              150000,
+              300000
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "future_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                300000,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "content"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "xs": [
+              0,
+              150000,
+              300000
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000.0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000.0,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "discount_rate": 0.0275,
+      "period_of_analysis": 50,
+      "base_year": 2023,
+      "future_year": 2050,
+      "alternative_id": 1,
+      "impact_area_id": 1,
+      "damage_category": "residential",
+      "asset_category": "content",
+      "exceedance_probability": 0.5,
+      "assertions": [
+        {
+          "method": "sample_mean_eqad",
+          "args": [],
+          "expected": 239260.1790408301,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "eqad_exceeded_with_probability_q",
+          "args": [],
+          "expected": 239260.1790408301,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_base_year_ead",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_future_year_ead",
+          "args": [],
+          "expected": 299999.997,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "base_year_ead_exceeded_with_probability_q",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "future_year_ead_exceeded_with_probability_q",
+          "args": [],
+          "expected": 299999.997,
+          "tol": 0.01,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "alternative_results_test_futyr2072_frac1",
+      "kind": "annualization",
+      "convergence": {
+        "min_iterations": 1,
+        "max_iterations": 1
+      },
+      "compute_is_deterministic": true,
+      "base_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                300000,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "content"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "xs": [
+              0,
+              150000,
+              300000
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "future_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                300000,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "content"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "xs": [
+              0,
+              150000,
+              300000
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000.0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000.0,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "discount_rate": 0.0275,
+      "period_of_analysis": 50,
+      "base_year": 2023,
+      "future_year": 2072,
+      "alternative_id": 1,
+      "impact_area_id": 1,
+      "damage_category": "residential",
+      "asset_category": "content",
+      "exceedance_probability": 0.5,
+      "assertions": [
+        {
+          "method": "sample_mean_eqad",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "eqad_exceeded_with_probability_q",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_base_year_ead",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_future_year_ead",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "base_year_ead_exceeded_with_probability_q",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "future_year_ead_exceeded_with_probability_q",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "alternative_results_test_futyr2050_frac1",
+      "kind": "annualization",
+      "convergence": {
+        "min_iterations": 1,
+        "max_iterations": 1
+      },
+      "compute_is_deterministic": true,
+      "base_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                300000,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "content"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "xs": [
+              0,
+              150000,
+              300000
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "future_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                300000,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "content"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "xs": [
+              0,
+              150000,
+              300000
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000.0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000.0,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "discount_rate": 0.0275,
+      "period_of_analysis": 50,
+      "base_year": 2023,
+      "future_year": 2050,
+      "alternative_id": 1,
+      "impact_area_id": 1,
+      "damage_category": "residential",
+      "asset_category": "content",
+      "exceedance_probability": 0.5,
+      "assertions": [
+        {
+          "method": "sample_mean_eqad",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "eqad_exceeded_with_probability_q",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_base_year_ead",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_future_year_ead",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "base_year_ead_exceeded_with_probability_q",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "future_year_ead_exceeded_with_probability_q",
+          "args": [],
+          "expected": 149999.9985,
+          "tol": 0.01,
+          "mode": "rel"
+        }
+      ]
+    },
+    {
+      "name": "compute_eqad_futyr2072",
+      "kind": "comparison_report",
+      "convergence": {
+        "min_iterations": 1,
+        "max_iterations": 1
+      },
+      "compute_is_deterministic": true,
+      "without_base_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  1
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  1
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "without_future_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "with_base_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "levee": {
+          "xs": [
+            0.0,
+            7.4999,
+            7.5
+          ],
+          "ys": [
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                1
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure",
+          "top_of_levee_elevation": 7.5
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  1
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  1
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "with_future_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "levee": {
+          "xs": [
+            0.0,
+            7.4999,
+            7.5
+          ],
+          "ys": [
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                1
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure",
+          "top_of_levee_elevation": 7.5
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "discount_rate": 0.0275,
+      "period_of_analysis": 50,
+      "base_year": 2023,
+      "future_year": 2072,
+      "without_alternative_id": 1,
+      "with_alternative_id": 2,
+      "impact_area_id": 1,
+      "damage_category": "residential",
+      "asset_category": "structure",
+      "exceedance_probability": 0.5,
+      "assertions": [
+        {
+          "method": "eqad_reduced_exceeded_with_probability_q",
+          "args": [],
+          "expected": 46848.10637588418,
+          "tol": 0.1,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_base_year_ead_reduced",
+          "args": [],
+          "expected": 33750.000000049986,
+          "tol": 0.1,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_future_year_ead_reduced",
+          "args": [],
+          "expected": 67500.00000009997,
+          "tol": 0.1,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_without_project_base_year_ead",
+          "args": [],
+          "expected": 149999.99849999996,
+          "tol": 1e-06,
+          "mode": "abs"
+        },
+        {
+          "method": "sample_mean_base_year_ead_without_alt",
+          "args": [],
+          "expected": 149999.99849999996,
+          "tol": 1e-06,
+          "mode": "abs"
+        },
+        {
+          "method": "sample_mean_with_project_eqad",
+          "args": [],
+          "expected": 161365.6976567101,
+          "tol": 1e-06,
+          "mode": "abs"
+        },
+        {
+          "method": "sample_mean_eqad_with_alt",
+          "args": [],
+          "expected": 161365.6976567101,
+          "tol": 1e-06,
+          "mode": "abs"
+        }
+      ]
+    },
+    {
+      "name": "compute_eqad_futyr2050",
+      "kind": "comparison_report",
+      "convergence": {
+        "min_iterations": 1,
+        "max_iterations": 1
+      },
+      "compute_is_deterministic": true,
+      "without_base_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  1
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  1
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "without_future_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "with_base_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "levee": {
+          "xs": [
+            0.0,
+            7.4999,
+            7.5
+          ],
+          "ys": [
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                1
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure",
+          "top_of_levee_elevation": 7.5
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  1
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  600000,
+                  1
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "with_future_construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "Uniform",
+          "params": [
+            0,
+            100000,
+            1000
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            0,
+            100000
+          ],
+          "ys": [
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                0,
+                10
+              ]
+            },
+            {
+              "type": "Uniform",
+              "params": [
+                0,
+                30,
+                10
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure"
+        },
+        "levee": {
+          "xs": [
+            0.0,
+            7.4999,
+            7.5
+          ],
+          "ys": [
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                0
+              ]
+            },
+            {
+              "type": "Deterministic",
+              "params": [
+                1
+              ]
+            }
+          ],
+          "damage_category": "residential",
+          "asset_category": "structure",
+          "top_of_levee_elevation": 7.5
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "structure",
+            "xs": [
+              0,
+              15,
+              30
+            ],
+            "ys": [
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  0,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000,
+                  10
+                ]
+              },
+              {
+                "type": "Uniform",
+                "params": [
+                  0,
+                  1200000,
+                  10
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "discount_rate": 0.0275,
+      "period_of_analysis": 50,
+      "base_year": 2023,
+      "future_year": 2050,
+      "without_alternative_id": 1,
+      "with_alternative_id": 2,
+      "impact_area_id": 1,
+      "damage_category": "residential",
+      "asset_category": "structure",
+      "exceedance_probability": 0.5,
+      "assertions": [
+        {
+          "method": "eqad_reduced_exceeded_with_probability_q",
+          "args": [],
+          "expected": 53833.54082260185,
+          "tol": 0.1,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_base_year_ead_reduced",
+          "args": [],
+          "expected": 33750.000000049986,
+          "tol": 0.1,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_future_year_ead_reduced",
+          "args": [],
+          "expected": 67500.00000009997,
+          "tol": 0.1,
+          "mode": "rel"
+        },
+        {
+          "method": "sample_mean_without_project_base_year_ead",
+          "args": [],
+          "expected": 149999.99849999996,
+          "tol": 1e-06,
+          "mode": "abs"
+        },
+        {
+          "method": "sample_mean_base_year_ead_without_alt",
+          "args": [],
+          "expected": 149999.99849999996,
+          "tol": 1e-06,
+          "mode": "abs"
+        },
+        {
+          "method": "sample_mean_with_project_eqad",
+          "args": [],
+          "expected": 185426.63821822818,
+          "tol": 1e-06,
+          "mode": "abs"
+        },
+        {
+          "method": "sample_mean_eqad_with_alt",
+          "args": [],
+          "expected": 185426.63821822818,
+          "tol": 1e-06,
+          "mode": "abs"
+        }
+      ]
+    },
+    {
+      "name": "muncie_without_analytical",
+      "kind": "muncie",
+      "convergence": {
+        "min_iterations": 50000,
+        "max_iterations": 50000
+      },
+      "compute_is_deterministic": false,
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": {
+          "type": "LogPearsonIII",
+          "params": [
+            3.707,
+            0.24,
+            -0.475,
+            48
+          ]
+        },
+        "flow_stage": {
+          "xs": [
+            1166,
+            2000,
+            3000,
+            4000,
+            5320,
+            6000,
+            7000,
+            8175,
+            9000,
+            9995,
+            12175,
+            13706,
+            15157,
+            16962,
+            18278,
+            20000,
+            24000
+          ],
+          "ys": [
+            {
+              "type": "Triangular",
+              "params": [
+                928.9,
+                929.21,
+                929.5,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                930.7,
+                931.4,
+                931.9,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                932,
+                932.6,
+                933.3,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                933,
+                933.6,
+                934.4,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                933.8,
+                934.5,
+                935.3,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                934.5,
+                935.2,
+                936.1,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                935,
+                935.8,
+                936.8,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                935.4,
+                936.5,
+                937.6,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                935.9,
+                937.1,
+                938.2,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                936.3,
+                937.6,
+                939,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                937.1,
+                938.6,
+                940.2,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                937.9,
+                939.7,
+                941.4,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                938.6,
+                940.7,
+                942.8,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                939.3,
+                941.6,
+                943.8,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                941.2,
+                942.1,
+                944.25,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                942.3,
+                943.2,
+                946.6,
+                1
+              ]
+            },
+            {
+              "type": "Triangular",
+              "params": [
+                944.5,
+                944.6,
+                948.5,
+                1
+              ]
+            }
+          ],
+          "damage_category": "discharge",
+          "asset_category": "Muncie Stage Disharge Function"
+        },
+        "stage_damage": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Total",
+            "xs": [
+              928.5,
+              929,
+              929.5,
+              930,
+              930.5,
+              931,
+              931.5,
+              932,
+              932.5,
+              933,
+              933.5,
+              934,
+              934.5,
+              935,
+              935.5,
+              936,
+              936.5,
+              937,
+              937.5,
+              938,
+              938.5,
+              939,
+              939.5,
+              940,
+              940.5,
+              941,
+              941.5,
+              942,
+              942.5,
+              943,
+              943.5,
+              944,
+              944.5,
+              945,
+              945.5,
+              946,
+              946.5,
+              947,
+              947.5,
+              948
+            ],
+            "ys": [
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  51.5928738,
+                  261.523066,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  8494.40654,
+                  5853.03112,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  42705.2505,
+                  10436.3847,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  78843.3841,
+                  12648.719,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  181535.627,
+                  46903.951,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  282786.202,
+                  62562.6664,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  461376.05,
+                  88360.1568,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  657568.887,
+                  106897.986,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  940228.124,
+                  116380.758,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  1291920.96,
+                  123996.743,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  1600444.82,
+                  124688.799,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  1927824.54,
+                  128318.428,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  2331462.36,
+                  146003.121,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  3132727.18,
+                  183590.983,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  4634893.77,
+                  272085.674,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  13921118,
+                  462659.916,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  18969940.3,
+                  556548.68,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  22201190.7,
+                  572080.545,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  25412263.2,
+                  580749.227,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  28414272.2,
+                  592921.698,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  31081561.4,
+                  596412.316,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  33582446.2,
+                  611095.533,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  36144273.3,
+                  633548.127,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  38704925.7,
+                  655088.607,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  41340625.3,
+                  693078.291,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  44264231.4,
+                  751016.162,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  47578609.5,
+                  798362.486,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  50860755.3,
+                  798706.801,
+                  1
+                ]
+              }
+            ]
+          },
+          {
+            "damage_category": "Commercial",
+            "asset_category": "Total",
+            "xs": [
+              928.5,
+              929,
+              929.5,
+              930,
+              930.5,
+              931,
+              931.5,
+              932,
+              932.5,
+              933,
+              933.5,
+              934,
+              934.5,
+              935,
+              935.5,
+              936,
+              936.5,
+              937,
+              937.5,
+              938,
+              938.5,
+              939,
+              939.5,
+              940,
+              940.5,
+              941,
+              941.5,
+              942,
+              942.5,
+              943,
+              943.5,
+              944,
+              944.5,
+              945,
+              945.5,
+              946,
+              946.5,
+              947,
+              947.5,
+              948
+            ],
+            "ys": [
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  128.360217,
+                  562.434471,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  4468.8739,
+                  11199.7019,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  59469.291,
+                  52526.3163,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  156145.883,
+                  64565.0729,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  214156.12,
+                  71871.4852,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  333123.004,
+                  214203.97,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  612710.635,
+                  548700.336,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  1176218.11,
+                  824951.013,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  2190460.18,
+                  1009010.59,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  3190704.36,
+                  1048443.2,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  4131829.42,
+                  1041513.53,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  5117499.06,
+                  1062918.93,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  6155497.61,
+                  1093154.12,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  7207650.59,
+                  1133075.73,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  9891031.66,
+                  1254636.09,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  12025257.4,
+                  1393258.11,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  14241762.9,
+                  1514087.28,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  16567845.2,
+                  1615528.87,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  18816831.2,
+                  1720088.68,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  20963806.1,
+                  1830377.22,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  22993727.1,
+                  1948126.3,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  24959017.8,
+                  2072579.08,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  26877164.3,
+                  2192471,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  28611110.3,
+                  2289973.16,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  30053487.1,
+                  2370007.84,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  31248028.2,
+                  2425315.78,
+                  1
+                ]
+              },
+              {
+                "type": "Normal",
+                "params": [
+                  32315917.4,
+                  2469413.8,
+                  1
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "impact_area_id": 1,
+      "assertions": [
+        {
+          "method": "mean_eac",
+          "args": [
+            "Commercial"
+          ],
+          "expected": 322934.29333300365,
+          "tol": 0.11,
+          "mode": "rel"
+        },
+        {
+          "method": "mean_eac",
+          "args": [
+            "Residential"
+          ],
+          "expected": 325235.61578326375,
+          "tol": 0.11,
+          "mode": "rel"
+        }
+      ]
+    }
+  ]
+}
