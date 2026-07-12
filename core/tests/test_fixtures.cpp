@@ -12,6 +12,7 @@
 #include "hecfda/model/metrics/assurance_result_storage.hpp"
 #include "hecfda/model/metrics/consequence_extensions.hpp"
 #include "hecfda/model/metrics/consequence_result.hpp"
+#include "hecfda/model/metrics/performance_by_thresholds.hpp"
 #include "hecfda/model/metrics/study_area_consequences_binned.hpp"
 #include "hecfda/model/metrics/system_performance_results.hpp"
 #include "hecfda/model/metrics/threshold_enum.hpp"
@@ -2079,6 +2080,80 @@ TEST_CASE("system_performance_results fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_system_performance_results(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// PerformanceByThresholds (Phase 5 Task 3) is the Threshold container. `construct.thresholds` is a
+// list of {id, type (ThresholdEnum name string), value, convergence}; each is built via the (id,
+// ConvergenceCriteria, ThresholdEnum, value) ctor and add_threshold'd in list order.
+// `construct.get_threshold_id` selects which one get_threshold retrieves; `threshold_value`/
+// `threshold_type`/`threshold_id` read straight off that retrieved Threshold (plain ctor-assigned
+// data, not oracle math -- exact literals in the fixture). `construct.aep_observations`
+// ({iteration, result}) are then fed into the retrieved Threshold's own SystemPerformanceResults
+// via add_aep_for_assurance, followed by one put_data_into_histograms() call, so `mean_aep` proves
+// add_threshold/get_threshold hand back the SAME live SystemPerformanceResults the ctor built (not
+// a copy) -- pinned from the real C# via the oracle gate. Mirrors EvalPerformanceByThresholds in
+// Program.cs case-for-case.
+static hecfda::model::metrics::ThresholdEnum threshold_enum_from_name(const std::string& name) {
+    using hecfda::model::metrics::ThresholdEnum;
+    if (name == "NotSupported") return ThresholdEnum::NotSupported;
+    if (name == "DefaultExteriorStage") return ThresholdEnum::DefaultExteriorStage;
+    if (name == "TopOfLevee") return ThresholdEnum::TopOfLevee;
+    if (name == "LeveeSystemResponse") return ThresholdEnum::LeveeSystemResponse;
+    if (name == "AdditionalExteriorStage") return ThresholdEnum::AdditionalExteriorStage;
+    FAIL(("unknown ThresholdEnum name: " + name).c_str());
+    return ThresholdEnum::NotSupported;
+}
+
+static double run_performance_by_thresholds(const json& c, const std::string& method, const json& /*args*/) {
+    using namespace hecfda::model::metrics;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    const auto& ctor = c["construct"];
+    PerformanceByThresholds pbt;
+    for (const auto& t : ctor["thresholds"]) {
+        int id = t["id"].get<int>();
+        ThresholdEnum type = threshold_enum_from_name(t["type"].get<std::string>());
+        double value = t["value"].get<double>();
+        const auto& conv = t["convergence"];
+        ConvergenceCriteria cc(conv["min_iterations"].get<int>(), conv["max_iterations"].get<int>());
+        pbt.add_threshold(Threshold(id, cc, type, value));
+    }
+    int get_threshold_id = ctor["get_threshold_id"].get<int>();
+    Threshold& threshold = pbt.get_threshold(get_threshold_id);
+
+    if (method == "threshold_value") return threshold.threshold_value();
+    if (method == "threshold_type") return static_cast<double>(static_cast<int>(threshold.threshold_type()));
+    if (method == "threshold_id") return static_cast<double>(threshold.threshold_id());
+    if (method == "mean_aep") {
+        for (const auto& o : ctor["aep_observations"]) {
+            threshold.system_performance_results().add_aep_for_assurance(o["result"].get<double>(),
+                                                                           o["iteration"].get<int>());
+        }
+        threshold.system_performance_results().put_data_into_histograms();
+        return threshold.system_performance_results().mean_aep();
+    }
+    FAIL("unknown performance_by_thresholds method");
+    return 0.0;
+}
+
+TEST_CASE("performance_by_thresholds fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/performance_by_thresholds.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "performance_by_thresholds");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_performance_by_thresholds(c, a["method"].get<std::string>(), a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();

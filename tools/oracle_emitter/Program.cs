@@ -1187,6 +1187,46 @@ namespace oracle_emitter {
       throw new Exception("unknown system_performance_results case_kind: " + caseKind);
     }
 
+    // PerformanceByThresholds (Phase 5 Task 3) -- the Threshold container. Built from
+    // patched/Threshold.cs + patched/PerformanceByThresholds.cs (see those files' headers for the
+    // patch rationale: XML/MVVM dropped, ctors/AddThreshold/GetThreshold/Equals kept VERBATIM) plus
+    // the real (unpatched) ThresholdEnum. `construct.thresholds` is a list of {id, type
+    // (ThresholdEnum name string), value, convergence}; each is built via the (id,
+    // ConvergenceCriteria, ThresholdEnum, value) ctor and AddThreshold'd in list order.
+    // `construct.get_threshold_id` selects which one GetThreshold retrieves; `threshold_value`/
+    // `threshold_type`/`threshold_id` read straight off that retrieved Threshold (plain ctor-
+    // assigned data, not oracle math). `construct.aep_observations` ({iteration, result}) are then
+    // fed into the retrieved Threshold's own SystemPerformanceResults via AddAEPForAssurance,
+    // followed by one PutDataIntoHistograms() call, so `mean_aep` proves AddThreshold/GetThreshold
+    // hand back the SAME live SystemPerformanceResults the ctor built (not a copy).
+    static object EvalPerformanceByThresholds(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var pbt = new PerformanceByThresholds();
+      foreach (var t in c.GetProperty("thresholds").EnumerateArray()) {
+        int id = t.GetProperty("id").GetInt32();
+        string typeName = t.GetProperty("type").GetString();
+        ThresholdEnum type = Enum.Parse<ThresholdEnum>(typeName);
+        double value = D(t.GetProperty("value"));
+        var conv = t.GetProperty("convergence");
+        var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+        pbt.AddThreshold(new Threshold(id, cc, type, value));
+      }
+      int getThresholdId = c.GetProperty("get_threshold_id").GetInt32();
+      Threshold threshold = pbt.GetThreshold(getThresholdId);
+
+      if (method == "threshold_value") return threshold.ThresholdValue;
+      if (method == "threshold_type") return (double)(int)threshold.ThresholdType;
+      if (method == "threshold_id") return (double)threshold.ThresholdID;
+      if (method == "mean_aep") {
+        foreach (var o in c.GetProperty("aep_observations").EnumerateArray()) {
+          threshold.SystemPerformanceResults.AddAEPForAssurance(D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+        }
+        threshold.SystemPerformanceResults.PutDataIntoHistograms();
+        return threshold.SystemPerformanceResults.MeanAEP();
+      }
+      throw new Exception("unknown performance_by_thresholds method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -1240,6 +1280,7 @@ namespace oracle_emitter {
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
               case "assurance_result_storage": val = EvalAssuranceResultStorage(c, method, argsEl); break;
               case "system_performance_results": val = EvalSystemPerformanceResults(c, method, argsEl); break;
+              case "performance_by_thresholds": val = EvalPerformanceByThresholds(c, method, argsEl); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;
               case "impact_area_stage_damage": val = EvalImpactAreaStageDamage(c, method, argsEl); break;
