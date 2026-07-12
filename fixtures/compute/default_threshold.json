@@ -1,0 +1,106 @@
+{
+  "target": "simulation",
+  "kind": "simulation",
+  "source_test": "HEC.FDA.ModelTest/unittests/DefaultThresholdShould.cs (ProduceSameThresholdStageRegardlessOfDamageCategoryCount, BeCreatedAutomaticallyWhenNoThresholdProvided, NotOverrideUserProvidedDefaultThreshold) -- exercises ImpactAreaScenarioSimulation.cs SetupPerformanceThresholds (136-160) + ComputeDefaultThreshold (707-722) + ComputeTotalStageDamage (695-706) via a single DETERMINISTIC pass, not the full Monte Carlo compute loop (Phase 5 Task 10's job).",
+  "note": "construct = {impact_area_id, flow_frequency: {type,params} (Uniform(0,100000,1000)), flow_stage: {xs:[0,100000], ys:[{Uniform,[0,0,10]},{Uniform,[0,30,10]}]} (MakeFlowStage), stage_damage: [{damage_category, asset_category, xs:[0,15,30], ys:[{Uniform,[0,0,10]},{Uniform,[0,600000,10]},{Uniform,[0,600000,10]}]}, ...] (one entry per MakeStageDamage call -- the two_categories case adds a second entry with a different damage_category so it's a genuinely distinct AggregatedConsequencesBinned/ConsequenceFrequencyFunctions bucket, matching the real DefaultThresholdShould test), additional_threshold: {threshold_id, type, value} OPTIONAL (NotOverrideUserProvidedDefaultThreshold's pre-registered ID-0 Threshold via WithAdditionalThreshold, built with ConvergenceCriteria(1,1) matching the C# test)}. method 'default_threshold_value', args [min_iterations, max_iterations] (always [1,1], matching every DefaultThresholdShould test's ConvergenceCriteria(minIterations:1, maxIterations:1)): calls setup_performance_thresholds(ConvergenceCriteria(min,max)) directly (this port's public-access relaxation of the private C# SetupPerformanceThresholds, matching Task 7/8's identical rationale for can_compute/initialize_consequence_histograms/populate_random_numbers/get_frequency_stage_sample -- SetupPerformanceThresholds alone reproduces DefaultThresholdShould's oracles without needing Task 10's not-yet-implemented Monte Carlo ComputeIterations loop, since it runs its own internal deterministic iteration-1 pass and Threshold.ThresholdValue is never touched by ComputeIterations afterward), then reads results().performance_by_thresholds().get_threshold(0).threshold_value(). All values PIN (gate-captured against the real C#, never hand-derived) except the user-override case, which is a direct pass-through of the literal 20.0 supplied to the Threshold ctor (verified via the gate too, not hand-derived).",
+  "cases": [
+    {
+      "name": "single_category_default_threshold_in_range",
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": { "type": "Uniform", "params": [0, 100000, 1000] },
+        "flow_stage": {
+          "xs": [0, 100000],
+          "ys": [
+            { "type": "Uniform", "params": [0, 0, 10] },
+            { "type": "Uniform", "params": [0, 30, 10] }
+          ]
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "Structure",
+            "xs": [0, 15, 30],
+            "ys": [
+              { "type": "Uniform", "params": [0, 0, 10] },
+              { "type": "Uniform", "params": [0, 600000, 10] },
+              { "type": "Uniform", "params": [0, 600000, 10] }
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        { "method": "default_threshold_value", "args": [1, 1], "expected": 0.7424999999999999, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "two_categories_default_threshold_same_stage",
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": { "type": "Uniform", "params": [0, 100000, 1000] },
+        "flow_stage": {
+          "xs": [0, 100000],
+          "ys": [
+            { "type": "Uniform", "params": [0, 0, 10] },
+            { "type": "Uniform", "params": [0, 30, 10] }
+          ]
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "Structure",
+            "xs": [0, 15, 30],
+            "ys": [
+              { "type": "Uniform", "params": [0, 0, 10] },
+              { "type": "Uniform", "params": [0, 600000, 10] },
+              { "type": "Uniform", "params": [0, 600000, 10] }
+            ]
+          },
+          {
+            "damage_category": "commercial",
+            "asset_category": "Structure",
+            "xs": [0, 15, 30],
+            "ys": [
+              { "type": "Uniform", "params": [0, 0, 10] },
+              { "type": "Uniform", "params": [0, 600000, 10] },
+              { "type": "Uniform", "params": [0, 600000, 10] }
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        { "method": "default_threshold_value", "args": [1, 1], "expected": 0.7424999999999999, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "user_override_default_threshold_not_overridden",
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": { "type": "Uniform", "params": [0, 100000, 1000] },
+        "flow_stage": {
+          "xs": [0, 100000],
+          "ys": [
+            { "type": "Uniform", "params": [0, 0, 10] },
+            { "type": "Uniform", "params": [0, 30, 10] }
+          ]
+        },
+        "stage_damage": [
+          {
+            "damage_category": "residential",
+            "asset_category": "Structure",
+            "xs": [0, 15, 30],
+            "ys": [
+              { "type": "Uniform", "params": [0, 0, 10] },
+              { "type": "Uniform", "params": [0, 600000, 10] },
+              { "type": "Uniform", "params": [0, 600000, 10] }
+            ]
+          }
+        ],
+        "additional_threshold": { "threshold_id": 0, "type": "AdditionalExteriorStage", "value": 20.0 }
+      },
+      "assertions": [
+        { "method": "default_threshold_value", "args": [1, 1], "expected": 20.0, "tol": 0.0, "mode": "exact" }
+      ]
+    }
+  ]
+}

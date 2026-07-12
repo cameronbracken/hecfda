@@ -38,6 +38,7 @@
 //    case.
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using HEC.FDA.Model.extensions;
 using HEC.FDA.Model.metrics;
 using HEC.FDA.Model.paireddata;
@@ -288,6 +289,316 @@ namespace HEC.FDA.Model.compute
                 frequency_stage = discharge_stage_sample.compose(transformff);
             }
             return frequency_stage;
+        }
+
+        // ============================================================================================
+        // Phase 5 Task 9: risk/consequence integration + performance/threshold/assurance, VERBATIM
+        // from the real ImpactAreaScenarioSimulation.cs (lines 136-774), made `public` where the real
+        // C# has them `private`/`internal` -- same access-relaxation rationale as CanCompute/
+        // InitializeConsequenceHistograms/PopulateRandomNumbers/GetFrequencyStageSample above (this
+        // subset-compiled emitter has no [InternalsVisibleTo] test-assembly equivalent). Dropped only
+        // what the file header already documents as out of scope: ComputeIterations (the Monte Carlo
+        // loop itself, Task 10) is not needed here -- SetupPerformanceThresholds runs its own
+        // self-contained deterministic iteration-1 pass to derive the default threshold, independent
+        // of ComputeIterations.
+        // ============================================================================================
+
+        public void SetupPerformanceThresholds(ConvergenceCriteria convergenceCriteria)
+        {
+            bool defaultThresholdExists = _ImpactAreaScenarioResults.PerformanceByThresholds.ListOfThresholds.Select(x => x.ThresholdID).Contains(0);
+
+            if (_SystemResponseFunction.Xvals != null)
+            {
+                Threshold systemResponseThreshold = DetermineSystemResponseThreshold(convergenceCriteria);
+                _ImpactAreaScenarioResults.PerformanceByThresholds.AddThreshold(systemResponseThreshold);
+            }
+            else if (!defaultThresholdExists)
+            {
+                FrequencyStageCurves curves = GetFrequencyStageSample(computeIsDeterministic: true, 1);
+                ComputeRiskFromStageFrequency(curves.FloodplainStage, 1, 1, computeIsDeterministic: true, _FailureStageDamageFunctions, ConsequenceType.Damage, false, true);
+                Threshold defaultThreshold = ComputeDefaultThreshold(convergenceCriteria, damageFrequencyFunctions: _ImpactAreaScenarioResults.ConsequenceFrequencyFunctions.Select((c) => c.FrequencyCurve).ToList());
+                _ImpactAreaScenarioResults.PerformanceByThresholds.AddThreshold(defaultThreshold);
+            }
+
+            CreateHistogramsForAssuranceOfThresholds();
+        }
+
+        public Threshold DetermineSystemResponseThreshold(ConvergenceCriteria convergenceCriteria)
+        {
+            ThresholdEnum thresholdEnum;
+            if (_SystemResponseFunction.Xvals.Length <= 2)
+            {
+                thresholdEnum = ThresholdEnum.TopOfLevee;
+            }
+            else
+            {
+                thresholdEnum = ThresholdEnum.LeveeSystemResponse;
+            }
+            return new Threshold(thresholdID: 0, _SystemResponseFunction, convergenceCriteria, thresholdEnum, _TopOfLeveeElevation);
+        }
+
+        public PairedData ComputeRiskFromStageFrequency(FrequencyStageCurves curves, long thisComputeIteration, long thisChunkIteration, bool computeIsDeterministic)
+        {
+            if (_SystemResponseFunction.CurveMetaData.IsNull)
+            {
+                if (_HasFailureStageDamage)
+                {
+                    ComputeRiskFromStageFrequency(curves.FloodplainStage, thisComputeIteration, thisChunkIteration, computeIsDeterministic, _FailureStageDamageFunctions, ConsequenceType.Damage);
+                }
+                if (_HasFailureStageLifeLoss)
+                {
+                    ComputeRiskFromStageFrequency(curves.FloodplainStage, thisComputeIteration, thisChunkIteration, computeIsDeterministic, _FailureStageLifeLossFunctions, ConsequenceType.LifeLoss);
+                }
+                return null;
+            }
+            else
+            {
+                PairedData systemResponse_sample = _SystemResponseFunction.SamplePairedData(thisComputeIteration, computeIsDeterministic);
+                if (_HasFailureStageDamage)
+                {
+                    ComputeRiskFromStageFrequency_WithLevee(curves, systemResponse_sample, thisComputeIteration, thisChunkIteration, computeIsDeterministic, ConsequenceType.Damage);
+                }
+                if (_HasFailureStageLifeLoss)
+                {
+                    ComputeRiskFromStageFrequency_WithLevee(curves, systemResponse_sample, thisComputeIteration, thisChunkIteration, computeIsDeterministic, ConsequenceType.LifeLoss);
+                }
+                return systemResponse_sample;
+            }
+        }
+
+        public void ComputePerformanceFromStageFrequency(PairedData channelStageFreq, PairedData systemResponse_sample, int thisChunkIteration)
+        {
+            if (systemResponse_sample == null || systemResponse_sample.Xvals.Count <= 2)
+            {
+                ComputePerformance(channelStageFreq, thisChunkIteration);
+            }
+            else
+            {
+                ComputeLeveePerformance(channelStageFreq, systemResponse_sample, thisChunkIteration);
+            }
+        }
+
+        public void ComputeRiskFromStageFrequency(PairedData frequency_stage, long thisComputeIteration, long thisChunkIteration, bool computeIsDeterministic, List<UncertainPairedData> consequenceFunctions, ConsequenceType consequenceType, bool saveAnnualizedResult = true, bool saveFreqCurves = false)
+        {
+            foreach (UncertainPairedData stageUncertainConsequences in consequenceFunctions)
+            {
+                PairedData _stage_consequences_sample = stageUncertainConsequences.SamplePairedData(thisComputeIteration, computeIsDeterministic);
+                PairedData frequency_consequences = _stage_consequences_sample.compose(frequency_stage);
+                if (saveFreqCurves)
+                {
+                    _ImpactAreaScenarioResults.ConsequenceFrequencyFunctions.Add(new(frequency_consequences, stageUncertainConsequences.CurveMetaData.DamageCategory, stageUncertainConsequences.CurveMetaData.AssetCategory, consequenceType, RiskType.Fail));
+                }
+                if (!saveAnnualizedResult)
+                {
+                    continue;
+                }
+                CategoriedUncertainPairedData uncertainCurve = _ImpactAreaScenarioResults.GetOrCreateUncertainConsequenceFrequencyCurve(
+                    frequency_consequences.Xvals.ToArray(),
+                    stageUncertainConsequences.CurveMetaData.DamageCategory,
+                    stageUncertainConsequences.CurveMetaData.AssetCategory,
+                    consequenceType,
+                    RiskType.Fail,
+                    _ConvergenceCriteria);
+                uncertainCurve.AddCurveRealization(frequency_consequences, thisChunkIteration);
+
+                double eaConsequencesEstimate = frequency_consequences.Integrate();
+                _ImpactAreaScenarioResults.ConsequenceResults.AddConsequenceRealization(eaConsequencesEstimate, stageUncertainConsequences.CurveMetaData.DamageCategory, stageUncertainConsequences.CurveMetaData.AssetCategory, _ImpactAreaID, thisChunkIteration, consequenceType, RiskType.Fail);
+            }
+        }
+
+        public void ComputeRiskFromStageFrequency_WithLevee(FrequencyStageCurves curves, PairedData systemResponse, long thisComputeIteration, long thisChunkIteration, bool computeIsDeterministic, ConsequenceType type)
+        {
+            List<UncertainPairedData> failureStageDamageFunctions;
+            List<UncertainPairedData> nonfailureStageDamageFunctions;
+
+            if (type == ConsequenceType.LifeLoss)
+            {
+                failureStageDamageFunctions = _FailureStageLifeLossFunctions;
+                nonfailureStageDamageFunctions = _NonFailureStageLifeLossFunctions;
+            }
+            else
+            {
+                failureStageDamageFunctions = _FailureStageDamageFunctions;
+                nonfailureStageDamageFunctions = _NonFailureStageDamageFunctions;
+            }
+
+            PairedData validatedSystemResponse = EnsureBottomAndTopHaveCorrectProbabilities(systemResponse);
+            ComputeAnnualizedConsequence(curves, thisComputeIteration, thisChunkIteration, computeIsDeterministic, type, failureStageDamageFunctions, validatedSystemResponse, RiskType.Fail);
+
+            if (nonfailureStageDamageFunctions.Count > 0)
+            {
+                PairedData complementSystemResponse = CalculateFailureProbComplement(validatedSystemResponse);
+                ComputeAnnualizedConsequence(curves, thisComputeIteration, thisChunkIteration, computeIsDeterministic, type, nonfailureStageDamageFunctions, complementSystemResponse, RiskType.Non_Fail);
+            }
+        }
+
+        public void ComputeAnnualizedConsequence(FrequencyStageCurves curves, long thisComputeIteration, long thisChunkIteration, bool computeIsDeterministic, ConsequenceType type, List<UncertainPairedData> stageConsequenceFuncs, PairedData validatedSystemResponse, RiskType riskType)
+        {
+            foreach (UncertainPairedData stageUncertainCons in stageConsequenceFuncs)
+            {
+                PairedData stageDamageSample = stageUncertainCons.SamplePairedData(thisComputeIteration, computeIsDeterministic);
+                PairedData damFreq;
+                if (ReferenceEquals(curves.ChannelStage, curves.FloodplainStage))
+                {
+                    stageDamageSample = stageDamageSample.multiply(validatedSystemResponse);
+                    damFreq = stageDamageSample.compose(curves.FloodplainStage);
+                }
+                else
+                {
+                    PairedData freqDamage = stageDamageSample.compose(curves.FloodplainStage);
+                    PairedData freqFailure = validatedSystemResponse.compose(curves.ChannelStage);
+                    damFreq = freqDamage.multiply(freqFailure);
+                }
+
+                CategoriedUncertainPairedData uncertainCurve = _ImpactAreaScenarioResults.GetOrCreateUncertainConsequenceFrequencyCurve(
+                    damFreq.Xvals.ToArray(),
+                    stageUncertainCons.CurveMetaData.DamageCategory,
+                    stageUncertainCons.CurveMetaData.AssetCategory,
+                    type,
+                    riskType,
+                    _ConvergenceCriteria);
+                uncertainCurve.AddCurveRealization(damFreq, thisChunkIteration);
+
+                double eadOraal = damFreq.Integrate();
+                _ImpactAreaScenarioResults.ConsequenceResults.AddConsequenceRealization(eadOraal, stageUncertainCons.CurveMetaData.DamageCategory, stageUncertainCons.CurveMetaData.AssetCategory, _ImpactAreaID, thisChunkIteration, type, riskType);
+            }
+        }
+
+        public static PairedData CalculateFailureProbComplement(PairedData validatedSystemResponse)
+        {
+            double[] probabilityOfNonFailure = new double[validatedSystemResponse.Yvals.Count];
+            for (int i = 0; i < probabilityOfNonFailure.Length; i++)
+            {
+                probabilityOfNonFailure[i] = 1 - (validatedSystemResponse.Yvals[i]);
+            }
+            PairedData complementOfSystemResponse = new(validatedSystemResponse.Xvals.ToArray(), probabilityOfNonFailure);
+            return complementOfSystemResponse;
+        }
+
+        public void ComputePerformance(PairedData frequency_stage, int thisChunkIteration)
+        {
+            foreach (var thresholdEntry in _ImpactAreaScenarioResults.PerformanceByThresholds.ListOfThresholds)
+            {
+                double thresholdValue = thresholdEntry.ThresholdValue;
+                double aep = 1 - frequency_stage.f_inverse(thresholdValue);
+                thresholdEntry.SystemPerformanceResults.AddAEPForAssurance(aep, thisChunkIteration);
+                GetStageForNonExceedanceProbability(frequency_stage, thresholdEntry, thisChunkIteration);
+            }
+        }
+
+        public void ComputeLeveePerformance(PairedData frequency_stage, PairedData levee_curve_sample, int thisChunkIteration)
+        {
+            PairedData levee_frequency_stage = levee_curve_sample.compose(frequency_stage);
+            double aep = 0;
+            if (levee_frequency_stage.Xvals[0] != 0)
+            {
+                double initialProbOfStageInRange = levee_frequency_stage.Xvals[0] - 0;
+                double initialProbFailure = (levee_frequency_stage.Yvals[0] + 0) / 2;
+                aep += initialProbOfStageInRange * initialProbFailure;
+            }
+            for (int i = 1; i < levee_frequency_stage.Xvals.Count; i++)
+            {
+                double probabilityOfStageInRange = levee_frequency_stage.Xvals[i] - levee_frequency_stage.Xvals[i - 1];
+                double averageProbFailure = (levee_frequency_stage.Yvals[i] + levee_frequency_stage.Yvals[i - 1]) / 2;
+                aep += probabilityOfStageInRange * averageProbFailure;
+            }
+            double finalProbOfStageInRange = 1 - levee_frequency_stage.Xvals[^1];
+            double finalAvgProbFailure = levee_frequency_stage.Yvals[^1];
+            aep += finalProbOfStageInRange * finalAvgProbFailure;
+            foreach (var thresholdEntry in _ImpactAreaScenarioResults.PerformanceByThresholds.ListOfThresholds)
+            {
+                thresholdEntry.SystemPerformanceResults.AddAEPForAssurance(aep, thisChunkIteration);
+                GetStageForNonExceedanceProbability(frequency_stage, thresholdEntry, thisChunkIteration);
+            }
+        }
+
+        public static void GetStageForNonExceedanceProbability(PairedData frequency_stage, Threshold threshold, int thisChunkIteration)
+        {
+            double[] er101RequiredNonExceedanceProbabilities = new double[] { .9, .96, .98, .99, .996, .998 };
+            foreach (double nonExceedanceProbability in er101RequiredNonExceedanceProbabilities)
+            {
+                double stageOfEvent = frequency_stage.f(nonExceedanceProbability);
+                threshold.SystemPerformanceResults.AddStageForAssurance(nonExceedanceProbability, stageOfEvent, thisChunkIteration);
+            }
+        }
+
+        public void CreateHistogramsForAssuranceOfThresholds()
+        {
+            double[] er101RequiredNonExceedanceProbabilities = new double[] { .9, .96, .98, .99, .996, .998 };
+            foreach (var thresholdEntry in _ImpactAreaScenarioResults.PerformanceByThresholds.ListOfThresholds)
+            {
+                for (int i = 0; i < er101RequiredNonExceedanceProbabilities.Length; i++)
+                {
+                    thresholdEntry.SystemPerformanceResults.AddStageAssuranceHistogram(er101RequiredNonExceedanceProbabilities[i]);
+                }
+            }
+        }
+
+        internal static PairedData ComputeTotalStageDamage(List<UncertainPairedData> failStageDamages)
+        {
+            CurveMetaData metadata = new("Total", "Total");
+            PairedData totalStageDamage = new(null, null, metadata);
+            long iteration = 1;
+            foreach (UncertainPairedData uncertainPairedData in failStageDamages)
+            {
+                PairedData stageDamageSample = uncertainPairedData.SamplePairedData(iteration, retrieveDeterministicRepresentation: true);
+                totalStageDamage = totalStageDamage.SumYsForGivenX(stageDamageSample);
+            }
+            return totalStageDamage;
+        }
+
+        public Threshold ComputeDefaultThreshold(ConvergenceCriteria convergenceCriteria, List<PairedData> damageFrequencyFunctions)
+        {
+            if (!_SystemResponseFunction.IsNull)
+            {
+                throw new Exception("A default threshold cannot be calculated for an impact area with a levee.");
+            }
+            PairedData totalStageDamage = ComputeTotalStageDamage(_FailureStageDamageFunctions);
+            PairedData totalFrequencyDamage = damageFrequencyFunctions[0];
+            for (int i = 1; i < damageFrequencyFunctions.Count; i++)
+            {
+                totalFrequencyDamage = totalFrequencyDamage.SumYsForGivenX(damageFrequencyFunctions[i]);
+            }
+            double thresholdDamage = THRESHOLD_DAMAGE_PERCENT * totalFrequencyDamage.f(THRESHOLD_DAMAGE_RECURRENCE_INTERVAL);
+            double thresholdStage = totalStageDamage.f_inverse(thresholdDamage);
+            return new Threshold(DEFAULT_THRESHOLD_ID, convergenceCriteria, ThresholdEnum.DefaultExteriorStage, thresholdStage);
+        }
+
+        private static PairedData EnsureBottomAndTopHaveCorrectProbabilities(PairedData systemResponseFunction)
+        {
+            bool systemResponseIsComplete = (systemResponseFunction.Yvals.Contains(0) && systemResponseFunction.Yvals.Contains(1));
+            if (systemResponseIsComplete)
+            {
+                return systemResponseFunction;
+            }
+            else
+            {
+                List<double> tempXvals = new();
+                List<double> tempYvals = new();
+
+                double buffer = .001;
+
+                double belowFragilityCurveValue = 0.0;
+                double stageToAddBelowFragility = systemResponseFunction.Xvals[0] - buffer;
+
+                tempXvals.Add(stageToAddBelowFragility);
+                tempYvals.Add(belowFragilityCurveValue);
+
+                for (int i = 0; i < systemResponseFunction.Xvals.Count; i++)
+                {
+                    tempXvals.Add(systemResponseFunction.Xvals[i]);
+                    tempYvals.Add(systemResponseFunction.Yvals[i]);
+                }
+
+                double aboveFragilityCurveValue = 1.0;
+                double stageToAddAboveFragility = systemResponseFunction.Xvals[^1] + buffer;
+
+                tempXvals.Add(stageToAddAboveFragility);
+                tempYvals.Add(aboveFragilityCurveValue);
+
+                PairedData newSystemREsponse = new(tempXvals.ToArray(), tempYvals.ToArray());
+                return newSystemREsponse;
+            }
         }
 
         public static SimulationBuilder Builder(int impactAreaID)

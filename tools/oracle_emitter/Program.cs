@@ -1433,6 +1433,16 @@ namespace oracle_emitter {
         }
         builder = builder.WithNonFailureStageDamage(nonFailureStageDamage);
       }
+      // Phase 5 Task 9: optional additional_threshold ({threshold_id, type, value}) -- mirrors
+      // DefaultThresholdShould.NotOverrideUserProvidedDefaultThreshold's pre-registered ID-0
+      // Threshold, built with ConvergenceCriteria(1, 1) matching every DefaultThresholdShould test.
+      if (ctor.TryGetProperty("additional_threshold", out var at)) {
+        var thresholdCc = new ConvergenceCriteria(1, 1);
+        var userThreshold = new Threshold(at.GetProperty("threshold_id").GetInt32(), thresholdCc,
+                                           Enum.Parse<ThresholdEnum>(at.GetProperty("type").GetString()),
+                                           at.GetProperty("value").GetDouble());
+        builder = builder.WithAdditionalThreshold(userThreshold);
+      }
       return builder.Build();
     }
     static object EvalSimulation(JsonElement caseEl, string method, JsonElement argsEl) {
@@ -1460,6 +1470,19 @@ namespace oracle_emitter {
         bool computeIsDeterministic = argsEl[3].GetDouble() != 0.0;
         FrequencyStageCurves curves = simulation.GetFrequencyStageSample(computeIsDeterministic, iterationNumber);
         return method == "frequency_stage_channel_yvals" ? curves.ChannelStage.Yvals : curves.FloodplainStage.Yvals;
+      }
+      // Phase 5 Task 9: SetupPerformanceThresholds's own deterministic ComputeDefaultThreshold
+      // pass. args = [min_iterations, max_iterations] (always [1, 1] in
+      // fixtures/compute/default_threshold.json). Mirrors DefaultThresholdShould's
+      // Compute(convergenceCriteria, new CancellationToken(), computeIsDeterministic: true) --
+      // but calls SetupPerformanceThresholds directly rather than the full Compute()/
+      // ComputeIterations path (not compiled into this subset-compiled emitter project, see the
+      // patched file's header): SetupPerformanceThresholds's own internal deterministic pass fully
+      // derives the default threshold's ThresholdValue, and nothing else downstream ever mutates it.
+      if (method == "default_threshold_value") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        simulation.SetupPerformanceThresholds(cc);
+        return simulation.ImpactAreaScenarioResultsForTest.PerformanceByThresholds.GetThreshold(0).ThresholdValue;
       }
       throw new Exception("unknown simulation method: " + method);
     }

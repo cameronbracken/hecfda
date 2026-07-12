@@ -3154,9 +3154,18 @@ make_simulation_continuous_distribution(const json& spec) {
     return std::unique_ptr<ContinuousDistribution>(continuous);
 }
 
+// Phase 5 Task 9: optional `additional_threshold` construct field ({threshold_id, type, value}),
+// pre-registering a user-supplied Threshold (mirrors DefaultThresholdShould.
+// NotOverrideUserProvidedDefaultThreshold's `new Threshold(0, convergenceCriteria,
+// ThresholdEnum.AdditionalExteriorStage, userStage)` + `.WithAdditionalThreshold(userThreshold)`).
+// Built with ConvergenceCriteria(1, 1), matching every DefaultThresholdShould test's
+// `new ConvergenceCriteria(minIterations: 1, maxIterations: 1)`. threshold_enum_from_name is
+// defined above (shared with the performance_by_thresholds/threshold fixture dispatch).
 static hecfda::model::compute::ImpactAreaScenarioSimulation build_simulation(const json& ctor) {
     using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::metrics::Threshold;
     using hecfda::model::paired_data::UncertainPairedData;
+    using hecfda::statistics::ConvergenceCriteria;
 
     int impact_area_id = ctor["impact_area_id"].get<int>();
 
@@ -3165,23 +3174,31 @@ static hecfda::model::compute::ImpactAreaScenarioSimulation build_simulation(con
         stage_damage.push_back(make_simulation_upd(sd));
     }
 
+    auto builder = ImpactAreaScenarioSimulation::builder(impact_area_id)
+                       .with_flow_frequency(make_simulation_continuous_distribution(ctor["flow_frequency"]))
+                       .with_flow_stage(make_simulation_upd(ctor["flow_stage"]))
+                       .with_stage_damages(std::move(stage_damage));
+
+    // Each with_* mutates `builder`'s internal simulation in place and returns an (unused, here)
+    // rvalue reference to the same object -- called as a plain statement on the `builder` lvalue
+    // rather than reassigned, matching the established OccupancyType::builder() precedent (avoids a
+    // self-move-assignment).
     if (ctor.contains("non_failure_stage_damage")) {
         std::vector<UncertainPairedData> non_failure_stage_damage;
         for (const auto& sd : ctor["non_failure_stage_damage"]) {
             non_failure_stage_damage.push_back(make_simulation_upd(sd));
         }
-        return ImpactAreaScenarioSimulation::builder(impact_area_id)
-            .with_flow_frequency(make_simulation_continuous_distribution(ctor["flow_frequency"]))
-            .with_flow_stage(make_simulation_upd(ctor["flow_stage"]))
-            .with_stage_damages(std::move(stage_damage))
-            .with_non_failure_stage_damage(std::move(non_failure_stage_damage))
-            .build();
+        builder.with_non_failure_stage_damage(std::move(non_failure_stage_damage));
     }
-    return ImpactAreaScenarioSimulation::builder(impact_area_id)
-        .with_flow_frequency(make_simulation_continuous_distribution(ctor["flow_frequency"]))
-        .with_flow_stage(make_simulation_upd(ctor["flow_stage"]))
-        .with_stage_damages(std::move(stage_damage))
-        .build();
+    if (ctor.contains("additional_threshold")) {
+        const auto& at = ctor["additional_threshold"];
+        ConvergenceCriteria threshold_cc(1, 1);
+        Threshold user_threshold(at["threshold_id"].get<int>(), threshold_cc,
+                                  threshold_enum_from_name(at["type"].get<std::string>()),
+                                  at["value"].get<double>());
+        builder.with_additional_threshold(std::move(user_threshold));
+    }
+    return builder.build();
 }
 
 static std::vector<double> run_simulation(const json& c, const std::string& method, const json& args) {
@@ -3213,6 +3230,18 @@ static std::vector<double> run_simulation(const json& c, const std::string& meth
         bool compute_is_deterministic = args[3].get<double>() != 0.0;
         auto curves = simulation.get_frequency_stage_sample(compute_is_deterministic, iteration_number);
         return method == "frequency_stage_channel_yvals" ? curves.channel_stage.yvals() : curves.floodplain_stage.yvals();
+    }
+    // Phase 5 Task 9: SetupPerformanceThresholds's own deterministic default-threshold pass. args =
+    // [min_iterations, max_iterations] (always [1, 1] in fixtures/compute/default_threshold.json,
+    // matching DefaultThresholdShould's ConvergenceCriteria(1, 1)). Calling
+    // setup_performance_thresholds() directly (rather than the not-yet-implemented full compute()
+    // loop) is sufficient: it runs its own internal deterministic iteration-1 pass to derive the
+    // default threshold, and nothing in the (Task 10) Monte Carlo loop ever touches
+    // Threshold::threshold_value() afterward -- see that fixture's own `note`.
+    if (method == "default_threshold_value") {
+        ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
+        simulation.setup_performance_thresholds(cc);
+        return {simulation.results().performance_by_thresholds().get_threshold(0).threshold_value()};
     }
     auto msg = std::string("unknown simulation method: ") + method;
     FAIL(msg.c_str());
@@ -3254,6 +3283,29 @@ TEST_CASE("frequency_stage_sample fixture") {
         for (const auto& a : c["assertions"]) {
             auto got = run_simulation(c, a["method"].get<std::string>(), a["args"]);
             std::vector<double> exp = a["expected"].get<std::vector<double>>();
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Phase 5 Task 9: SetupPerformanceThresholds's own deterministic ComputeDefaultThreshold pass --
+// reuses build_simulation/run_simulation (with the additional_threshold construct field this task
+// adds). See fixtures/compute/default_threshold.json's `note` for what each case exercises.
+TEST_CASE("default_threshold fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/default_threshold.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "simulation");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_simulation(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
