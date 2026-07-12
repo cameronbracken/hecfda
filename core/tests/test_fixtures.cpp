@@ -2942,10 +2942,23 @@ TEST_CASE("bootstrap_to_paired_data fixture") {
 // dispatches mean_aep/median_aep (args [threshold_id]), long_term_exceedance_probability (args
 // [threshold_id, years]), assurance_of_aep (args [threshold_id, exceedance_probability]),
 // mean_expected_annual_consequences (args [impact_area_id], damage_category/asset_category/
-// ConsequenceType::Damage/RiskType::Total from construct), and results_are_converged (args
+// ConsequenceType::Damage/RiskType::Total from construct), results_are_converged (args
 // [upper, lower], mode bool -- ImpactAreaScenarioResults::results_are_converged(upper, lower,
-// /*check_consequence_results=*/true), returned as 1.0/0.0).
-static double run_impact_area_scenario_results(const json& c, const std::string& method, const json& args) {
+// /*check_consequence_results=*/true), returned as 1.0/0.0), and the reference-stability coverage
+// (Task 6 follow-up) for get_or_create_uncertain_consequence_frequency_curve (see the class
+// header's "Reference stability" note): when the case's `uncertain_curve_stability` field is
+// present, get_or_create is called for category_a (creating a curve and returning a reference
+// held for the rest of this function), fed realization_a_before_grow, then called for a DIFFERENT
+// category_b (growing the underlying std::deque), fed realization_b, then called a third time for
+// category_a again (must return the identical object, not a new one -- `uncertain_curve_count`
+// asserts the container still holds exactly 2 curves). realization_a_after_grow is then added
+// through the ORIGINAL category_a reference obtained BEFORE the category_b call grew the
+// container -- proving that reference survived the grow. `uncertain_curve_yvals_a`/
+// `uncertain_curve_yvals_b` (args []) flush both curves via
+// put_uncertain_frequency_curves_into_histograms() and return each curve's
+// get_uncertain_paired_data().sample_paired_data(1, true).Yvals (vector mode).
+static std::vector<double> run_impact_area_scenario_results(const json& c, const std::string& method,
+                                                              const json& args) {
     using namespace hecfda::model::metrics;
     using hecfda::statistics::ConvergenceCriteria;
 
@@ -2989,26 +3002,79 @@ static double run_impact_area_scenario_results(const json& c, const std::string&
     }
     threshold.system_performance_results().put_data_into_histograms();
 
-    if (method == "mean_aep") return results.mean_aep(args[0].get<int>());
-    if (method == "median_aep") return results.median_aep(args[0].get<int>());
+    if (method == "mean_aep") return {results.mean_aep(args[0].get<int>())};
+    if (method == "median_aep") return {results.median_aep(args[0].get<int>())};
     if (method == "long_term_exceedance_probability") {
-        return results.long_term_exceedance_probability(args[0].get<int>(), args[1].get<int>());
+        return {results.long_term_exceedance_probability(args[0].get<int>(), args[1].get<int>())};
     }
     if (method == "assurance_of_aep") {
-        return results.assurance_of_aep(args[0].get<int>(), args[1].get<double>());
+        return {results.assurance_of_aep(args[0].get<int>(), args[1].get<double>())};
     }
     if (method == "mean_expected_annual_consequences") {
-        return results.mean_expected_annual_consequences(args[0].get<int>(), damage_category, asset_category,
-                                                           ConsequenceType::Damage, RiskType::Total);
+        return {results.mean_expected_annual_consequences(args[0].get<int>(), damage_category, asset_category,
+                                                            ConsequenceType::Damage, RiskType::Total)};
     }
     if (method == "results_are_converged") {
         bool converged =
             results.results_are_converged(args[0].get<double>(), args[1].get<double>(), /*check_consequence_results=*/true);
-        return converged ? 1.0 : 0.0;
+        return {converged ? 1.0 : 0.0};
+    }
+    if (method == "uncertain_curve_count" || method == "uncertain_curve_yvals_a" ||
+        method == "uncertain_curve_yvals_b") {
+        const auto& s = c["uncertain_curve_stability"];
+        std::vector<double> curve_xvals = s["xvals"].get<std::vector<double>>();
+        const auto& sc = s["convergence"];
+        ConvergenceCriteria curve_cc(sc["min_iterations"].get<int>(), sc["max_iterations"].get<int>());
+        const auto& ca = s["category_a"];
+        const auto& cb = s["category_b"];
+
+        // get_or_create for category A: creates the curve, returns a reference held across the
+        // category-B call below (the reference-stability property under test).
+        CategoriedUncertainPairedData& curve_a1 = results.get_or_create_uncertain_consequence_frequency_curve(
+            curve_xvals, ca["damage_category"].get<std::string>(), ca["asset_category"].get<std::string>(),
+            parse_consequence_type(ca["consequence_type"].get<std::string>()),
+            parse_risk_type(ca["risk_type"].get<std::string>()), curve_cc);
+        const auto& r_a_before = s["realization_a_before_grow"];
+        curve_a1.add_curve_realization(
+            hecfda::model::paired_data::PairedData(curve_xvals, r_a_before["yvals"].get<std::vector<double>>()),
+            r_a_before["iteration"].get<std::int64_t>());
+
+        // get_or_create for a DIFFERENT category B: grows the underlying std::deque.
+        CategoriedUncertainPairedData& curve_b = results.get_or_create_uncertain_consequence_frequency_curve(
+            curve_xvals, cb["damage_category"].get<std::string>(), cb["asset_category"].get<std::string>(),
+            parse_consequence_type(cb["consequence_type"].get<std::string>()),
+            parse_risk_type(cb["risk_type"].get<std::string>()), curve_cc);
+        const auto& r_b = s["realization_b"];
+        curve_b.add_curve_realization(
+            hecfda::model::paired_data::PairedData(curve_xvals, r_b["yvals"].get<std::vector<double>>()),
+            r_b["iteration"].get<std::int64_t>());
+
+        // get_or_create for category A again: must return the SAME curve (uncertain_curve_count
+        // stays 2, not 3).
+        CategoriedUncertainPairedData& curve_a2 = results.get_or_create_uncertain_consequence_frequency_curve(
+            curve_xvals, ca["damage_category"].get<std::string>(), ca["asset_category"].get<std::string>(),
+            parse_consequence_type(ca["consequence_type"].get<std::string>()),
+            parse_risk_type(ca["risk_type"].get<std::string>()), curve_cc);
+
+        // Add a realization through the ORIGINAL category-A reference, obtained BEFORE the
+        // category-B call grew the container -- proves that reference is still valid.
+        const auto& r_a_after = s["realization_a_after_grow"];
+        curve_a1.add_curve_realization(
+            hecfda::model::paired_data::PairedData(curve_xvals, r_a_after["yvals"].get<std::vector<double>>()),
+            r_a_after["iteration"].get<std::int64_t>());
+
+        if (method == "uncertain_curve_count") {
+            return {static_cast<double>(results.uncertain_consequence_frequency_curves().size())};
+        }
+        results.put_uncertain_frequency_curves_into_histograms();
+        if (method == "uncertain_curve_yvals_a") {
+            return curve_a2.get_uncertain_paired_data().sample_paired_data(1, true).yvals();
+        }
+        return curve_b.get_uncertain_paired_data().sample_paired_data(1, true).yvals();
     }
     auto msg = std::string("unknown impact_area_scenario_results method: ") + method;
     FAIL(msg.c_str());
-    return 0.0;
+    return {};
 }
 
 TEST_CASE("impact_area_scenario_results fixture") {
@@ -3018,11 +3084,16 @@ TEST_CASE("impact_area_scenario_results fixture") {
     CHECK(fx["target"] == "impact_area_scenario_results");
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
-            double got = run_impact_area_scenario_results(c, a["method"].get<std::string>(), a["args"]);
-            std::vector<double> exp = {a["expected"].get<double>()};
+            auto got = run_impact_area_scenario_results(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
-            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());

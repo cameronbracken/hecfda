@@ -1345,6 +1345,48 @@ namespace oracle_emitter {
       if (method == "assurance_of_aep") return results.AssuranceOfAEP(argsEl[0].GetInt32(), D(argsEl[1]));
       if (method == "mean_expected_annual_consequences") return results.MeanExpectedAnnualConsequences(argsEl[0].GetInt32(), damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
       if (method == "results_are_converged") return results.ResultsAreConverged(D(argsEl[0]), D(argsEl[1]), true) ? 1.0 : 0.0;
+      if (method == "uncertain_curve_count" || method == "uncertain_curve_yvals_a" || method == "uncertain_curve_yvals_b") {
+        // Reference-stability coverage for GetOrCreateUncertainConsequenceFrequencyCurve (Task 6
+        // follow-up): get_or_create for category_a (creates a curve, keeps the C# object
+        // reference -- in C# this is always stable, matching the port's post-fix std::deque
+        // behavior), feeds realization_a_before_grow, then get_or_create for a DIFFERENT
+        // category_b (grows UncertainConsequenceFrequencyCurves), feeds realization_b, then
+        // get_or_create for category_a again (must be the SAME object -- uncertainCurveCount
+        // stays 2). realization_a_after_grow is added through the ORIGINAL category_a reference.
+        var s = caseEl.GetProperty("uncertain_curve_stability");
+        double[] curveXvals = DA(s.GetProperty("xvals"));
+        var sc = s.GetProperty("convergence");
+        var curveCc = new ConvergenceCriteria(sc.GetProperty("min_iterations").GetInt32(), sc.GetProperty("max_iterations").GetInt32());
+        var ca = s.GetProperty("category_a");
+        var cb = s.GetProperty("category_b");
+
+        CategoriedUncertainPairedData curveA1 = results.GetOrCreateUncertainConsequenceFrequencyCurve(
+            curveXvals, ca.GetProperty("damage_category").GetString(), ca.GetProperty("asset_category").GetString(),
+            Enum.Parse<ConsequenceType>(ca.GetProperty("consequence_type").GetString()),
+            Enum.Parse<RiskType>(ca.GetProperty("risk_type").GetString()), curveCc);
+        var rABefore = s.GetProperty("realization_a_before_grow");
+        curveA1.AddCurveRealization(new PairedData(curveXvals, DA(rABefore.GetProperty("yvals"))), rABefore.GetProperty("iteration").GetInt64());
+
+        CategoriedUncertainPairedData curveB = results.GetOrCreateUncertainConsequenceFrequencyCurve(
+            curveXvals, cb.GetProperty("damage_category").GetString(), cb.GetProperty("asset_category").GetString(),
+            Enum.Parse<ConsequenceType>(cb.GetProperty("consequence_type").GetString()),
+            Enum.Parse<RiskType>(cb.GetProperty("risk_type").GetString()), curveCc);
+        var rB = s.GetProperty("realization_b");
+        curveB.AddCurveRealization(new PairedData(curveXvals, DA(rB.GetProperty("yvals"))), rB.GetProperty("iteration").GetInt64());
+
+        CategoriedUncertainPairedData curveA2 = results.GetOrCreateUncertainConsequenceFrequencyCurve(
+            curveXvals, ca.GetProperty("damage_category").GetString(), ca.GetProperty("asset_category").GetString(),
+            Enum.Parse<ConsequenceType>(ca.GetProperty("consequence_type").GetString()),
+            Enum.Parse<RiskType>(ca.GetProperty("risk_type").GetString()), curveCc);
+
+        var rAAfter = s.GetProperty("realization_a_after_grow");
+        curveA1.AddCurveRealization(new PairedData(curveXvals, DA(rAAfter.GetProperty("yvals"))), rAAfter.GetProperty("iteration").GetInt64());
+
+        if (method == "uncertain_curve_count") return (double)results.UncertainConsequenceFrequencyCurves.Count;
+        results.PutUncertainFrequencyCurvesIntoHistograms();
+        if (method == "uncertain_curve_yvals_a") return curveA2.GetUncertainPairedData().SamplePairedData(1, true).Yvals;
+        return curveB.GetUncertainPairedData().SamplePairedData(1, true).Yvals;
+      }
       throw new Exception("unknown impact_area_scenario_results method: " + method);
     }
 

@@ -47,6 +47,57 @@
         { "method": "mean_expected_annual_consequences", "args": [7], "expected": 63.99999999999998, "tol": 1e-9, "mode": "abs" },
         { "method": "results_are_converged", "args": [0.95, 0.05], "expected": 0, "tol": 0.0, "mode": "bool" }
       ]
+    },
+    {
+      "name": "get_or_create_uncertain_curve_reference_stability",
+      "note": "Coverage for get_or_create_uncertain_consequence_frequency_curve (previously dead code -- see the class header's 'Reference stability' note): calls it for category A (creates + returns a reference), calls it again for a DIFFERENT category B (grows the underlying storage), calls it a third time for category A again (must return the SAME curve, not create a third one -- verified via uncertain_curve_count == 2), then adds a curve realization through the FIRST category-A reference -- obtained BEFORE the category-B call grew the storage -- to prove that reference is still valid after the grow. Regression coverage for the deque-vs-vector reference-stability fix. `uncertain_curve_stability` = {xvals, convergence: {min_iterations, max_iterations}, category_a/category_b: {damage_category, asset_category, consequence_type, risk_type}, realization_a_before_grow/realization_a_after_grow/realization_b: {iteration, yvals}}: category A's curve is created and fed realization_a_before_grow via get_or_create_uncertain_consequence_frequency_curve(...).add_curve_realization(...), category B's curve is then created (the grow) and fed realization_b, category A is fetched a second time (get_or_create) to confirm it is the same object (uncertain_curve_count stays 2), and realization_a_after_grow is added through the ORIGINAL (pre-grow) category-A reference. put_uncertain_frequency_curves_into_histograms() flushes both curves, then get_uncertain_paired_data().sample_paired_data(1, true).yvals() is read off each -- category A's reflects both realizations (100/200 at iteration 0, 300/400 at iteration 1, added through two different-in-time but reference-identical objects), category B's reflects only its own realization. All values PIN (gate-captured against the real C#, never hand-derived).",
+      "construct": {
+        "impact_area_id": 7,
+        "damage_category": "Residential",
+        "asset_category": "Structure",
+        "consequence_convergence": { "min_iterations": 5, "max_iterations": 1000 },
+        "threshold": {
+          "id": 3,
+          "type": "DefaultExteriorStage",
+          "value": 12.5,
+          "convergence": { "min_iterations": 5, "max_iterations": 1000 }
+        }
+      },
+      "consequence_realizations": [
+        { "iteration": 0, "damage": 1000.0 },
+        { "iteration": 1, "damage": 1500.0 },
+        { "iteration": 2, "damage": 1200.0 },
+        { "iteration": 3, "damage": 1800.0 },
+        { "iteration": 4, "damage": 900.0 }
+      ],
+      "aep_observations": [
+        { "iteration": 0, "result": 0.05 },
+        { "iteration": 1, "result": 0.08 },
+        { "iteration": 2, "result": 0.03 },
+        { "iteration": 3, "result": 0.10 },
+        { "iteration": 4, "result": 0.06 }
+      ],
+      "stage_observations": [
+        { "iteration": 0, "result": 10.1 },
+        { "iteration": 1, "result": 10.3 },
+        { "iteration": 2, "result": 9.9 },
+        { "iteration": 3, "result": 10.5 },
+        { "iteration": 4, "result": 10.0 }
+      ],
+      "uncertain_curve_stability": {
+        "xvals": [1.0, 2.0],
+        "convergence": { "min_iterations": 5, "max_iterations": 1000 },
+        "category_a": { "damage_category": "Residential", "asset_category": "Structure", "consequence_type": "Damage", "risk_type": "Fail" },
+        "category_b": { "damage_category": "Commercial", "asset_category": "Content", "consequence_type": "Damage", "risk_type": "Fail" },
+        "realization_a_before_grow": { "iteration": 0, "yvals": [100.0, 200.0] },
+        "realization_b": { "iteration": 0, "yvals": [10.0, 20.0] },
+        "realization_a_after_grow": { "iteration": 1, "yvals": [300.0, 400.0] }
+      },
+      "assertions": [
+        { "method": "uncertain_curve_count", "args": [], "expected": 2.0, "tol": 0.0, "mode": "abs" },
+        { "method": "uncertain_curve_yvals_a", "args": [], "expected": [3.9999999999999987, 6.0000000000000044], "tol": 1e-9, "mode": "vector" },
+        { "method": "uncertain_curve_yvals_b", "args": [], "expected": [0.09999999999999995, 0.1999999999999999], "tol": 1e-9, "mode": "vector" }
+      ]
     }
   ]
 }

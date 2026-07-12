@@ -3,6 +3,7 @@
 #define HECFDA_MODEL_METRICS_IMPACT_AREA_SCENARIO_RESULTS_HPP
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <string>
 #include <utility>
@@ -58,10 +59,21 @@ namespace metrics {
 //    `Parallel.For` compute loops. This port's Monte Carlo loop (Tasks 7-11) is serial (matches
 //    the repo-wide "no threading primitives" convention -- .NET's seeded `Random` port,
 //    `DotNetRandom`, is likewise consumed serially throughout this port), so the lock and its
-//    backing field are dropped entirely, not merely no-op'd. See
-//    `get_or_create_uncertain_consequence_frequency_curve` below for the reference-stability
-//    caveat this drop does NOT need to worry about (a `std::vector` growth caveat, unrelated to
-//    threading).
+//    backing field are dropped entirely, not merely no-op'd.
+//
+// Reference stability: `uncertain_consequence_frequency_curves_` is a `std::deque`, not a
+// `std::vector`, specifically so `get_or_create_uncertain_consequence_frequency_curve` can safely
+// return a REFERENCE into it (see that method's own comment). `std::deque::emplace_back`/
+// `push_back` never invalidates references to existing elements (only iterators), matching C#'s
+// `List<CategoriedUncertainPairedData>` -- a list of references to heap objects, where `.Add(...)`
+// never moves/invalidates a previously-handed-out element reference either. A `std::vector` of
+// values would NOT have this guarantee (`.emplace_back` can reallocate and invalidate every
+// existing reference on growth), which is why `std::deque` was chosen here. The sibling
+// `consequence_frequency_functions_` (`std::vector<CategoriedPairedData>`) does not need the same
+// treatment: nothing in this port -- or in the upstream `ImpactAreaScenarioSimulation.cs` call
+// sites (`ConsequenceFrequencyFunctions.Add(...)` at line 532, `.Select(...)` over the whole list
+// at line 155) -- ever holds a reference into it across a call that could grow it; it is only
+// appended to and read wholesale, so plain `std::vector` value semantics are safe as-is.
 class ImpactAreaScenarioResults {
    public:
     using ConvergenceCriteria = hecfda::statistics::ConvergenceCriteria;
@@ -122,11 +134,12 @@ class ImpactAreaScenarioResults {
     }
 
     // ported from: ImpactAreaScenarioResults.cs `public List<CategoriedUncertainPairedData>
-    // UncertainConsequenceFrequencyCurves { get; set; } = [];`.
-    std::vector<CategoriedUncertainPairedData>& uncertain_consequence_frequency_curves() {
+    // UncertainConsequenceFrequencyCurves { get; set; } = [];`. `std::deque`, not `std::vector` --
+    // see the class comment's "Reference stability" note.
+    std::deque<CategoriedUncertainPairedData>& uncertain_consequence_frequency_curves() {
         return uncertain_consequence_frequency_curves_;
     }
-    const std::vector<CategoriedUncertainPairedData>& uncertain_consequence_frequency_curves() const {
+    const std::deque<CategoriedUncertainPairedData>& uncertain_consequence_frequency_curves() const {
         return uncertain_consequence_frequency_curves_;
     }
 
@@ -294,15 +307,11 @@ class ImpactAreaScenarioResults {
     // value-semantics equivalent of C#'s reference-type `List<T>` element (matching the same
     // "hand back the live object" contract `Threshold::system_performance_results()`/
     // `PerformanceByThresholds::get_threshold()` already establish for this port's other
-    // find-or-append accessors). REFERENCE-STABILITY CAVEAT (a `std::vector` growth concern,
-    // UNRELATED to the dropped lock): unlike C#'s `List<T>` of a reference type, where `.Add(...)`
-    // never invalidates a previously returned element reference (the List reallocates its internal
-    // array of *pointers*, not the referenced objects), this port's
-    // `std::vector<CategoriedUncertainPairedData>` holds VALUES -- a `.emplace_back(...)` that
-    // grows the vector's capacity may reallocate and invalidate every reference returned by an
-    // EARLIER call to this method. Callers (the EAD compute loop, Tasks 7-11) must re-fetch via
-    // this method rather than caching the returned reference across a call that might append a
-    // NEW (damageCategory, assetCategory, consequenceType, riskType) combination.
+    // find-or-append accessors). Reference stability across a later `emplace_back` that appends a
+    // NEW (damageCategory, assetCategory, consequenceType, riskType) combination is guaranteed by
+    // `uncertain_consequence_frequency_curves_` being a `std::deque` (see the class comment's
+    // "Reference stability" note) -- this matches C#'s `List<T>`-of-references, where `.Add(...)`
+    // never invalidates a previously returned element reference either.
     CategoriedUncertainPairedData& get_or_create_uncertain_consequence_frequency_curve(
         const std::vector<double>& xvals, const std::string& damage_category, const std::string& asset_category,
         ConsequenceType consequence_type, RiskType risk_type, ConvergenceCriteria convergence_criteria) {
@@ -371,7 +380,7 @@ class ImpactAreaScenarioResults {
     int impact_area_id_;
     bool is_null_;
     std::vector<CategoriedPairedData> consequence_frequency_functions_;
-    std::vector<CategoriedUncertainPairedData> uncertain_consequence_frequency_curves_;
+    std::deque<CategoriedUncertainPairedData> uncertain_consequence_frequency_curves_;
 };
 
 }  // namespace metrics
