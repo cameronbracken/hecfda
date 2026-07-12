@@ -1,0 +1,30 @@
+{
+  "target": "correct_dry_structure_wses",
+  "kind": "correct_dry_structure_wses",
+  "source_test": "bespoke (Phase 4 Task 5) -- HydraulicDataset.CorrectDryStructureWSEs has no direct upstream unit test file; this fixture is designed from the source in upstream/HEC-FDA/HEC.FDA.Model/hydraulics/HydraulicDataset.cs (lines ~152-190) to lock the dry/wet transition logic that the port's HydraulicProfiles::get_corrected_wses reproduces.",
+  "note": "construct is {probabilities: [...] (descending exceedance, one per profile), wses_by_profile: [[...], ...] ([profile][structure] raw/uncorrected WSEs, profile 0 = most frequent/lowest-stage), ground_elevations: [...] (one per structure)}. `get_corrected_wses` (args []) returns the corrected [profile][structure] matrix (mode matrix, expected is a nested array flattened row-major for comparison); `profile_probabilities` (args []) returns the probabilities back unchanged as a sanity check on the ordering-enforcing ctor (mode vector). The single case's 4 structures (A,B,C,D) each exercise one of the documented CorrectDryStructureWSEs branches: A is dry at profile 0 and wet at profile 1 -> profile-0 WSE corrected to groundElev-2 (barely-dry, since the NEXT profile is wet); B is dry at profiles 0 and 1 -> profile-0 WSE corrected to groundElev-9 (still-dry next), then B is dry at profile 1 with profile 2 wet -> profile-1 WSE corrected to groundElev-2; C is wet at profiles 0-1 and dry at the LAST profile (profile 2, corrected via the nextProfileWses==null branch) -> groundElev-9; D is wet at every profile and is left completely unchanged, confirming the correction never touches already-wet WSEs. All values PIN (gate-captured against the real, patched CorrectDryStructureWSEs; never hand-derived).",
+  "cases": [
+    {
+      "name": "four_structures_three_profiles",
+      "construct": {
+        "probabilities": [0.5, 0.1, 0.02],
+        "ground_elevations": [100.0, 95.0, 110.0, 90.0],
+        "wses_by_profile": [
+          [97.0, 90.0, 112.0, 92.0],
+          [102.0, 92.0, 111.0, 95.0],
+          [105.0, 97.0, 108.0, 98.0]
+        ]
+      },
+      "assertions": [
+        { "method": "profile_probabilities", "args": [],
+          "expected": [0.5, 0.1, 0.02], "tol": 0.0, "mode": "vector" },
+        { "method": "get_corrected_wses", "args": [],
+          "expected": [
+            [98.0, 86.0, 112.0, 92.0],
+            [102.0, 93.0, 111.0, 95.0],
+            [105.0, 97.0, 101.0, 98.0]
+          ], "tol": 0.0, "mode": "matrix" }
+      ]
+    }
+  ]
+}

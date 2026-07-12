@@ -115,5 +115,15 @@
          ResultsAreConverged, ToUncertainPairedData, GetAssetCategories/GetDamageCategories,
          GetConsequenceResult) is kept VERBATIM. Same auto-pickup as the patched/ files above, no
          explicit Compile Include. -->
+    <!-- Task Phase4T5: patched/HydraulicDataset.cs keeps ONLY the two pure-numeric
+         CorrectDryStructureWSEs overloads (VERBATIM) plus a thin CorrectAllProfiles wrapper
+         reproducing GetHydraulicDatasetInFloatsWithProbabilities's post-read correction loop
+         (also pure numeric). Dropped: both fields, the profile-list ctor, LoadFromXML,
+         GetGraphicalStageFrequency, the GetWSE-driven half of
+         GetHydraulicDatasetInFloatsWithProbabilities, ToXML, and
+         AllStagesIncreaseWithDecreasingProbability - all need RasMapperLib/Geospatial.GDALAssist/
+         HEC.FDA.Model.Spatial/hydraulics.enums/Interfaces/paireddata/structures/System.Xml.Linq,
+         none reachable from this subset-compiled project (same rationale as patched/Structure.cs's
+         dropped ctors). Same auto-pickup as the patched/ files above, no explicit Compile Include. -->
   </ItemGroup>
 </Project>

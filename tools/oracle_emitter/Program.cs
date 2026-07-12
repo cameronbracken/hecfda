@@ -17,6 +17,7 @@ using HEC.FDA.Model.utilities;
 using HEC.FDA.Model.extensions;
 using HEC.FDA.Model.structures;
 using HEC.FDA.Model.metrics;
+using HEC.FDA.Model.hydraulics;
 
 namespace oracle_emitter {
   class Program {
@@ -735,6 +736,33 @@ namespace oracle_emitter {
       throw new Exception("unknown consequence_result method: " + method);
     }
 
+    // HydraulicProfiles (Phase 4 Task 5): the hydraulics-as-arrays input boundary +
+    // CorrectDryStructureWSEs. The patched/HydraulicDataset.cs static methods reproduce the
+    // pure-numeric correction with no disk-backed IHydraulicProfile objects. `construct` is
+    // {probabilities, ground_elevations, wses_by_profile} ([profile][structure] raw WSEs).
+    // "profile_probabilities" (args []) returns `probabilities` unchanged (an ordering sanity
+    // check); "get_corrected_wses" (args []) runs HydraulicDataset.CorrectAllProfiles (the
+    // per-profile driving loop from GetHydraulicDatasetInFloatsWithProbabilities, calling
+    // CorrectDryStructureWSEs against each next profile, then the last profile against
+    // groundElevs alone) and returns the corrected [profile][structure] matrix as nested
+    // double[][] (JSON nested arrays, matching the fixture's "matrix" mode expected shape).
+    static object EvalHydraulicProfiles(JsonElement caseEl, string method) {
+      var c = caseEl.GetProperty("construct");
+      double[] probabilities = DA(c.GetProperty("probabilities"));
+      if (method == "profile_probabilities") return probabilities;
+      if (method == "get_corrected_wses") {
+        var waterData = new List<float[]>();
+        foreach (var pf in c.GetProperty("wses_by_profile").EnumerateArray()) {
+          waterData.Add(pf.EnumerateArray().Select(x => (float)x.GetDouble()).ToArray());
+        }
+        float[] groundElevs = c.GetProperty("ground_elevations").EnumerateArray()
+            .Select(x => (float)x.GetDouble()).ToArray();
+        var corrected = HydraulicDataset.CorrectAllProfiles(waterData, groundElevs);
+        return corrected.Select(row => row.Select(v => (double)v).ToArray()).ToArray();
+      }
+      throw new Exception("unknown hydraulic_profiles method: " + method);
+    }
+
     // AggregatedConsequencesBinned (Phase 4 Task 3) is the histogram-staging Monte Carlo
     // accumulator -- built from patched/AggregatedConsequencesBinned.cs (see that file's header
     // for why it's a patched local copy: WriteToXML/ReadFromXML/
@@ -870,6 +898,7 @@ namespace oracle_emitter {
               case "consequence_result": val = EvalConsequenceResult(c, method); break;
               case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
+              case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

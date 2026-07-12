@@ -16,6 +16,7 @@
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
+#include "hecfda/model/stage_damage/hydraulic_profiles.hpp"
 #include "hecfda/model/structures/deterministic_occupancy_type.hpp"
 #include "hecfda/model/structures/first_floor_elevation_uncertainty.hpp"
 #include "hecfda/model/structures/inventory.hpp"
@@ -1977,6 +1978,70 @@ TEST_CASE("study_area_consequences_binned fixture") {
             auto got = run_study_area_consequences_binned(c, a["method"].get<std::string>(), a["args"]);
             std::vector<double> exp = a["expected"].get<std::vector<double>>();
             std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for HydraulicProfiles (Phase 4 Task 5): the hydraulics-as-arrays input
+// boundary + CorrectDryStructureWSEs. `construct` is {probabilities, ground_elevations,
+// wses_by_profile} ([profile][structure] raw WSEs); every assertion builds a fresh
+// HydraulicProfiles(probabilities, wses_by_profile) (exercising the descending-order-enforcing
+// ctor) then dispatches `method`: "profile_probabilities" (args []) returns the stored
+// probabilities back (mode vector, an ordering sanity check); "get_corrected_wses" (args [])
+// calls get_corrected_wses(ground_elevations) and flattens the returned [profile][structure]
+// matrix row-major into a flat vector (mode matrix, matching how the fixture's nested "expected"
+// array is flattened below).
+static std::vector<double> run_hydraulic_profiles(const json& c, const std::string& method) {
+    using namespace hecfda::model::stage_damage;
+    const auto& ctor = c["construct"];
+    std::vector<double> probabilities = ctor["probabilities"].get<std::vector<double>>();
+    std::vector<std::vector<float>> wses_by_profile;
+    for (const auto& pf : ctor["wses_by_profile"]) {
+        wses_by_profile.push_back(pf.get<std::vector<float>>());
+    }
+    HydraulicProfiles profiles(probabilities, wses_by_profile);
+
+    if (method == "profile_probabilities") {
+        return profiles.profile_probabilities();
+    }
+    if (method == "get_corrected_wses") {
+        std::vector<float> ground_elevations = ctor["ground_elevations"].get<std::vector<float>>();
+        auto corrected = profiles.get_corrected_wses(ground_elevations);
+        std::vector<double> flat;
+        for (const auto& row : corrected) {
+            for (float v : row) flat.push_back(static_cast<double>(v));
+        }
+        return flat;
+    }
+    auto msg = std::string("unknown hydraulic_profiles method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("hydraulic_profiles fixture") {
+    std::ifstream f(fixtures_dir() + "/stage_damage/correct_dry_structure_wses.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "correct_dry_structure_wses");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_hydraulic_profiles(c, a["method"].get<std::string>());
+            std::string mode = a["mode"].get<std::string>();
+            std::vector<double> exp;
+            if (mode == "matrix") {
+                for (const auto& row : a["expected"]) {
+                    for (const auto& v : row) exp.push_back(v.get<double>());
+                }
+            } else {
+                exp = a["expected"].get<std::vector<double>>();
+            }
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
