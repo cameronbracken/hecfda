@@ -18,6 +18,7 @@ using HEC.FDA.Model.extensions;
 using HEC.FDA.Model.structures;
 using HEC.FDA.Model.metrics;
 using HEC.FDA.Model.alternatives;
+using HEC.FDA.Model.alternativeComparisonReport;
 using HEC.FDA.Model.hydraulics;
 using HEC.FDA.Model.stageDamage;
 using HEC.FDA.Model.scenarios;
@@ -1836,6 +1837,83 @@ namespace oracle_emitter {
       throw new Exception("unknown alternative method: " + method);
     }
 
+    // AlternativeComparisonReport (Phase 6 Task 10): the FINAL numeric compute of the port --
+    // with/without-project damage-reduction (benefits) via empirical-distribution subtraction, via
+    // patched/AlternativeComparisonReport.cs (drops the ProgressReporter parameter/calls and the
+    // OperationResult validation early-exit -- see that file's header). `without_project`/
+    // `with_project` are each {alternative_id, base_damage, future_damage, base_lifeloss,
+    // future_lifeloss} objects, built via BuildAlternativeComparisonReportAlternativeResults below
+    // to mirror AlternativeComparisonReportConsolidationTests.CreateAlternativeResults exactly: a
+    // base-year and future-year ScenarioResults, each one impact area holding a Damage and a
+    // LifeLoss AggregatedConsequencesBinned built from a DynamicHistogram over 100 COPIES of a
+    // constant value (Enumerable.Repeat(value, 100)), RiskType.Fail throughout (the real
+    // AggregatedConsequencesBinned/StudyAreaConsequencesBinned.GetConsequenceResult default,
+    // matching alternative.json's own established convention). `method` dispatches (args=
+    // [alternative_id, impact_area_id, damage_category, asset_category, consequence_type_name]):
+    // sample_mean_base_year_ead_reduced/sample_mean_future_year_ead_reduced --
+    // AlternativeComparisonReportResults's own same-named methods (RiskType.Total default). See
+    // fixtures/alternatives/alternative_comparison_report.json's note for full construction detail.
+    static AggregatedConsequencesBinned BuildAlternativeComparisonReportBinnedEntry(
+        string damageCategory, string assetCategory, ConsequenceType consequenceType, double value,
+        int impactAreaID, ConvergenceCriteria cc) {
+      var values = Enumerable.Repeat(value, 100).ToList();
+      var histogram = new DynamicHistogram(values, cc);
+      return new AggregatedConsequencesBinned(damageCategory, assetCategory, histogram, impactAreaID, consequenceType, RiskType.Fail);
+    }
+    static ScenarioResults BuildAlternativeComparisonReportScenarioResults(
+        string damageCategory, string assetCategory, double damageValue, double lifeLossValue, int impactAreaID,
+        ConvergenceCriteria cc) {
+      var scenario = new ScenarioResults();
+      var ia = new ImpactAreaScenarioResults(impactAreaID);
+      ia.ConsequenceResults.AddExistingConsequenceResultObject(
+          BuildAlternativeComparisonReportBinnedEntry(damageCategory, assetCategory, ConsequenceType.Damage, damageValue, impactAreaID, cc));
+      ia.ConsequenceResults.AddExistingConsequenceResultObject(
+          BuildAlternativeComparisonReportBinnedEntry(damageCategory, assetCategory, ConsequenceType.LifeLoss, lifeLossValue, impactAreaID, cc));
+      scenario.AddResults(ia);
+      return scenario;
+    }
+    static AlternativeResults BuildAlternativeComparisonReportAlternativeResults(
+        JsonElement alt, string damageCategory, string assetCategory, int impactAreaID,
+        List<int> analysisYears, int periodOfAnalysis, ConvergenceCriteria cc) {
+      var results = new AlternativeResults(alt.GetProperty("alternative_id").GetInt32(), analysisYears, periodOfAnalysis);
+      results.BaseYearScenarioResults = BuildAlternativeComparisonReportScenarioResults(
+          damageCategory, assetCategory, D(alt.GetProperty("base_damage")), D(alt.GetProperty("base_lifeloss")), impactAreaID, cc);
+      results.FutureYearScenarioResults = BuildAlternativeComparisonReportScenarioResults(
+          damageCategory, assetCategory, D(alt.GetProperty("future_damage")), D(alt.GetProperty("future_lifeloss")), impactAreaID, cc);
+      return results;
+    }
+    static object EvalAlternativeComparisonReport(JsonElement caseEl, string method, JsonElement argsEl) {
+      int impactAreaID = caseEl.GetProperty("impact_area_id").GetInt32();
+      string damageCategory = caseEl.GetProperty("damage_category").GetString();
+      string assetCategory = caseEl.GetProperty("asset_category").GetString();
+      var analysisYears = new List<int> { caseEl.GetProperty("base_year").GetInt32(), caseEl.GetProperty("future_year").GetInt32() };
+      int periodOfAnalysis = caseEl.GetProperty("period_of_analysis").GetInt32();
+      var conv = caseEl.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+
+      AlternativeResults withoutProject = BuildAlternativeComparisonReportAlternativeResults(
+          caseEl.GetProperty("without_project"), damageCategory, assetCategory, impactAreaID, analysisYears, periodOfAnalysis, cc);
+      AlternativeResults withProject = BuildAlternativeComparisonReportAlternativeResults(
+          caseEl.GetProperty("with_project"), damageCategory, assetCategory, impactAreaID, analysisYears, periodOfAnalysis, cc);
+
+      AlternativeComparisonReportResults report = AlternativeComparisonReport.ComputeAlternativeComparisonReport(
+          withoutProject, new List<AlternativeResults> { withProject });
+
+      int alternativeID = argsEl[0].GetInt32();
+      int queryImpactAreaID = argsEl[1].GetInt32();
+      string queryDamageCategory = argsEl[2].GetString();
+      string queryAssetCategory = argsEl[3].GetString();
+      var consequenceType = Enum.Parse<ConsequenceType>(argsEl[4].GetString());
+
+      if (method == "sample_mean_base_year_ead_reduced") {
+        return report.SampleMeanBaseYearEADReduced(alternativeID, queryImpactAreaID, queryDamageCategory, queryAssetCategory, consequenceType, RiskType.Total);
+      }
+      if (method == "sample_mean_future_year_ead_reduced") {
+        return report.SampleMeanFutureYearEADReduced(alternativeID, queryImpactAreaID, queryDamageCategory, queryAssetCategory, consequenceType, RiskType.Total);
+      }
+      throw new Exception("unknown alternative_comparison_report method: " + method);
+    }
+
     // ImpactAreaScenarioSimulation (Phase 5 Task 7): the skeleton + fluent SimulationBuilder +
     // CanCompute + InitializeConsequenceHistograms surface only -- see
     // patched/ImpactAreaScenarioSimulation.cs's header for what's kept/dropped and why. `construct`
@@ -2156,6 +2234,7 @@ namespace oracle_emitter {
               case "alternative_results": val = EvalAlternativeResults(c, method, argsEl); break;
               case "alternative_comparison_report_results": val = EvalAlternativeComparisonReportResults(c, method, argsEl); break;
               case "alternative": val = EvalAlternative(c, method, argsEl); break;
+              case "alternative_comparison_report": val = EvalAlternativeComparisonReport(c, method, argsEl); break;
               case "simulation": val = EvalSimulation(c, method, argsEl); break;
               case "scenario": val = EvalScenario(c, method, argsEl); break;
               case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;

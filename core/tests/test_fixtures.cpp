@@ -6,6 +6,7 @@
 #include "doctest.h"
 #include "json.hpp"
 #include "check.hpp"
+#include "hecfda/model/alternative_comparison_report/alternative_comparison_report.hpp"
 #include "hecfda/model/alternatives/alternative.hpp"
 #include "hecfda/model/compute/impact_area_scenario_simulation.hpp"
 #include "hecfda/model/compute/random_provider.hpp"
@@ -3888,6 +3889,120 @@ TEST_CASE("alternative fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_alternative(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for AlternativeComparisonReport (Phase 6 Task 10) -- the FINAL numeric compute
+// of the port: with/without-project damage-reduction (benefits) via empirical-distribution
+// subtraction. `without_project`/`with_project` are each {alternative_id, base_damage,
+// future_damage, base_lifeloss, future_lifeloss} objects mirroring
+// AlternativeComparisonReportConsolidationTests.CreateAlternativeResults exactly: a base-year and
+// future-year ScenarioResults, each with one impact area holding a Damage and a LifeLoss
+// AggregatedConsequencesBinned, each built from a DynamicHistogram over 100 COPIES of a constant
+// value (`Enumerable.Repeat(value, 100)`) so SampleMean == value exactly (deterministic subtraction
+// oracle). `method` dispatches (args=[alternative_id, impact_area_id, damage_category,
+// asset_category, consequence_type_name]): sample_mean_base_year_ead_reduced/
+// sample_mean_future_year_ead_reduced -> AlternativeComparisonReportResults's own same-named
+// methods (RiskType::Total default, matching the C# test's own unfiltered risk-type query). See
+// fixtures/alternatives/alternative_comparison_report.json's note for full construction detail.
+static hecfda::model::metrics::AggregatedConsequencesBinned make_alternative_comparison_report_binned_entry(
+    const std::string& damage_category, const std::string& asset_category,
+    hecfda::model::metrics::ConsequenceType consequence_type, double value, int impact_area_id,
+    const hecfda::statistics::ConvergenceCriteria& cc) {
+    using namespace hecfda::model::metrics;
+    std::vector<double> values(100, value);
+    auto histogram = std::make_unique<hecfda::statistics::histograms::DynamicHistogram>(values, cc);
+    return AggregatedConsequencesBinned(damage_category, asset_category, std::move(histogram), impact_area_id,
+                                         consequence_type, RiskType::Fail);
+}
+
+static hecfda::model::metrics::ScenarioResults make_alternative_comparison_report_scenario_results(
+    const std::string& damage_category, const std::string& asset_category, double damage_value,
+    double lifeloss_value, int impact_area_id, const hecfda::statistics::ConvergenceCriteria& cc) {
+    using namespace hecfda::model::metrics;
+    ScenarioResults scenario;
+    ImpactAreaScenarioResults ia(impact_area_id);
+    ia.consequence_results().add_existing_consequence_result_object(make_alternative_comparison_report_binned_entry(
+        damage_category, asset_category, ConsequenceType::Damage, damage_value, impact_area_id, cc));
+    ia.consequence_results().add_existing_consequence_result_object(make_alternative_comparison_report_binned_entry(
+        damage_category, asset_category, ConsequenceType::LifeLoss, lifeloss_value, impact_area_id, cc));
+    scenario.add_results(std::move(ia));
+    return scenario;
+}
+
+static hecfda::model::metrics::AlternativeResults make_alternative_comparison_report_alternative_results(
+    const json& alt, const std::string& damage_category, const std::string& asset_category, int impact_area_id,
+    const std::vector<int>& analysis_years, int period_of_analysis, const hecfda::statistics::ConvergenceCriteria& cc) {
+    using namespace hecfda::model::metrics;
+    AlternativeResults results(alt["alternative_id"].get<int>(), analysis_years, period_of_analysis);
+    results.set_base_year_scenario_results(make_alternative_comparison_report_scenario_results(
+        damage_category, asset_category, alt["base_damage"].get<double>(), alt["base_lifeloss"].get<double>(),
+        impact_area_id, cc));
+    results.set_future_year_scenario_results(make_alternative_comparison_report_scenario_results(
+        damage_category, asset_category, alt["future_damage"].get<double>(), alt["future_lifeloss"].get<double>(),
+        impact_area_id, cc));
+    return results;
+}
+
+static double run_alternative_comparison_report(const json& c, const std::string& method, const json& args) {
+    using namespace hecfda::model::metrics;
+    using namespace hecfda::model::alternative_comparison_report;
+
+    int impact_area_id = c["impact_area_id"].get<int>();
+    std::string damage_category = c["damage_category"].get<std::string>();
+    std::string asset_category = c["asset_category"].get<std::string>();
+    std::vector<int> analysis_years = {c["base_year"].get<int>(), c["future_year"].get<int>()};
+    int period_of_analysis = c["period_of_analysis"].get<int>();
+    const auto& conv = c["convergence"];
+    hecfda::statistics::ConvergenceCriteria cc(conv["min_iterations"].get<int>(), conv["max_iterations"].get<int>());
+
+    AlternativeResults without_project = make_alternative_comparison_report_alternative_results(
+        c["without_project"], damage_category, asset_category, impact_area_id, analysis_years, period_of_analysis,
+        cc);
+    std::vector<AlternativeResults> with_project;
+    with_project.push_back(make_alternative_comparison_report_alternative_results(
+        c["with_project"], damage_category, asset_category, impact_area_id, analysis_years, period_of_analysis, cc));
+
+    AlternativeComparisonReportResults report = AlternativeComparisonReport::compute_alternative_comparison_report(
+        std::move(without_project), std::move(with_project));
+
+    int alternative_id = args[0].get<int>();
+    int query_impact_area_id = args[1].get<int>();
+    std::string query_damage_category = args[2].get<std::string>();
+    std::string query_asset_category = args[3].get<std::string>();
+    ConsequenceType consequence_type = parse_consequence_type(args[4].get<std::string>());
+
+    if (method == "sample_mean_base_year_ead_reduced") {
+        return report.sample_mean_base_year_ead_reduced(alternative_id, query_impact_area_id, query_damage_category,
+                                                          query_asset_category, consequence_type, RiskType::Total);
+    }
+    if (method == "sample_mean_future_year_ead_reduced") {
+        return report.sample_mean_future_year_ead_reduced(alternative_id, query_impact_area_id, query_damage_category,
+                                                            query_asset_category, consequence_type, RiskType::Total);
+    }
+    auto msg = std::string("unknown alternative_comparison_report method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("alternative_comparison_report fixture") {
+    std::ifstream f(fixtures_dir() + "/alternatives/alternative_comparison_report.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "alternative_comparison_report");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_alternative_comparison_report(c, a["method"].get<std::string>(), a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
