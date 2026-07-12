@@ -6,6 +6,7 @@
 #include "doctest.h"
 #include "json.hpp"
 #include "check.hpp"
+#include "hecfda/model/compute/impact_area_scenario_simulation.hpp"
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/extensions/graphical_distribution.hpp"
 #include "hecfda/model/metrics/aggregated_consequences_binned.hpp"
@@ -3091,6 +3092,132 @@ TEST_CASE("impact_area_scenario_results fixture") {
             } else {
                 exp = {a["expected"].get<double>()};
             }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for ImpactAreaScenarioSimulation (Phase 5 Task 7): the skeleton + fluent
+// SimulationBuilder + CanCompute + InitializeConsequenceHistograms surface only -- the Monte
+// Carlo compute loop is stubbed (throws) until Tasks 8-11. `construct` is {impact_area_id,
+// flow_frequency: {type, params} (ContinuousDistribution via with_flow_frequency), flow_stage:
+// {xs, ys:[{type,params}]} (UncertainPairedData via with_flow_stage, no metadata), stage_damage:
+// [{damage_category, asset_category, xs, ys:[{type,params}]}] (List<UncertainPairedData> via
+// with_stage_damages), non_failure_stage_damage (same per-item shape, OPTIONAL, via
+// with_non_failure_stage_damage)}. `method` dispatches: is_null (args [min_iterations,
+// max_iterations]) -- compute(ConvergenceCriteria(min,max)).is_null(), mirroring
+// ImpactAreaScenarioSimulationShould.ResultsShouldNotComputeWhenMaxIterationsAreGreaterThanMinIterations
+// (default MinIterations=50000 > a small MaxIterations short-circuits before the not-yet-ported
+// Monte Carlo loop, since compute() returns the null results immediately once can_compute() is
+// false); can_compute (args [min, max]) -- can_compute(ConvergenceCriteria(min,max)) directly
+// (this port's deliberate public-access relaxation of C#'s private CanCompute, see the header's
+// class comment); consequence_result_count (args []) -- calls
+// initialize_consequence_histograms(ConvergenceCriteria()) directly (same access-relaxation
+// rationale) then reads results().consequence_results().consequence_result_list().size(),
+// exercising the one-AggregatedConsequencesBinned-per-(damage_category,asset_category,
+// consequence_type,risk_type) fan-out for a case with both a failing and a non-failing
+// stage-damage list. All values PIN (gate-captured against the real C#, never hand-derived).
+static hecfda::model::paired_data::UncertainPairedData make_simulation_upd(const json& ctor) {
+    using namespace hecfda::model::paired_data;
+    using namespace hecfda::statistics::distributions;
+    std::vector<double> xs = ctor["xs"].get<std::vector<double>>();
+    std::vector<std::unique_ptr<IDistribution>> ys;
+    for (const auto& y : ctor["ys"]) {
+        ys.push_back(IDistributionFactory::create(distribution_type_from_name(y["type"].get<std::string>()),
+                                                    y["params"].get<std::vector<double>>()));
+    }
+    if (ctor.contains("damage_category")) {
+        CurveMetaData metadata(ctor["damage_category"].get<std::string>(),
+                                ctor.value("asset_category", std::string("unassigned")));
+        return UncertainPairedData(std::move(xs), std::move(ys), std::move(metadata));
+    }
+    return UncertainPairedData(std::move(xs), std::move(ys));
+}
+
+static std::unique_ptr<hecfda::statistics::distributions::ContinuousDistribution>
+make_simulation_continuous_distribution(const json& spec) {
+    using namespace hecfda::statistics::distributions;
+    auto dist = IDistributionFactory::create(distribution_type_from_name(spec["type"].get<std::string>()),
+                                              spec["params"].get<std::vector<double>>());
+    auto* continuous = dynamic_cast<ContinuousDistribution*>(dist.get());
+    if (continuous == nullptr) {
+        FAIL("simulation flow_frequency distribution type is not a ContinuousDistribution");
+    }
+    dist.release();
+    return std::unique_ptr<ContinuousDistribution>(continuous);
+}
+
+static hecfda::model::compute::ImpactAreaScenarioSimulation build_simulation(const json& ctor) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::paired_data::UncertainPairedData;
+
+    int impact_area_id = ctor["impact_area_id"].get<int>();
+
+    std::vector<UncertainPairedData> stage_damage;
+    for (const auto& sd : ctor["stage_damage"]) {
+        stage_damage.push_back(make_simulation_upd(sd));
+    }
+
+    if (ctor.contains("non_failure_stage_damage")) {
+        std::vector<UncertainPairedData> non_failure_stage_damage;
+        for (const auto& sd : ctor["non_failure_stage_damage"]) {
+            non_failure_stage_damage.push_back(make_simulation_upd(sd));
+        }
+        return ImpactAreaScenarioSimulation::builder(impact_area_id)
+            .with_flow_frequency(make_simulation_continuous_distribution(ctor["flow_frequency"]))
+            .with_flow_stage(make_simulation_upd(ctor["flow_stage"]))
+            .with_stage_damages(std::move(stage_damage))
+            .with_non_failure_stage_damage(std::move(non_failure_stage_damage))
+            .build();
+    }
+    return ImpactAreaScenarioSimulation::builder(impact_area_id)
+        .with_flow_frequency(make_simulation_continuous_distribution(ctor["flow_frequency"]))
+        .with_flow_stage(make_simulation_upd(ctor["flow_stage"]))
+        .with_stage_damages(std::move(stage_damage))
+        .build();
+}
+
+static std::vector<double> run_simulation(const json& c, const std::string& method, const json& args) {
+    using hecfda::statistics::ConvergenceCriteria;
+
+    auto simulation = build_simulation(c["construct"]);
+
+    if (method == "is_null") {
+        ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
+        return {simulation.compute(cc).is_null() ? 1.0 : 0.0};
+    }
+    if (method == "can_compute") {
+        ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
+        return {simulation.can_compute(cc) ? 1.0 : 0.0};
+    }
+    if (method == "consequence_result_count") {
+        ConvergenceCriteria cc;
+        simulation.initialize_consequence_histograms(cc);
+        return {static_cast<double>(simulation.results().consequence_results().consequence_result_list().size())};
+    }
+    auto msg = std::string("unknown simulation method: ") + method;
+    FAIL(msg.c_str());
+    return {};
+}
+
+TEST_CASE("simulation fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/simulation_validation.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "simulation");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_simulation(c, a["method"].get<std::string>(), a["args"]);
+            bool mode_is_bool = a["mode"].get<std::string>() == "bool";
+            std::vector<double> exp = mode_is_bool ? std::vector<double>{a["expected"].get<bool>() ? 1.0 : 0.0}
+                                                    : std::vector<double>{a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {

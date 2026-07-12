@@ -1,0 +1,110 @@
+{
+  "target": "simulation",
+  "kind": "simulation",
+  "source_test": "HEC.FDA.Model/compute/ImpactAreaScenarioSimulation.cs lines 1-100, 733-908 (fields, ctor, Builder/SimulationBuilder, CanCompute, InitializeConsequenceHistograms) -- the min_greater_than_max_returns_null_results case mirrors ImpactAreaScenarioSimulationShould.ResultsShouldNotComputeWhenMaxIterationsAreGreaterThanMinIterations; no upstream unit test exercises InitializeConsequenceHistograms directly (it is private), so that case is oracle-gate-reproduced directly against the real Builder + InitializeConsequenceHistograms.",
+  "note": "construct = {impact_area_id, flow_frequency: {type, params} (ContinuousDistribution via WithFlowFrequency), flow_stage: {xs, ys:[{type,params}]} (UncertainPairedData via WithFlowStage, no CurveMetaData), stage_damage: [{damage_category, asset_category, xs, ys:[{type,params}]}] (List<UncertainPairedData> via WithStageDamages), non_failure_stage_damage (same per-item shape, OPTIONAL, via WithNonFailureStageDamage)}. `method` dispatches: is_null (args [min_iterations, max_iterations]) -- Builder(...).Build().Compute(new ConvergenceCriteria(min, max)).IsNull; can_compute (args [min_iterations, max_iterations]) -- Builder(...).Build().CanCompute(new ConvergenceCriteria(min, max)) (private in C#, exercised here via reflection/InternalsVisibleTo-equivalent direct access in the emitter, matching the port's own public-access relaxation documented in impact_area_scenario_simulation.hpp); consequence_result_count (args []) -- Builder(...).Build(), then InitializeConsequenceHistograms(new ConvergenceCriteria()) (also private, same access note), then ConsequenceResults.ConsequenceResultList (a private-equivalent list surfaced the same way).Count. The min_greater_than_max case uses (50000, 1) -- 50000 is ConvergenceCriteria's own default MinIterations, spelled out explicitly here for fixture clarity rather than relying on an implicit default. All values PIN (gate-captured against the real C#, never hand-derived).",
+  "cases": [
+    {
+      "name": "min_greater_than_max_returns_null_results",
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": { "type": "Uniform", "params": [0, 100000, 1000] },
+        "flow_stage": {
+          "xs": [0, 50000, 100000],
+          "ys": [
+            { "type": "Deterministic", "params": [0] },
+            { "type": "Deterministic", "params": [10] },
+            { "type": "Deterministic", "params": [20] }
+          ]
+        },
+        "stage_damage": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "xs": [0, 10, 20],
+            "ys": [
+              { "type": "Deterministic", "params": [0] },
+              { "type": "Deterministic", "params": [1000] },
+              { "type": "Deterministic", "params": [5000] }
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        { "method": "is_null", "args": [50000, 1], "expected": true, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "valid_inputs_can_compute",
+      "construct": {
+        "impact_area_id": 1,
+        "flow_frequency": { "type": "Uniform", "params": [0, 100000, 1000] },
+        "flow_stage": {
+          "xs": [0, 50000, 100000],
+          "ys": [
+            { "type": "Deterministic", "params": [0] },
+            { "type": "Deterministic", "params": [10] },
+            { "type": "Deterministic", "params": [20] }
+          ]
+        },
+        "stage_damage": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "xs": [0, 10, 20],
+            "ys": [
+              { "type": "Deterministic", "params": [0] },
+              { "type": "Deterministic", "params": [1000] },
+              { "type": "Deterministic", "params": [5000] }
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        { "method": "can_compute", "args": [1, 1], "expected": true, "tol": 0.0, "mode": "bool" }
+      ]
+    },
+    {
+      "name": "initialize_consequence_histograms_one_per_category",
+      "construct": {
+        "impact_area_id": 2,
+        "flow_frequency": { "type": "Uniform", "params": [0, 100000, 1000] },
+        "flow_stage": {
+          "xs": [0, 50000, 100000],
+          "ys": [
+            { "type": "Deterministic", "params": [0] },
+            { "type": "Deterministic", "params": [10] },
+            { "type": "Deterministic", "params": [20] }
+          ]
+        },
+        "stage_damage": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "xs": [0, 10, 20],
+            "ys": [
+              { "type": "Deterministic", "params": [0] },
+              { "type": "Deterministic", "params": [1000] },
+              { "type": "Deterministic", "params": [5000] }
+            ]
+          }
+        ],
+        "non_failure_stage_damage": [
+          {
+            "damage_category": "Commercial",
+            "asset_category": "Content",
+            "xs": [0, 10, 20],
+            "ys": [
+              { "type": "Deterministic", "params": [0] },
+              { "type": "Deterministic", "params": [500] },
+              { "type": "Deterministic", "params": [2500] }
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        { "method": "consequence_result_count", "args": [], "expected": 2, "tol": 0.0, "mode": "abs" }
+      ]
+    }
+  ]
+}

@@ -1390,6 +1390,69 @@ namespace oracle_emitter {
       throw new Exception("unknown impact_area_scenario_results method: " + method);
     }
 
+    // ImpactAreaScenarioSimulation (Phase 5 Task 7): the skeleton + fluent SimulationBuilder +
+    // CanCompute + InitializeConsequenceHistograms surface only -- see
+    // patched/ImpactAreaScenarioSimulation.cs's header for what's kept/dropped and why. `construct`
+    // is {impact_area_id, flow_frequency: {type,params}, flow_stage: {xs, ys:[{type,params}]},
+    // stage_damage: [{damage_category, asset_category, xs, ys:[{type,params}]}],
+    // non_failure_stage_damage (same per-item shape, optional)} -- same shape
+    // core/tests/test_fixtures.cpp's run_simulation dispatch uses. Builds via
+    // Builder(id).WithFlowFrequency(...).WithFlowStage(...).WithStageDamages(...)
+    // [.WithNonFailureStageDamage(...)].Build(). `method` dispatches: is_null (args
+    // [min_iterations, max_iterations]) -- Compute(new ConvergenceCriteria(min, max)).IsNull;
+    // can_compute (args [min, max]) -- CanCompute(new ConvergenceCriteria(min, max)) directly;
+    // consequence_result_count (args []) -- InitializeConsequenceHistograms(new
+    // ConvergenceCriteria()) directly, then ImpactAreaScenarioResultsForTest.ConsequenceResults.
+    // ConsequenceResultList.Count.
+    static UncertainPairedData MakeSimulationUpd(JsonElement ctor) {
+      double[] xs = DA(ctor.GetProperty("xs"));
+      IDistribution[] ys = DistArray(ctor.GetProperty("ys"));
+      if (ctor.TryGetProperty("damage_category", out var dc)) {
+        string assetCategory = ctor.TryGetProperty("asset_category", out var ac) ? ac.GetString() : "unassigned";
+        return new UncertainPairedData(xs, ys, new CurveMetaData(dc.GetString(), assetCategory));
+      }
+      return new UncertainPairedData(xs, ys, new CurveMetaData());
+    }
+    static ImpactAreaScenarioSimulation BuildSimulation(JsonElement ctor) {
+      int impactAreaID = ctor.GetProperty("impact_area_id").GetInt32();
+      var flowFrequency = DistFactory(ctor.GetProperty("flow_frequency").GetProperty("type").GetString(),
+                                       DA(ctor.GetProperty("flow_frequency").GetProperty("params")));
+      var flowStage = MakeSimulationUpd(ctor.GetProperty("flow_stage"));
+      var stageDamage = new List<UncertainPairedData>();
+      foreach (var sd in ctor.GetProperty("stage_damage").EnumerateArray()) {
+        stageDamage.Add(MakeSimulationUpd(sd));
+      }
+      var builder = ImpactAreaScenarioSimulation.Builder(impactAreaID)
+          .WithFlowFrequency(flowFrequency)
+          .WithFlowStage(flowStage)
+          .WithStageDamages(stageDamage);
+      if (ctor.TryGetProperty("non_failure_stage_damage", out var nfsd)) {
+        var nonFailureStageDamage = new List<UncertainPairedData>();
+        foreach (var sd in nfsd.EnumerateArray()) {
+          nonFailureStageDamage.Add(MakeSimulationUpd(sd));
+        }
+        builder = builder.WithNonFailureStageDamage(nonFailureStageDamage);
+      }
+      return builder.Build();
+    }
+    static object EvalSimulation(JsonElement caseEl, string method, JsonElement argsEl) {
+      var simulation = BuildSimulation(caseEl.GetProperty("construct"));
+      if (method == "is_null") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        return simulation.Compute(cc).IsNull ? 1.0 : 0.0;
+      }
+      if (method == "can_compute") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        return simulation.CanCompute(cc) ? 1.0 : 0.0;
+      }
+      if (method == "consequence_result_count") {
+        var cc = new ConvergenceCriteria();
+        simulation.InitializeConsequenceHistograms(cc);
+        return (double)simulation.ImpactAreaScenarioResultsForTest.ConsequenceResults.ConsequenceResultList.Count;
+      }
+      throw new Exception("unknown simulation method: " + method);
+    }
+
     // ContinuousDistributionExtensions.BootstrapToPairedData(this ContinuousDistribution, long
     // iterationNumber, double[] ExceedanceProbabilities, bool computeIsDeterministic) (Phase 5
     // Task 5) -- the analytical-frequency realization Task 8's EAD compute uses to turn a fitted
@@ -1472,6 +1535,7 @@ namespace oracle_emitter {
               case "system_performance_results": val = EvalSystemPerformanceResults(c, method, argsEl); break;
               case "performance_by_thresholds": val = EvalPerformanceByThresholds(c, method, argsEl); break;
               case "impact_area_scenario_results": val = EvalImpactAreaScenarioResults(c, method, argsEl); break;
+              case "simulation": val = EvalSimulation(c, method, argsEl); break;
               case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;
