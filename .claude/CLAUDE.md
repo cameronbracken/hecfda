@@ -71,7 +71,21 @@ Phase 2 added the paired-data compute layer under `hecfda::model::paired_data`: 
 (including deterministic-via-converter), and `GraphicalUncertainPairedData` +
 `GraphicalDistribution` + `GraphicalFrequencyUncertaintyCalculators` + `InterpolateQuantiles`.
 Phase 2 also added `-ffp-contract=off` project-wide (see "FP-contraction (FMA) parity" below).
-All phases 3-6 build outward from this base -- see `PLAN.md` for the dependency-ordered bulk-port
+
+Phase 3 added `hecfda::model::structures`: the three per-structure uncertainty samplers
+(`ValueUncertainty`, `ValueRatioWithUncertainty`, `FirstFloorElevationUncertainty`),
+`OccupancyType`/`DeterministicOccupancyType`/`OccupancyTypeBuilder`, `Structure::compute_damage`,
+and `Inventory`'s numeric subset.
+
+Phase 4 added `hecfda::model::metrics` (the consequence-binning substrate: `ConsequenceResult`,
+`AggregatedConsequencesBinned`, `StudyAreaConsequencesBinned`, `ConsequenceExtensions`),
+`Inventory::compute_damages` (the parallel per-structure damage collector), and
+`hecfda::model::stage_damage` (`HydraulicProfiles` + `CorrectDryStructureWSEs` -- the
+hydraulics-as-arrays input boundary replacing disk-backed `HydraulicDataset` --
+`ImpactAreaStageDamage`'s aggregation-stage geometry + `Compute()`, and `ScenarioStageDamage`'s
+outer per-impact-area compute loop). Deterministic-only scope this phase (`compute_is_deterministic
+= true`); the tractable-curve oracle (`TractableStageDamageTests`) is the headline cross-check.
+All phases 5-6 build outward from this base -- see `PLAN.md` for the dependency-ordered bulk-port
 sequence.
 
 ## Build & test commands
@@ -160,6 +174,22 @@ structures targets -- `value_ratio_with_uncertainty`, `first_floor_elevation_unc
 validated in C++ (`test_fixtures.cpp` loads every `fixtures/structures/*.json`) and against real
 C# via the `verify_oracles.py` gate, matching the distribution-coverage convention above rather
 than duplicating it with bespoke R/Python glue for every target.
+
+**R/Python stage-damage coverage scope (Phase 4):** the R (`hecfda_consequence_result`/
+`hecfda_impact_area_stage_damage`) and Python (`consequence_result`/`impact_area_stage_damage`)
+bindings cover a representative subset of the new Phase-4 targets: `consequence_result` (a metrics
+leaf exercising the increment accumulator through the new `hecfda::model::metrics` namespace) and
+`impact_area_stage_damage` (the end-to-end deterministic stage-damage compute -- the phase's
+headline result, reconstructing the tractable Residential/Commercial scenario from
+`fixtures/stage_damage/impact_area_stage_damage.json`'s construct block exactly as
+`test_fixtures.cpp`'s TEST_CASE body does, then running `Compute(true)`). The remaining Phase-4
+targets -- `aggregated_consequences_binned`, `study_area_consequences_binned`,
+`inventory_compute_damages`, `correct_dry_structure_wses`/`hydraulic_profiles`,
+`stage_damage_geometry`, `scenario_stage_damage` -- traverse the identical binding and compiled
+core, so they stay validated in C++ (`test_fixtures.cpp` loads every `fixtures/metrics/*.json` and
+`fixtures/stage_damage/*.json`) and against real C# via the `verify_oracles.py` gate, matching the
+distribution/structures-coverage convention above rather than duplicating it with bespoke R/Python
+glue for every target.
 
 ## Conventions & gotchas
 
@@ -252,6 +282,25 @@ than duplicating it with bespoke R/Python glue for every target.
     switch has a live `LogNormal` case, so a LogNormal `ValueUncertainty` is "invalid" per
     `validate()` but still functionally sampleable; transcribed exactly as upstream wrote it, not
     reconciled.
+  - `Inventory::compute_damages`'s other/vehicle store-swap: the scratch collections are written
+    with `other`/`vehicle` SWAPPED, then `aggregate_results` is called with those two collections
+    positionally swapped back -- two "bugs" that compose to the correct result (see
+    `inventory.hpp`'s doc comment above `compute_damages` for the full symbol trace). Transcribed
+    exactly as upstream wrote it (both the store step and the aggregate-results call), not
+    collapsed to the equivalent direct call, so a future upstream fix to only one side breaks this
+    port's tests instead of silently diverging.
+  - `ImpactAreaStageDamage::compute_damage_with_uncertainty_all_coordinates`'s convergence loop
+    hard-wires `compute_chunk_quantity = 100` (a literal reassignment, not `+= 100` and not a
+    remaining-iterations estimate) on every non-converged pass after the first. Transcribed
+    verbatim from the upstream "TODO: hard-wire in an additional 10000 iterations" comment; never
+    actually exercised by this phase's fixtures because the deterministic path
+    (`compute_is_deterministic=true`) always converges after the first chunk (zero-variance
+    histogram), but ported for interface completeness ahead of Phase 5's Monte Carlo path.
+  - `UncertainToDeterministicDistributionConverter`'s `IHistogram` branch (Phase 4 Task 4)
+    downcasts to `DynamicHistogram` and reads its `SampleMean` -- this closes the converter's
+    previously-DEFERRED "Phase 2" IHistogram case now that `DynamicHistogram` is a live
+    `UncertainPairedData` Yvals type; not a bug, but recorded here since the class comment's
+    original "SCOPE" note called it out as deferred and that is no longer true as of Phase 4.
 - **By-value capture in Validation-rule predicates (standing invariant, Phase 3):**
   `ValueUncertainty`, `ValueRatioWithUncertainty`, `FirstFloorElevationUncertainty`, and
   `Structure` are all held **by value** inside containers that relocate them after construction
@@ -262,10 +311,17 @@ than duplicating it with bespoke R/Python glue for every target.
   All four classes' `add_rules()` capture checked fields **by value**
   (`[value = field_]`/`[dist = distribution_type_]`) instead; safe because every captured field is
   set once in the ctor and never mutated after. Apply the same by-value-capture pattern to any
-  future `Validation`-derived class held by value inside a relocating container. **Open follow-up:**
-  `ConvergenceCriteria` (Phase 1) has the same `[this]`-capture shape but is not currently
-  reachable through a relocating container (only ever used by const-reference parameter), so it
-  was deliberately left unfixed -- revisit if a future phase stores it by value in a container.
+  future `Validation`-derived class held by value inside a relocating container. **Open follow-up
+  (STILL OPEN, now closer to relevant):** `ConvergenceCriteria` (Phase 1) has the same
+  `[this]`-capture shape and was deliberately left unfixed in Phase 3 because it wasn't reachable
+  through a relocating container. Phase 4's `ImpactAreaStageDamage` holds a `ConvergenceCriteria`
+  member BY VALUE, and `ScenarioStageDamage` holds `std::vector<ImpactAreaStageDamage>` (built via
+  `push_back`, which relocates on growth) -- so `ConvergenceCriteria` is now transitively inside a
+  relocating container. No crash has been observed (nothing in this port's `ImpactAreaStageDamage`/
+  `ScenarioStageDamage` code path calls `ConvergenceCriteria::validate()` on that member, so its
+  `[this]`-capturing rules are registered but never invoked), but the ASan hazard is now live in
+  principle -- fix in Phase 5 or a cleanup pass before anything calls `validate()` on a
+  `ConvergenceCriteria` reached this way.
 
 ## Git & CI
 
@@ -284,7 +340,7 @@ than duplicating it with bespoke R/Python glue for every target.
 
 ## Status
 
-**Phase 0, Phase 1, Phase 2, and Phase 3 are complete.** The Phase 0 vertical slice (.NET `Random` ->
+**Phase 0, Phase 1, Phase 2, Phase 3, and Phase 4 are complete.** The Phase 0 vertical slice (.NET `Random` ->
 `Normal` -> `PairedData` -> `UncertainPairedData.sample_and_integrate`) passes identically in
 C++, R, and Python; the seeded RNG stream is byte-identical across all three and matches a real
 .NET capture. Phase 1 (Statistics foundation) ported the validation subsystem, full
@@ -316,14 +372,25 @@ memory-safety defect (ASan-confirmed use-after-scope): `ValueUncertainty`, `Valu
 from `[this]` to by-value field capture -- see "By-value capture in Validation-rule predicates"
 above for the full invariant and the still-open `ConvergenceCriteria` follow-up.
 
-The exit gate is green on all four legs: `make test-core` (ctest, C++, 36 test cases / 31140
-assertions, all passing), `make test-r` (testthat, 75 passed / 0 failed), `make test-py` (pytest,
-10 passed / 0 failed), and `make oracles` (dotnet gate, 537 reproduced / 0 failed -- up from
-Phase 2's 492). The Makefile targets and 3-platform CI are green. The `24.425549382855987`
-cross-language value and the RNG digest (FMA-insensitive) reproduce unchanged in all four legs.
-R and Python bind a representative structures subset (`value_uncertainty`, `structure`) per the
-"R/Python structures coverage scope" convention above; the remaining structures targets are
-validated in C++ + the gate only.
+Phase 4 (stage-damage) ported `hecfda::model::metrics` (`ConsequenceResult`,
+`AggregatedConsequencesBinned`, `StudyAreaConsequencesBinned`, `ConsequenceExtensions`),
+`Inventory::compute_damages`, and `hecfda::model::stage_damage` (`HydraulicProfiles` +
+`CorrectDryStructureWSEs`, `ImpactAreaStageDamage`'s aggregation-stage geometry + `Compute()`, and
+`ScenarioStageDamage`'s outer compute loop). This closes the end-to-end deterministic
+stage-damage path: seeded structure inventory -> per-stage consequence binning -> a
+damage-category/asset-category stage-damage `UncertainPairedData`, cross-checked against the real
+`TractableStageDamageTests` literals. Deterministic-only scope (`compute_is_deterministic=true`);
+Monte Carlo stage-damage and EAD-level aggregation are Phase 5. R and Python bind a representative
+subset (`consequence_result`, `impact_area_stage_damage`) per the "R/Python stage-damage coverage
+scope" convention above; the remaining Phase-4 targets are validated in C++ + the gate only.
+
+The exit gate is green on all four legs: `make test-core` (ctest, C++, all passing, ~61s --
+`test_fixtures` alone accounts for most of that; see "Deferred from Phase 4" below), `make test-r`
+(testthat, 134 passed / 0 failed), `make test-py` (pytest, 12 passed / 0 failed), and `make
+oracles` (dotnet gate, 641 reproduced / 0 failed -- up from Phase 3's 537). The Makefile targets
+and 3-platform CI are green. The `24.425549382855987` cross-language value and the RNG digest
+(FMA-insensitive) reproduce unchanged in all four legs, and the Phase 3 structures fixtures
+(`value_uncertainty`, `structure`) still pass in R and Python.
 
 Severed/deferred from Phase 2: `CurveMetaData`/`GraphicalDistribution`/
 `GraphicalUncertainPairedData` XML + `ValidationErrorLogger`/GUI wiring;
@@ -338,7 +405,27 @@ fixture coverage (not exercised by any Task 6 case); `OccupancyType::error_messa
 a pre-existing gap in `hecfda::statistics::Validation`, not new to Phase 3, and not exercised by
 any fixture.
 
-See `PLAN.md` for the conventions established in Phase 1, 2, and 3 (port-internal factory keys,
-bespoke fixture targets, the faithful-bug list, the by-value-capture invariant), the Phase 4-6
-plan, and the FMA parity detail. **Next: Phase 4 -- stage-damage**, which builds on the
-structures layer Phase 3 delivered.
+Deferred from Phase 4 (Minor -- revisit in Phase 5 or a cleanup pass): the analytical-frequency
+branch of `ImpactAreaStageDamage::identify_central_stage_frequency_at_index_location` (analytical
+flow frequency WITH a discharge-stage function) throws `std::logic_error` rather than computing,
+because it needs the unported `ContinuousDistribution::to_coordinates` (a UI/graphing concern,
+never ported -- see `continuous_distribution.hpp`); no fixture reaches this branch, every oracle
+case uses the graphical-frequency path instead. `ImpactAreaStageDamage::produce_zero_damage_functions`
+(the empty-inventory path) and the length/empty-input guards on
+`HydraulicProfiles::get_corrected_wses`/`correct_dry_structure_wses`/`set_coordinate_quantity` are
+implemented straight from the C# source but have no fixture exercising an empty inventory or
+empty/mismatched-length input arrays -- add explicit guard-clause fixtures if a future caller can
+reach these paths with malformed input. The `ConvergenceCriteria` by-value-in-a-relocating-
+container hazard (see "By-value capture in Validation-rule predicates" above) is now reachable via
+`ScenarioStageDamage`'s `vector<ImpactAreaStageDamage>` but not yet triggered by any code path that
+calls `validate()` on it. `core/tests/test_fixtures.cpp`'s `test_fixtures` ctest target costs ~61s
+because `impact_area_stage_damage`/`scenario_stage_damage` each run the full 1000-iteration
+`Compute()` convergence loop per case even on the deterministic (zero-variance, converges-after-
+first-chunk) path -- a known, accepted cost of exercising the real convergence loop rather than a
+regression.
+
+See `PLAN.md` for the conventions established in Phase 1-4 (port-internal factory keys, bespoke
+fixture targets, the faithful-bug list, the by-value-capture invariant, the hydraulics-as-arrays
+boundary), the Phase 5-6 plan, and the FMA parity detail. **Next: Phase 5 -- compute + metrics**
+(`ImpactAreaScenarioSimulation`/EAD Monte Carlo and EAD-level metrics/results/thresholds/
+performance), which builds on the stage-damage layer Phase 4 delivered.

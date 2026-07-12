@@ -1,22 +1,30 @@
 # Plan: `hecfdar` (R) + `hecfdapy` (Python) from a shared C++ core, ported from HEC-FDA
 
 > **Current status (kept in sync by hand):** Phase 0, Phase 1 (Statistics foundation), Phase 2
-> (paired-data compute), and Phase 3 (structures & inventory) are **complete**. The full toolchain
-> is proven end to end: seeded .NET `Random` -> `Normal` -> `PairedData` -> `UncertainPairedData`
-> integrate-and-sample, identical in C++, R, and Python, and reproduced by the real HEC-FDA C#.
-> Phase 1 added the validation subsystem, full `SpecialFunctions`, `SampleStatistics`, the
-> distribution base/enum/factory with generic four-runner dispatch, all 13 distributions, the
-> `Gamma`/`ShiftedGamma`/`PearsonIII` helpers, `ConvergenceCriteria`, `DynamicHistogram`, and the
-> `UncertainToDeterministicDistributionConverter`. Phase 2 added the full paired-data curve
-> algebra, the faithful .NET `Array.BinarySearch`, `UncertainPairedData` generalized to
-> `IDistribution`, and the graphical uncertainty path. Phase 3 added `hecfda::model::structures`:
-> the three per-structure uncertainty samplers, `OccupancyType`/`DeterministicOccupancyType` + the
-> move-only builder, `Structure`'s numeric `ComputeDamage`, and `Inventory`'s numeric subset, plus
-> a project-wide by-value-capture fix for `Validation`-rule predicates on objects held inside
-> relocating containers. R and Python bind a representative structures subset
-> (`value_uncertainty`, `structure`); the rest are validated in C++ + the gate only, per the
-> established coverage-scope convention. The oracle gate reproduces 537 fixture assertions, 0
-> failed. Phases 4-6 have not started; Phase 4 (stage-damage) is next.
+> (paired-data compute), Phase 3 (structures & inventory), and Phase 4 (stage-damage) are
+> **complete**. The full toolchain is proven end to end: seeded .NET `Random` -> `Normal` ->
+> `PairedData` -> `UncertainPairedData` integrate-and-sample, identical in C++, R, and Python, and
+> reproduced by the real HEC-FDA C#. Phase 1 added the validation subsystem, full
+> `SpecialFunctions`, `SampleStatistics`, the distribution base/enum/factory with generic
+> four-runner dispatch, all 13 distributions, the `Gamma`/`ShiftedGamma`/`PearsonIII` helpers,
+> `ConvergenceCriteria`, `DynamicHistogram`, and the `UncertainToDeterministicDistributionConverter`.
+> Phase 2 added the full paired-data curve algebra, the faithful .NET `Array.BinarySearch`,
+> `UncertainPairedData` generalized to `IDistribution`, and the graphical uncertainty path. Phase 3
+> added `hecfda::model::structures`: the three per-structure uncertainty samplers,
+> `OccupancyType`/`DeterministicOccupancyType` + the move-only builder, `Structure`'s numeric
+> `ComputeDamage`, and `Inventory`'s numeric subset, plus a project-wide by-value-capture fix for
+> `Validation`-rule predicates on objects held inside relocating containers. Phase 4 added
+> `hecfda::model::metrics` (`ConsequenceResult`/`AggregatedConsequencesBinned`/
+> `StudyAreaConsequencesBinned`/`ConsequenceExtensions`), `Inventory::compute_damages`, and
+> `hecfda::model::stage_damage` (`HydraulicProfiles`+`CorrectDryStructureWSEs`,
+> `ImpactAreaStageDamage`'s geometry + `Compute()`, `ScenarioStageDamage`'s outer loop) --
+> deterministic-only scope, cross-checked against the real `TractableStageDamageTests`. R and
+> Python bind a representative subset per phase (structures: `value_uncertainty`, `structure`;
+> stage-damage: `consequence_result`, `impact_area_stage_damage`); the rest are validated in C++ +
+> the gate only, per the established coverage-scope convention. The oracle gate reproduces 641
+> fixture assertions, 0 failed. Phases 5-6 have not started; Phase 5 (compute + metrics: EAD Monte
+> Carlo / `ImpactAreaScenarioSimulation` + EAD-level metrics/results/thresholds/performance) is
+> next.
 >
 > Phase 0 delivered the canonical C++17 header core at `core/include/hecfda/`
 > (`sampling::DotNetRandom`, `model::compute::RandomProvider`,
@@ -293,10 +301,11 @@ Python fixtures pass; `verify_oracles.py` green (when `dotnet` is available); th
   every fixture passes identically to its stated tolerances.
 - **dotnet oracle gate:** dev-only, reproduces every fixture against the real upstream C#.
 
-## Open items carried into Phase 4
+## Open items carried into Phase 5
 
-- **Next phase target:** Phase 4 -- stage-damage, which builds on the structures layer
-  (`Structure`/`Inventory`/`OccupancyType`) Phase 3 delivered.
+- **Next phase target:** Phase 5 -- compute + metrics (EAD Monte Carlo /
+  `ImpactAreaScenarioSimulation` + EAD-level metrics/results/thresholds/performance), which builds
+  on the stage-damage layer (`ImpactAreaStageDamage`/`ScenarioStageDamage`) Phase 4 delivered.
 - `CurveMetaData`/`GraphicalDistribution`/`GraphicalUncertainPairedData` XML +
   `ValidationErrorLogger`/GUI wiring -- severed (adapter/GUI layer, not the numeric core).
 - `UncertainPairedData.CombineWithWeights` -- depends on severed `Empirical` stacking, currently
@@ -304,18 +313,27 @@ Python fixtures pass; `verify_oracles.py` green (when `dotnet` is available); th
 - The graphical path (`GraphicalUncertainPairedData`/`GraphicalDistribution`) is validated in C++
   and the oracle gate but not yet bound in R/Python. Documented follow-up; the
   `-ffp-contract=off` flag is already in place in both language builds for when it lands.
-- `Empirical` stacking/weighting, `DynamicHistogram` XML/plotting/`ConvertToEmpiricalDistribution`,
-  and the converter's `IHistogram` case -- severed from Phase 1, still pending.
+- `Empirical` stacking/weighting and `DynamicHistogram` XML/plotting/`ConvertToEmpiricalDistribution`
+  -- severed from Phase 1, still pending. (The converter's `IHistogram` case was closed in Phase 4
+  Task 4 -- no longer deferred.)
 - `Inventory::get_inventory_and_water_trimmed_to_damage_category` -- ported but has no fixture
-  coverage (not exercised by any Phase 3 Task 6 case); revisit when Phase 4 needs it.
+  coverage (not exercised by any Phase 3 Task 6 case); revisit when a future phase needs it.
 - `OccupancyType::error_messages_for()` formats `ErrorLevel` as a raw int rather than the C#
   `[Flags]` enum name -- a pre-existing gap in `hecfda::statistics::Validation` (no enum-to-name
   map), not exercised by any fixture; carried forward from Phase 3.
-- `ConvergenceCriteria` (Phase 1) still captures `[this]` in its `Validation`-rule predicates,
-  the same UB shape fixed in the three Phase 3 structures samplers + `Structure`, but is not
-  currently held by value inside a relocating container so the bug is latent, not live. Revisit
-  if a future phase stores it by value in a container (see CLAUDE.md's "By-value capture in
-  Validation-rule predicates" for the full invariant).
+- `ConvergenceCriteria` (Phase 1) still captures `[this]` in its `Validation`-rule predicates, the
+  same UB shape fixed in the three Phase 3 structures samplers + `Structure`. **No longer purely
+  latent as of Phase 4:** `ImpactAreaStageDamage` holds a `ConvergenceCriteria` by value, and
+  `ScenarioStageDamage` holds `vector<ImpactAreaStageDamage>` (relocates on `push_back`), so it is
+  now transitively inside a relocating container -- just not yet reached by any code path that
+  calls `validate()` on it. Fix before Phase 5 if EAD Monte Carlo adds such a call (see
+  CLAUDE.md's "By-value capture in Validation-rule predicates" for the full invariant).
+- Phase 4's `ImpactAreaStageDamage::identify_central_stage_frequency_at_index_location` analytical-
+  flow-frequency-with-discharge-stage branch throws (needs unported
+  `ContinuousDistribution::to_coordinates`); no fixture reaches it. `produce_zero_damage_functions`
+  (empty inventory) and the length/empty-input guards on `HydraulicProfiles`/
+  `set_coordinate_quantity` are implemented but unexercised by any fixture -- add guard-clause
+  fixtures if Phase 5 (or a cleanup pass) needs that coverage.
 - `PORTING_MANIFEST.toml` + `tools/upstream_diff.py` (deferred per bestfit precedent; needed once
   upstream churn must be tracked across many ported files).
 - cibuildwheel / `R CMD check --as-cran` wiring (deferred until the package surface is broad

@@ -132,3 +132,33 @@ def test_structure():
                 assert abs(got - exp) / divisor <= a["tol"]
             else:
                 assert abs(got - exp) <= a["tol"]
+
+# Phase 4 Task 9: representative subset (consequence_result, impact_area_stage_damage). The
+# remaining Phase-4 targets (aggregated_consequences_binned, study_area_consequences_binned,
+# inventory_compute_damages, hydraulic_profiles/correct_dry_structure_wses,
+# stage_damage_geometry, scenario_stage_damage) traverse the identical binding + compiled core and
+# are validated in C++ (core/tests/test_fixtures.cpp) + the dotnet oracle gate only -- see
+# .claude/CLAUDE.md's "R/Python distribution coverage scope" convention.
+def test_consequence_result():
+    fx = _read("metrics/consequence_result.json")
+    for c in fx["cases"]:
+        for a in c["assertions"]:
+            if a["method"] == "equals":
+                cc = c["compare_to"]
+                got = bf.consequence_result(c["construct"]["damage_category"], c["increments"], a["method"],
+                                             cc["construct"]["damage_category"], cc["increments"])
+            else:
+                got = bf.consequence_result(c["construct"]["damage_category"], c["increments"], a["method"],
+                                             "", [])
+            _close(got, a["expected"], a["tol"], a["mode"])
+
+def test_impact_area_stage_damage():
+    fx = _read("stage_damage/impact_area_stage_damage.json")
+    for c in fx["cases"]:
+        ctor = c["construct"]
+        for a in c["assertions"]:
+            got = bf.impact_area_stage_damage(
+                ctor["impact_area_id"], ctor["damage_category"], ctor["asset_category"],
+                ctor["hydraulic_stage1"], ctor["hydraulic_stage2"], ctor["use_reg_unreg"], a["args"][0],
+            )
+            _close(got, a["expected"], a["tol"], a["mode"])

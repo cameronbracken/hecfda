@@ -15,10 +15,18 @@
 #include "hecfda/model/structures/first_floor_elevation_uncertainty.hpp"
 #include "hecfda/model/structures/occupancy_type.hpp"
 #include "hecfda/model/structures/structure.hpp"
+#include "hecfda/statistics/distributions/deterministic.hpp"
+#include "hecfda/model/metrics/consequence_result.hpp"
+#include "hecfda/model/paired_data/curve_meta_data.hpp"
+#include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
+#include "hecfda/model/stage_damage/hydraulic_profiles.hpp"
+#include "hecfda/model/stage_damage/impact_area_stage_damage.hpp"
 namespace py = pybind11;
 namespace nd = hecfda::statistics::distributions;
 namespace pd = hecfda::model::paired_data;
 namespace ms = hecfda::model::structures;
+namespace mm = hecfda::model::metrics;
+namespace sd = hecfda::model::stage_damage;
 
 static std::vector<double> rng_sequence(int seed, int n) {
     hecfda::model::compute::RandomProvider rp(seed);
@@ -150,6 +158,180 @@ static double structure(const std::string& oc_name, const std::string& oc_damage
     throw std::invalid_argument("structure: unknown method: " + method);
 }
 
+// Bespoke dispatch for ConsequenceResult (Phase 4 Task 9 Python binding): mirrors
+// core/tests/test_fixtures.cpp's run_consequence_result exactly -- builds one fresh
+// ConsequenceResult from `damage_category`, replays every row of `increments` (each a 4-element
+// vector [structureDamage, contentDamage, vehicleDamage, otherDamage]) via increment_consequence,
+// then dispatches an accessor. `equals` builds a second ConsequenceResult from
+// compare_damage_category/compare_increments (empty/unused for every other method) and returns
+// 1.0/0.0 for the primary object's equals(second), matching fixtures/metrics/consequence_result.json.
+static mm::ConsequenceResult py_build_consequence_result(const std::string& damage_category,
+                                                           const std::vector<std::vector<double>>& increments) {
+    mm::ConsequenceResult cr(damage_category);
+    for (const auto& inc : increments) {
+        cr.increment_consequence(inc[0], inc[1], inc[2], inc[3]);
+    }
+    return cr;
+}
+
+static double consequence_result(const std::string& damage_category,
+                                  const std::vector<std::vector<double>>& increments, const std::string& method,
+                                  const std::string& compare_damage_category,
+                                  const std::vector<std::vector<double>>& compare_increments) {
+    auto cr = py_build_consequence_result(damage_category, increments);
+    if (method == "structure_damage") return cr.structure_damage();
+    if (method == "content_damage") return cr.content_damage();
+    if (method == "vehicle_damage") return cr.vehicle_damage();
+    if (method == "other_damage") return cr.other_damage();
+    if (method == "damaged_structures_quantity") return static_cast<double>(cr.damaged_structures_quantity());
+    if (method == "damaged_contents_quantity") return static_cast<double>(cr.damaged_contents_quantity());
+    if (method == "damaged_vehicles_quantity") return static_cast<double>(cr.damaged_vehicles_quantity());
+    if (method == "damaged_others_quantity") return static_cast<double>(cr.damaged_others_quantity());
+    if (method == "equals") {
+        auto cr2 = py_build_consequence_result(compare_damage_category, compare_increments);
+        return cr.equals(cr2) ? 1.0 : 0.0;
+    }
+    throw std::invalid_argument("consequence_result: unknown method: " + method);
+}
+
+// Bespoke construction for ImpactAreaStageDamage (Phase 4 Task 9 Python binding): reproduces
+// test_fixtures.cpp's make_tractable_residential_inventory/make_tractable_commercial_inventory/
+// make_mock_wses_by_profile literals verbatim (see fixtures/stage_damage/impact_area_stage_damage.json's
+// note for why these are fixed test literals, not fixture-carried fields).
+static ms::Inventory py_make_tractable_residential_inventory(int impact_area_id) {
+    std::vector<double> depths = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    std::vector<double> struct_damage_vals = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+    std::vector<double> content_damage_vals = {0, 5, 15, 25, 35, 45, 55, 65, 75, 85, 95};
+    auto make_deterministic_upd = [](const std::vector<double>& xs, const std::vector<double>& vals) {
+        std::vector<std::unique_ptr<nd::IDistribution>> ys;
+        ys.reserve(vals.size());
+        for (double v : vals) ys.push_back(std::make_unique<nd::Deterministic>(v));
+        return pd::UncertainPairedData(xs, std::move(ys));
+    };
+    ms::OccupancyType residential =
+        ms::OccupancyType::builder()
+            .with_name("Residential")
+            .with_damage_category("Residential")
+            .with_structure_depth_percent_damage(make_deterministic_upd(depths, struct_damage_vals))
+            .with_content_depth_percent_damage(make_deterministic_upd(depths, content_damage_vals))
+            .with_content_to_structure_value_ratio(ms::ValueRatioWithUncertainty(50))
+            .build();
+    std::map<std::string, ms::OccupancyType> occ_types;
+    occ_types.emplace("Residential", std::move(residential));
+    std::vector<ms::Structure> structures;
+    structures.push_back(ms::Structure("1", /*first_floor_elevation=*/14, /*val_struct=*/100, "Residential",
+                                        "Residential", impact_area_id, 0, 0, 0, "unassigned",
+                                        ms::Structure::kDefaultMissingValue, /*ground_elevation=*/12));
+    structures.push_back(ms::Structure("2", /*first_floor_elevation=*/15, /*val_struct=*/200, "Residential",
+                                        "Residential", impact_area_id, 0, 0, 0, "unassigned",
+                                        ms::Structure::kDefaultMissingValue, /*ground_elevation=*/12));
+    return ms::Inventory(std::move(occ_types), std::move(structures));
+}
+
+static ms::Inventory py_make_tractable_commercial_inventory(int impact_area_id) {
+    std::vector<double> depths = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    std::vector<double> struct_damage_vals = {0, 5, 15, 25, 35, 45, 55, 65, 75, 85, 95};
+    std::vector<double> content_damage_vals = {0, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90};
+    auto make_deterministic_upd = [](const std::vector<double>& xs, const std::vector<double>& vals) {
+        std::vector<std::unique_ptr<nd::IDistribution>> ys;
+        ys.reserve(vals.size());
+        for (double v : vals) ys.push_back(std::make_unique<nd::Deterministic>(v));
+        return pd::UncertainPairedData(xs, std::move(ys));
+    };
+    ms::OccupancyType commercial =
+        ms::OccupancyType::builder()
+            .with_name("Commercial")
+            .with_damage_category("Commercial")
+            .with_structure_depth_percent_damage(make_deterministic_upd(depths, struct_damage_vals))
+            .with_content_depth_percent_damage(make_deterministic_upd(depths, content_damage_vals))
+            .with_content_to_structure_value_ratio(ms::ValueRatioWithUncertainty(120))
+            .build();
+    std::map<std::string, ms::OccupancyType> occ_types;
+    occ_types.emplace("Commercial", std::move(commercial));
+    std::vector<ms::Structure> structures;
+    structures.push_back(ms::Structure("3", /*first_floor_elevation=*/17, /*val_struct=*/300, "Commercial",
+                                        "Commercial", impact_area_id, 0, 0, 0, "unassigned",
+                                        ms::Structure::kDefaultMissingValue, /*ground_elevation=*/12));
+    structures.push_back(ms::Structure("4", /*first_floor_elevation=*/18, /*val_struct=*/400, "Commercial",
+                                        "Commercial", impact_area_id, 0, 0, 0, "unassigned",
+                                        ms::Structure::kDefaultMissingValue, /*ground_elevation=*/12));
+    return ms::Inventory(std::move(occ_types), std::move(structures));
+}
+
+static std::vector<std::vector<float>> py_make_mock_wses_by_profile(float stage1, float stage2,
+                                                                      std::size_t profile_count) {
+    std::vector<std::vector<float>> wses;
+    wses.reserve(profile_count);
+    wses.push_back({stage1, stage2});
+    for (std::size_t i = 1; i < profile_count; ++i) {
+        const auto& previous = wses.back();
+        wses.push_back({previous[0] + 1.0f, previous[1] + 1.0f});
+    }
+    return wses;
+}
+
+// Bespoke dispatch for ImpactAreaStageDamage (Phase 4 Task 9 Python binding, the headline
+// end-to-end stage-damage compute): mirrors core/tests/test_fixtures.cpp's
+// "impact_area_stage_damage fixture" TEST_CASE body exactly -- builds a fresh
+// damage-category-scoped tractable Inventory + mock HydraulicProfiles + graphical stage/flow
+// frequency curves (all fixed literals, matching the fixture's construct-only-carries-scalars
+// shape), constructs one ImpactAreaStageDamage, runs compute(compute_is_deterministic=true),
+// selects the UncertainPairedData whose metadata matches (damage_category, asset_category),
+// samples it deterministically, and evaluates at `stage`.
+static double impact_area_stage_damage(int impact_area_id, const std::string& damage_category,
+                                        const std::string& asset_category, double hydraulic_stage1,
+                                        double hydraulic_stage2, bool use_reg_unreg, double stage) {
+    const std::vector<double> probabilities = {.5, .2, .1, .04, .02, .01, .004, .002};
+
+    ms::Inventory inventory = damage_category == "Residential"
+                                   ? py_make_tractable_residential_inventory(impact_area_id)
+                                   : py_make_tractable_commercial_inventory(impact_area_id);
+    auto wses_by_profile = py_make_mock_wses_by_profile(static_cast<float>(hydraulic_stage1),
+                                                          static_cast<float>(hydraulic_stage2), probabilities.size());
+    sd::HydraulicProfiles hydraulics(probabilities, wses_by_profile);
+
+    std::vector<double> graphical_stages = {12, 13, 14, 15, 16, 17, 18, 19};
+    pd::CurveMetaData stage_frequency_md("probability", "stages", "graphical stage frequency");
+    pd::GraphicalUncertainPairedData stage_frequency(probabilities, graphical_stages, /*erl=*/50, stage_frequency_md,
+                                                       /*using_stages_not_flows=*/true);
+
+    std::vector<double> inflows = {1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900};
+    pd::CurveMetaData flow_frequency_md("probability", "discharge", "graphical flow frequency");
+    pd::GraphicalUncertainPairedData flow_frequency(probabilities, inflows, /*erl=*/50, flow_frequency_md,
+                                                      /*using_stages_not_flows=*/false);
+
+    std::vector<double> outflow_vals = {120, 130, 140, 150, 160, 170, 180, 190};
+    std::vector<std::unique_ptr<nd::IDistribution>> outflow_ys;
+    for (double v : outflow_vals) outflow_ys.push_back(std::make_unique<nd::Deterministic>(v));
+    pd::UncertainPairedData unreg_reg(inflows, std::move(outflow_ys));
+
+    std::vector<double> flows = {120, 130, 140, 150, 160, 170, 180, 190};
+    std::vector<double> stage_vals = {12, 13, 14, 15, 16, 17, 18, 19};
+    std::vector<std::unique_ptr<nd::IDistribution>> stage_ys;
+    for (double v : stage_vals) stage_ys.push_back(std::make_unique<nd::Deterministic>(v));
+    pd::UncertainPairedData discharge_stage(flows, std::move(stage_ys));
+
+    sd::ImpactAreaStageDamage impact_area_stage_damage_obj(
+        impact_area_id, std::move(inventory), std::move(hydraulics), /*analysis_year=*/9999,
+        /*analytical_flow_frequency=*/nullptr, use_reg_unreg ? &flow_frequency : &stage_frequency,
+        use_reg_unreg ? &discharge_stage : nullptr, use_reg_unreg ? &unreg_reg : nullptr,
+        /*using_mock_data=*/true);
+
+    auto compute_result = impact_area_stage_damage_obj.compute(/*compute_is_deterministic=*/true);
+    const pd::UncertainPairedData* target = nullptr;
+    for (const auto& upd : compute_result.first) {
+        if (upd.metadata().damage_category() == damage_category && upd.metadata().asset_category() == asset_category) {
+            target = &upd;
+            break;
+        }
+    }
+    if (target == nullptr) {
+        throw std::runtime_error("impact_area_stage_damage: no matching UncertainPairedData");
+    }
+    auto sampled = target->sample_paired_data(1, true);
+    return sampled.f(stage);
+}
+
 PYBIND11_MODULE(_core, mod) {
     mod.def("rng_sequence", &rng_sequence);
     mod.def("dist_eval", &dist_eval);
@@ -166,4 +348,9 @@ PYBIND11_MODULE(_core, mod) {
              py::arg("val_struct"), py::arg("st_damcat"), py::arg("occtype"), py::arg("impact_area_id"),
              py::arg("val_cont"), py::arg("val_vehic"), py::arg("val_other"), py::arg("ground_elevation"),
              py::arg("method"), py::arg("wse"));
+    mod.def("consequence_result", &consequence_result, py::arg("damage_category"), py::arg("increments"),
+             py::arg("method"), py::arg("compare_damage_category"), py::arg("compare_increments"));
+    mod.def("impact_area_stage_damage", &impact_area_stage_damage, py::arg("impact_area_id"),
+             py::arg("damage_category"), py::arg("asset_category"), py::arg("hydraulic_stage1"),
+             py::arg("hydraulic_stage2"), py::arg("use_reg_unreg"), py::arg("stage"));
 }
