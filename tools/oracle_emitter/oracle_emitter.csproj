@@ -223,5 +223,19 @@
          and BootstrapToUncertainPairedData are out of this task's scope but cost nothing to keep
          compiled in). -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/extensions/ContinuousDistributionExtensions.cs" />
+    <!-- Task Phase6T5: ScenarioResults's real source pulls in System.Xml.Linq (WriteToXML/
+         ReadFromXML), which call ImpactAreaScenarioResults.WriteToXml()/ReadFromXML(...): those
+         are already dropped by patched/ImpactAreaScenarioResults.cs (Phase5T3), so this class's
+         own XML methods would no longer compile even if kept. patched/ScenarioResults.cs drops
+         exactly those two methods (and the now-unused System.Xml.Linq using); the
+         ValidationErrorLogger base, both Properties, the internal parameterless ctor, and every
+         other method (GetImpactAreaIDs/GetAssetCategories/GetDamageCategories/GetRiskTypes/
+         GetConsequenceTypes, the AEP/assurance pass-throughs, SampleMeanExpectedAnnualConsequences,
+         ConsequencesExceededWithProbabilityQ, GetConsequencesDistribution (INCLUDING its MVVM
+         Fatal-ErrorMessage-on-empty fallback, which compiles fine transitively, same as
+         StudyAreaConsequencesBinned.GetSpecificHistogram above), GetAccumulatedLifeLossFnCurveData,
+         AddResults, GetResults (including its own MVVM Fatal-ErrorMessage+dummy-fallback),
+         ConvertToStudyAreaConsequencesByQuantile, and Equals are kept VERBATIM. Same auto-pickup
+         as the patched/ files above, no explicit Compile Include for the patched file. -->
   </ItemGroup>
 </Project>

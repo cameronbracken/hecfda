@@ -18,6 +18,7 @@
 #include "hecfda/model/metrics/consequence_result.hpp"
 #include "hecfda/model/metrics/impact_area_scenario_results.hpp"
 #include "hecfda/model/metrics/performance_by_thresholds.hpp"
+#include "hecfda/model/metrics/scenario_results.hpp"
 #include "hecfda/model/metrics/study_area_consequences_binned.hpp"
 #include "hecfda/model/metrics/study_area_consequences_by_quantile.hpp"
 #include "hecfda/model/metrics/system_performance_results.hpp"
@@ -3245,8 +3246,17 @@ TEST_CASE("bootstrap_to_paired_data fixture") {
 // `uncertain_curve_yvals_b` (args []) flush both curves via
 // put_uncertain_frequency_curves_into_histograms() and return each curve's
 // get_uncertain_paired_data().sample_paired_data(1, true).Yvals (vector mode).
-static std::vector<double> run_impact_area_scenario_results(const json& c, const std::string& method,
-                                                              const json& args) {
+// Shared per-case builder for one ImpactAreaScenarioResults, factored out (Phase 6 Task 5) so
+// run_scenario_results below can build MULTIPLE such objects (one per `impact_areas` entry) from
+// the exact same construct/consequence_realizations/aep_observations/stage_observations shape
+// run_impact_area_scenario_results already used for its single object.
+struct ImpactAreaScenarioResultsFixtureCase {
+    hecfda::model::metrics::ImpactAreaScenarioResults results;
+    std::string damage_category;
+    std::string asset_category;
+};
+
+static ImpactAreaScenarioResultsFixtureCase make_impact_area_scenario_results_case(const json& c) {
     using namespace hecfda::model::metrics;
     using hecfda::statistics::ConvergenceCriteria;
 
@@ -3289,6 +3299,20 @@ static std::vector<double> run_impact_area_scenario_results(const json& c, const
                                                                           o["iteration"].get<int>());
     }
     threshold.system_performance_results().put_data_into_histograms();
+
+    return ImpactAreaScenarioResultsFixtureCase{std::move(results), std::move(damage_category),
+                                                 std::move(asset_category)};
+}
+
+static std::vector<double> run_impact_area_scenario_results(const json& c, const std::string& method,
+                                                              const json& args) {
+    using namespace hecfda::model::metrics;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    ImpactAreaScenarioResultsFixtureCase built = make_impact_area_scenario_results_case(c);
+    ImpactAreaScenarioResults& results = built.results;
+    const std::string& damage_category = built.damage_category;
+    const std::string& asset_category = built.asset_category;
 
     if (method == "mean_aep") return {results.mean_aep(args[0].get<int>())};
     if (method == "median_aep") return {results.median_aep(args[0].get<int>())};
@@ -3382,6 +3406,67 @@ TEST_CASE("impact_area_scenario_results fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for ScenarioResults (Phase 6 Task 5): the compute-output container holding a
+// list of ImpactAreaScenarioResults plus the scenario-level aggregators that sum/enumerate across
+// every impact area. `impact_areas` is a list of entries in EXACTLY the impact_area_scenario_
+// results.json construct/consequence_realizations/aep_observations/stage_observations shape
+// (reused via make_impact_area_scenario_results_case above) -- one ImpactAreaScenarioResults per
+// entry, add_results'd into a fresh ScenarioResults in order. `method` dispatches:
+// "sample_mean_expected_annual_consequences" (args []) -- summed across every impact area with an
+// EXPLICIT ConsequenceType::Damage/RiskType::Total (matching how every impact area's
+// AggregatedConsequencesBinned was built by make_impact_area_scenario_results_case; this level's
+// own C# default, RiskType.Fail, would match nothing built that way -- see
+// scenario_results.hpp's SampleMeanExpectedAnnualConsequences comment); "consequences_
+// distribution_sample_mean" (args []) -- get_consequences_distribution()'s own defaults (wildcard
+// impact area, ConsequenceType::Damage, RiskType::Total) already match the built data with no
+// override, .sample_mean() of the stacked result; "mean_aep" (args [impact_area_id,
+// threshold_id]) -- a straight ScenarioResults::mean_aep pass-through to
+// get_results(impactAreaID).mean_aep(thresholdID), exercising get_results' lookup-by-ID across
+// MULTIPLE stored impact areas (impact_area_scenario_results.json's own fixture only ever holds
+// ONE). See fixtures/metrics/scenario_results.json's note.
+static double run_scenario_results(const json& c, const std::string& method, const json& args) {
+    using namespace hecfda::model::metrics;
+    ScenarioResults scenario;
+    for (const auto& ia_case : c["impact_areas"]) {
+        ImpactAreaScenarioResultsFixtureCase built = make_impact_area_scenario_results_case(ia_case);
+        scenario.add_results(std::move(built.results));
+    }
+    if (method == "sample_mean_expected_annual_consequences") {
+        return scenario.sample_mean_expected_annual_consequences(-999, std::nullopt, std::nullopt,
+                                                                   ConsequenceType::Damage, RiskType::Total);
+    }
+    if (method == "consequences_distribution_sample_mean") {
+        return scenario.get_consequences_distribution().sample_mean();
+    }
+    if (method == "mean_aep") {
+        return scenario.mean_aep(args[0].get<int>(), args[1].get<int>());
+    }
+    auto msg = std::string("unknown scenario_results method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("scenario_results fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/scenario_results.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "scenario_results");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_scenario_results(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());

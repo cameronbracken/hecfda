@@ -1445,7 +1445,11 @@ namespace oracle_emitter {
     // mean_expected_annual_consequences (args [impactAreaID]), and results_are_converged (args
     // [upper, lower] -- ResultsAreConverged(upper, lower, checkConsequenceResults: true), returned
     // as 1.0/0.0).
-    static object EvalImpactAreaScenarioResults(JsonElement caseEl, string method, JsonElement argsEl) {
+    // Shared per-case builder for one ImpactAreaScenarioResults, factored out (Phase 6 Task 5) so
+    // EvalScenarioResults below can build MULTIPLE such objects (one per `impact_areas` entry)
+    // from the exact same construct/consequence_realizations/aep_observations/stage_observations
+    // shape EvalImpactAreaScenarioResults already used for its single object.
+    static (ImpactAreaScenarioResults results, string damageCategory, string assetCategory) BuildImpactAreaScenarioResultsCase(JsonElement caseEl) {
       var c = caseEl.GetProperty("construct");
       int impactAreaID = c.GetProperty("impact_area_id").GetInt32();
       string damageCategory = c.GetProperty("damage_category").GetString();
@@ -1479,6 +1483,12 @@ namespace oracle_emitter {
         threshold.SystemPerformanceResults.AddStageForAssurance(0.98, D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
       }
       threshold.SystemPerformanceResults.PutDataIntoHistograms();
+
+      return (results, damageCategory, assetCategory);
+    }
+
+    static object EvalImpactAreaScenarioResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var (results, damageCategory, assetCategory) = BuildImpactAreaScenarioResultsCase(caseEl);
 
       if (method == "mean_aep") return results.MeanAEP(argsEl[0].GetInt32());
       if (method == "median_aep") return results.MedianAEP(argsEl[0].GetInt32());
@@ -1529,6 +1539,38 @@ namespace oracle_emitter {
         return curveB.GetUncertainPairedData().SamplePairedData(1, true).Yvals;
       }
       throw new Exception("unknown impact_area_scenario_results method: " + method);
+    }
+
+    // ScenarioResults (Phase 6 Task 5): the compute-output container holding a list of
+    // ImpactAreaScenarioResults plus the scenario-level aggregators that sum/enumerate across
+    // every impact area. `impact_areas` is a list of entries in EXACTLY the
+    // impact_area_scenario_results.json construct/consequence_realizations/aep_observations/
+    // stage_observations shape (reused via BuildImpactAreaScenarioResultsCase above) -- one
+    // ImpactAreaScenarioResults per entry, AddResults'd into a fresh ScenarioResults in order.
+    // `method` dispatches: sample_mean_expected_annual_consequences (args [], ConsequenceType.
+    // Damage/RiskType.Total explicit -- matches how every impact area's
+    // AggregatedConsequencesBinned was built; this level's own C# default, RiskType.Fail, would
+    // match none of it); consequences_distribution_sample_mean (args []) --
+    // GetConsequencesDistribution()'s own defaults (wildcard impact area, ConsequenceType.Damage,
+    // RiskType.Total) already match the built data, .SampleMean of the result; mean_aep (args
+    // [impact_area_id, threshold_id]) -- a straight GetResults(impactAreaID).MeanAEP(thresholdID)
+    // pass-through, exercising GetResults' lookup-by-ID across MULTIPLE stored impact areas.
+    static object EvalScenarioResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var scenario = new ScenarioResults();
+      foreach (var iaCase in caseEl.GetProperty("impact_areas").EnumerateArray()) {
+        var (results, _, _) = BuildImpactAreaScenarioResultsCase(iaCase);
+        scenario.AddResults(results);
+      }
+      if (method == "sample_mean_expected_annual_consequences") {
+        return scenario.SampleMeanExpectedAnnualConsequences(IntegerGlobalConstants.DEFAULT_MISSING_VALUE, null, null, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "consequences_distribution_sample_mean") {
+        return scenario.GetConsequencesDistribution().SampleMean;
+      }
+      if (method == "mean_aep") {
+        return scenario.MeanAEP(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+      }
+      throw new Exception("unknown scenario_results method: " + method);
     }
 
     // ImpactAreaScenarioSimulation (Phase 5 Task 7): the skeleton + fluent SimulationBuilder +
@@ -1816,6 +1858,7 @@ namespace oracle_emitter {
               case "system_performance_results": val = EvalSystemPerformanceResults(c, method, argsEl); break;
               case "performance_by_thresholds": val = EvalPerformanceByThresholds(c, method, argsEl); break;
               case "impact_area_scenario_results": val = EvalImpactAreaScenarioResults(c, method, argsEl); break;
+              case "scenario_results": val = EvalScenarioResults(c, method, argsEl); break;
               case "simulation": val = EvalSimulation(c, method, argsEl); break;
               case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;

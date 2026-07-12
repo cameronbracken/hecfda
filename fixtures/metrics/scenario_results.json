@@ -1,0 +1,86 @@
+{
+  "target": "scenario_results",
+  "kind": "scenario_results",
+  "source_test": "HEC.FDA.Model/metrics/ScenarioResults.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real ScenarioResults/ImpactAreaScenarioResults directly)",
+  "note": "Phase 6 Task 5. `impact_areas` is a list of entries in EXACTLY the impact_area_scenario_results.json construct/consequence_realizations/aep_observations/stage_observations shape (reused by both the C++ runner's make_impact_area_scenario_results_case and the emitter's MakeImpactAreaScenarioResultsCase) -- one ImpactAreaScenarioResults per entry, add_results'd into a fresh ScenarioResults in construct order. `mean_expected_annual_consequences`/`AddNewConsequenceResultObject` inside each entry always uses ConsequenceType.Damage/RiskType.Total (matching impact_area_scenario_results.json's own convention), so ScenarioResults-level `sample_mean_expected_annual_consequences` is asserted with an EXPLICIT RiskType.Total override (this level's own C# default is RiskType.Fail, which would match none of the built data). `method` dispatches: sample_mean_expected_annual_consequences (args [], ConsequenceType.Damage/RiskType.Total explicit) -- SampleMeanExpectedAnnualConsequences summed across both impact areas via each one's StudyAreaConsequencesBinned.SampleMeanDamage; consequences_distribution_sample_mean (args []) -- GetConsequencesDistribution()'s own defaults (wildcard impact area, ConsequenceType.Damage, RiskType.Total) already match the built data, .SampleMean of the Empirical.StackEmpiricalDistributions(sum) result across both impact areas' consequence histograms; mean_aep (args [impact_area_id, threshold_id]) -- a straight GetResults(impactAreaID).MeanAEP(thresholdID) pass-through, exercising GetResults' lookup-by-ID across the TWO stored impact areas (impact_area_scenario_results.json's own fixture only ever holds one). One ScenarioResults is built and staged per case, shared across every assertion. All values PIN (gate-captured, never hand-derived).",
+  "cases": [
+    {
+      "name": "two_impact_areas",
+      "impact_areas": [
+        {
+          "construct": {
+            "impact_area_id": 7,
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "consequence_convergence": { "min_iterations": 5, "max_iterations": 1000 },
+            "threshold": {
+              "id": 3,
+              "type": "DefaultExteriorStage",
+              "value": 12.5,
+              "convergence": { "min_iterations": 5, "max_iterations": 1000 }
+            }
+          },
+          "consequence_realizations": [
+            { "iteration": 0, "damage": 1000.0 },
+            { "iteration": 1, "damage": 1500.0 },
+            { "iteration": 2, "damage": 1200.0 },
+            { "iteration": 3, "damage": 1800.0 },
+            { "iteration": 4, "damage": 900.0 }
+          ],
+          "aep_observations": [
+            { "iteration": 0, "result": 0.05 },
+            { "iteration": 1, "result": 0.08 },
+            { "iteration": 2, "result": 0.03 },
+            { "iteration": 3, "result": 0.10 },
+            { "iteration": 4, "result": 0.06 }
+          ],
+          "stage_observations": [
+            { "iteration": 0, "result": 10.1 },
+            { "iteration": 1, "result": 10.3 },
+            { "iteration": 2, "result": 9.9 },
+            { "iteration": 3, "result": 10.5 },
+            { "iteration": 4, "result": 10.0 }
+          ]
+        },
+        {
+          "construct": {
+            "impact_area_id": 8,
+            "damage_category": "Commercial",
+            "asset_category": "Content",
+            "consequence_convergence": { "min_iterations": 3, "max_iterations": 200 },
+            "threshold": {
+              "id": 4,
+              "type": "AdditionalExteriorStage",
+              "value": 8.25,
+              "convergence": { "min_iterations": 3, "max_iterations": 200 }
+            }
+          },
+          "consequence_realizations": [
+            { "iteration": 0, "damage": 500.0 },
+            { "iteration": 1, "damage": 650.0 },
+            { "iteration": 2, "damage": 300.0 },
+            { "iteration": 3, "damage": 800.0 }
+          ],
+          "aep_observations": [
+            { "iteration": 0, "result": 0.12 },
+            { "iteration": 1, "result": 0.09 },
+            { "iteration": 2, "result": 0.15 },
+            { "iteration": 3, "result": 0.07 }
+          ],
+          "stage_observations": [
+            { "iteration": 0, "result": 6.5 },
+            { "iteration": 1, "result": 6.8 },
+            { "iteration": 2, "result": 6.2 },
+            { "iteration": 3, "result": 7.0 }
+          ]
+        }
+      ],
+      "assertions": [
+        { "method": "sample_mean_expected_annual_consequences", "args": [], "expected": 86.49999999999996, "tol": 1e-9, "mode": "abs" },
+        { "method": "consequences_distribution_sample_mean", "args": [], "expected": 86.49999999999996, "tol": 1e-9, "mode": "abs" },
+        { "method": "mean_aep", "args": [7, 3], "expected": 0.003200000000000001, "tol": 1e-9, "mode": "abs" },
+        { "method": "mean_aep", "args": [8, 4], "expected": 0.004299999999999998, "tol": 1e-9, "mode": "abs" }
+      ]
+    }
+  ]
+}
