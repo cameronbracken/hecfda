@@ -24,11 +24,10 @@ namespace distributions {
 //
 // SEVERED (out of scope for this task; not needed by CDF/PDF/InverseCDF/Fit/summary-stats for a
 // single instance):
-//  - `StackEmpiricalDistributions` / `StackEmpiricalDistributionsWeighted` / `Sum` / `Subtract`
-//    (upstream lines ~389-465): static Model-layer AGGREGATION helpers that combine several
-//    Empirical instances (parallel InverseCDF sampling + refit via FitToSample). These belong with
-//    whatever Model-layer caller stacks/weights multiple empirical result distributions together;
-//    port them later when that caller is ported.
+//  - `StackEmpiricalDistributionsWeighted`: a static Model-layer AGGREGATION helper (weighted
+//    combination of several Empirical instances). No Phase 6 caller needs the weighted variant
+//    (`stack_empirical_distributions`/`fit_to_sample` below cover the two callers that do); port
+//    later when a weighted-stacking caller lands.
 //  - `WriteToXML` / `ReadFromXML`: reflection/XML (de)serialization, matching the XML scope already
 //    excluded across this port (see continuous_distribution.hpp).
 //  - `ComputeCumulativeFrequenciesForPlotting`: builds a fixed 250-bin CDF curve for UI plotting --
@@ -234,7 +233,82 @@ class Empirical : public ContinuousDistribution {
         return std::make_unique<Empirical>(std::move(probs), std::move(sorted), min_value, max_value);
     }
 
+    // ported from: Empirical.cs static FitToSample(List<double> sample) @
+    // f63682a86a30dc306a105689714a92bfd95956c5. Deferred in Phase 4/5 alongside
+    // StackEmpiricalDistributions (see class-level severance comment); restored in Phase 6 as the
+    // refit step `stack_empirical_distributions` below needs. Algorithmically identical to the
+    // instance `fit()` above (sort a copy ascending, probs[i] = i/count, min/max from the sorted
+    // extremes) -- upstream carries both a static FitToSample and an instance Fit that do the same
+    // thing; transcribed as two separate methods here too, matching the two distinct C# call
+    // shapes (`Empirical.FitToSample(list)` vs `IDistribution.Fit(data)`).
+    static Empirical fit_to_sample(const std::vector<double>& sample) {
+        std::vector<double> sorted(sample);
+        std::sort(sorted.begin(), sorted.end());
+        auto count = static_cast<double>(sorted.size());
+        std::vector<double> probs(sorted.size());
+        for (std::size_t i = 0; i < sorted.size(); ++i) {
+            probs[i] = static_cast<double>(i) / count;
+        }
+        double min_value = sorted.front();
+        double max_value = sorted.back();
+        return Empirical(std::move(probs), std::move(sorted), min_value, max_value);
+    }
+
+    // ported from: Empirical.cs `Sum`/`Subtract` static combine helpers @
+    // f63682a86a30dc306a105689714a92bfd95956c5, which upstream passes as a
+    // `Func<double,double,double>` into StackEmpiricalDistributions. This port has exactly the two
+    // call sites Phase 6 needs (damage aggregation across impact areas = sum; with/without-project
+    // benefits = subtract), so they are represented as an enum + a combine() switch rather than a
+    // std::function parameter.
+    enum class StackOp { sum, subtract };
+
+    // ported from: Empirical.cs static StackEmpiricalDistributions(List<Empirical>
+    // empiricalDistributionsForStacking, Func<double,double,double> addOrSubtract) @
+    // f63682a86a30dc306a105689714a92bfd95956c5. Deferred in Phase 4/5 (see class-level severance
+    // comment), restored in Phase 6. Upstream samples every input distribution's InverseCDF at 2500
+    // evenly-spaced quantile probabilities `(0.5 + i) / 2500` (Parallel.For over `i` -> serial `for`
+    // here; each step is independent of every other step, so serializing changes nothing about the
+    // result), combines the per-step values across inputs left-to-right via `addOrSubtract`
+    // (distributions[0] op distributions[1] op distributions[2] op ...), separately combines the
+    // inputs' SampleMean the same left-to-right way, refits a new Empirical from the combined
+    // InverseCDF values via `fit_to_sample`, and finally force-sets the combined SampleMean onto the
+    // refit result (fit_to_sample/FitToSample never sets SampleMean itself -- it stays at the
+    // ctor-default 0.0 unless the caller sets it). The upstream `cumulativeProbabilities` output
+    // array is computed but never read after the loop (dead output); not reproduced here since
+    // nothing consumes it.
+    static Empirical stack_empirical_distributions(const std::vector<Empirical>& distributions, StackOp op) {
+        constexpr int probability_steps = 2500;
+        std::vector<double> stacked_inverse_cdfs(static_cast<std::size_t>(probability_steps));
+        for (int i = 0; i < probability_steps; ++i) {
+            double probability_step = (0.5 + i) / probability_steps;
+            double stacked_value = distributions[0].inverse_cdf(probability_step);
+            for (std::size_t j = 1; j < distributions.size(); ++j) {
+                stacked_value = combine(op, stacked_value, distributions[j].inverse_cdf(probability_step));
+            }
+            stacked_inverse_cdfs[static_cast<std::size_t>(i)] = stacked_value;
+        }
+        double stacked_mean = distributions[0].sample_mean();
+        for (std::size_t j = 1; j < distributions.size(); ++j) {
+            stacked_mean = combine(op, stacked_mean, distributions[j].sample_mean());
+        }
+        Empirical result = fit_to_sample(stacked_inverse_cdfs);
+        result.set_sample_mean(stacked_mean);
+        return result;
+    }
+
    private:
+    // ported from: Empirical.cs `Sum(double x1, double x2)` / `Subtract(double x1, double x2)`.
+    static double combine(StackOp op, double x1, double x2) {
+        switch (op) {
+            case StackOp::sum:
+                return x1 + x2;
+            case StackOp::subtract:
+                return x1 - x2;
+        }
+        throw std::invalid_argument("unknown Empirical::StackOp");
+    }
+
+
     // ported from: Empirical.cs Array.BinarySearch(array, value), via the shared
     // hecfda::model::paired_data::dotnet_binary_search (see that header for full .NET semantics /
     // NaN-handling rationale). .NET semantics: if `value` is found, returns an index of a matching

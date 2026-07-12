@@ -645,6 +645,67 @@ TEST_CASE("histogram fixture") {
     }
 }
 
+// Bespoke dispatch for the Phase 6 un-severance (Task 1) of Empirical::stack_empirical_distributions
+// (sum/subtract) and DynamicHistogram::convert_to_empirical_distribution -- both deferred in
+// Phase 4/5, restored here. `construct` is one of two shapes: `{"op": "sum"|"subtract",
+// "distributions": [{"probabilities":[...], "values":[...], "sample_mean": m}, ...]}` (stacking
+// cases -- each input Empirical is built via the two-array ctor, then has its SampleMean
+// explicitly set, matching real callers since neither Empirical ctor assigns it), or
+// `{"histogram": {"bin_width": w, "data": [...], "added": [...]}}` (the binned -> Empirical bridge
+// case, built the same way as fixtures/histograms/dynamic_histogram.json). `sample_mean`/
+// `inverse_cdf` are read off the RESULTING Empirical.
+static double run_empirical_stacking(const json& c, const std::string& method, const json& args) {
+    const auto& ctor = c["construct"];
+    hecfda::statistics::distributions::Empirical result = [&]() {
+        if (ctor.contains("histogram")) {
+            const auto& h = ctor["histogram"];
+            hecfda::statistics::histograms::DynamicHistogram hist(h["bin_width"].get<double>(),
+                                                                    hecfda::statistics::ConvergenceCriteria());
+            hist.add_observations_to_histogram(h["data"].get<std::vector<double>>());
+            if (h.contains("added")) {
+                for (const auto& x : h["added"]) hist.add_observation_to_histogram(x.get<double>());
+            }
+            return hist.convert_to_empirical_distribution();
+        }
+        std::vector<hecfda::statistics::distributions::Empirical> dists;
+        for (const auto& d : ctor["distributions"]) {
+            hecfda::statistics::distributions::Empirical e(d["probabilities"].get<std::vector<double>>(),
+                                                             d["values"].get<std::vector<double>>());
+            e.set_sample_mean(d["sample_mean"].get<double>());
+            dists.push_back(e);
+        }
+        std::string op = ctor["op"].get<std::string>();
+        auto stack_op = op == "sum" ? hecfda::statistics::distributions::Empirical::StackOp::sum
+                                     : hecfda::statistics::distributions::Empirical::StackOp::subtract;
+        return hecfda::statistics::distributions::Empirical::stack_empirical_distributions(dists, stack_op);
+    }();
+    if (method == "sample_mean") return result.sample_mean();
+    if (method == "inverse_cdf") return result.inverse_cdf(args[0].get<double>());
+    auto msg = std::string("unknown empirical_stacking method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("empirical_stacking fixture") {
+    std::ifstream f(fixtures_dir() + "/distributions/empirical_stacking.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "empirical_stacking");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_empirical_stacking(c, a["method"], a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
 static double run_paired_data(const json& c, const std::string& method, const json& args) {
     const auto& ctor = c["construct"];
     hecfda::model::paired_data::PairedData pd(ctor["xs"].get<std::vector<double>>(),

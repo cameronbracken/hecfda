@@ -1,0 +1,60 @@
+{
+  "target": "empirical_stacking",
+  "kind": "empirical_stacking",
+  "source_test": "HEC.FDA.Statistics/Distributions/Empirical.cs StackEmpiricalDistributions + HEC.FDA.Statistics/Histograms/DynamicHistogram.cs ConvertToEmpiricalDistribution @ f63682a86a30dc306a105689714a92bfd95956c5 -- no dedicated upstream test file for either method exists, so `construct` is hand-specified: `distributions` cases build strictly-increasing (probability, value) Empirical inputs (matching the Empirical(double[] probabilities, double[] observationValues) ctor) with an explicit `sample_mean` set on each (SampleMean is a settable property Empirical's own ctors never assign), then dispatch through Empirical::stack_empirical_distributions with `op` sum/subtract; `histogram` cases build a DynamicHistogram the same way as fixtures/histograms/dynamic_histogram.json, then dispatch through DynamicHistogram::convert_to_empirical_distribution. Expected values are COMPUTE-THEN-PIN: computed by the C++ port, then confirmed reproduced by the real C# Empirical/DynamicHistogram via tools/oracle_emitter / tools/verify_oracles.py -- no value here is invented independently of either implementation.",
+  "cases": [
+    {
+      "name": "stack_sum_two",
+      "construct": {
+        "op": "sum",
+        "distributions": [
+          { "probabilities": [0.1, 0.3, 0.5, 0.7, 0.9], "values": [10, 20, 30, 40, 50], "sample_mean": 30.0 },
+          { "probabilities": [0.1, 0.3, 0.5, 0.7, 0.9], "values": [5, 15, 25, 35, 45], "sample_mean": 25.0 }
+        ]
+      },
+      "assertions": [
+        { "method": "sample_mean", "args": [], "expected": 55.0, "tol": 1e-9, "mode": "abs", "note": "combine(op=sum) applied left-to-right across each input's own SampleMean: 30.0 + 25.0" },
+        { "method": "inverse_cdf", "args": [0.5], "expected": 55.019999999999996, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "stack_subtract_two",
+      "construct": {
+        "op": "subtract",
+        "distributions": [
+          { "probabilities": [0.1, 0.3, 0.5, 0.7, 0.9], "values": [10, 20, 30, 40, 50], "sample_mean": 30.0 },
+          { "probabilities": [0.1, 0.3, 0.5, 0.7, 0.9], "values": [5, 15, 25, 35, 45], "sample_mean": 25.0 }
+        ]
+      },
+      "assertions": [
+        { "method": "sample_mean", "args": [], "expected": 5.0, "tol": 1e-9, "mode": "abs", "note": "combine(op=subtract) applied left-to-right: 30.0 - 25.0" },
+        { "method": "inverse_cdf", "args": [0.5], "expected": 5.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "stack_sum_three",
+      "construct": {
+        "op": "sum",
+        "distributions": [
+          { "probabilities": [0.1, 0.3, 0.5, 0.7, 0.9], "values": [10, 20, 30, 40, 50], "sample_mean": 30.0 },
+          { "probabilities": [0.1, 0.3, 0.5, 0.7, 0.9], "values": [5, 15, 25, 35, 45], "sample_mean": 25.0 },
+          { "probabilities": [0.1, 0.3, 0.5, 0.7, 0.9], "values": [1, 2, 3, 4, 5], "sample_mean": 3.0 }
+        ]
+      },
+      "assertions": [
+        { "method": "sample_mean", "args": [], "expected": 58.0, "tol": 1e-9, "mode": "abs", "note": "30.0 + 25.0 + 3.0" },
+        { "method": "inverse_cdf", "args": [0.5], "expected": 58.020999999999994, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "histogram_to_empirical",
+      "construct": {
+        "histogram": { "bin_width": 1, "data": [1, 2, 3, 4, 5], "added": [] }
+      },
+      "assertions": [
+        { "method": "sample_mean", "args": [], "expected": 3.0, "tol": 1e-9, "mode": "abs", "note": "propagated from the source histogram's raw running SampleMean, not recomputed by Empirical's ctor" },
+        { "method": "inverse_cdf", "args": [0.5], "expected": 3.5, "tol": 1e-9, "mode": "abs" }
+      ]
+    }
+  ]
+}

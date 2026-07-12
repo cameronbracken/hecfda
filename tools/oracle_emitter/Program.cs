@@ -204,6 +204,38 @@ namespace oracle_emitter {
       if (method == "inverse_cdf") return hist.InverseCDF(D(argsEl[0]));
       throw new Exception("unknown histogram method: " + method);
     }
+    // Empirical::stack_empirical_distributions (sum/subtract) + DynamicHistogram::
+    // ConvertToEmpiricalDistribution (Phase 6 Task 1 un-severance) against the real C#. `construct`
+    // is either `{"op": "sum"|"subtract", "distributions": [{"probabilities":[...], "values":[...],
+    // "sample_mean": m}, ...]}` (stacking cases, mirroring run_empirical_stacking in
+    // test_fixtures.cpp: build each Empirical via the two-array ctor, then set SampleMean
+    // explicitly since neither ctor assigns it) or `{"histogram": {"bin_width": w, "data": [...],
+    // "added": [...]}}` (built the same way as EvalHistogram above).
+    static object EvalEmpiricalStacking(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      Empirical result;
+      if (c.TryGetProperty("histogram", out var h)) {
+        var hist = new DynamicHistogram(h.GetProperty("bin_width").GetDouble(), new ConvergenceCriteria());
+        hist.AddObservationsToHistogram(DA(h.GetProperty("data")));
+        if (h.TryGetProperty("added", out var added)) {
+          foreach (var x in added.EnumerateArray()) hist.AddObservationToHistogram(x.GetDouble());
+        }
+        result = DynamicHistogram.ConvertToEmpiricalDistribution(hist);
+      } else {
+        var dists = new List<Empirical>();
+        foreach (var d in c.GetProperty("distributions").EnumerateArray()) {
+          var e = new Empirical(DA(d.GetProperty("probabilities")), DA(d.GetProperty("values")));
+          e.SampleMean = d.GetProperty("sample_mean").GetDouble();
+          dists.Add(e);
+        }
+        string op = c.GetProperty("op").GetString();
+        Func<double, double, double> addOrSubtract = op == "sum" ? Empirical.Sum : Empirical.Subtract;
+        result = Empirical.StackEmpiricalDistributions(dists, addOrSubtract);
+      }
+      if (method == "sample_mean") return result.SampleMean;
+      if (method == "inverse_cdf") return result.InverseCDF(D(argsEl[0]));
+      throw new Exception("unknown empirical_stacking method: " + method);
+    }
     static PairedData MakePaired(JsonElement c) => new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
     // Extended (Task P2T2) beyond f/f_inverse/Integrate: compose/SumYsForGivenX/multiply (each
     // needs a second curve, from the case's "input" property) and the monotonicity-forcing +
@@ -1647,6 +1679,7 @@ namespace oracle_emitter {
               case "shifted_gamma": val = EvalShiftedGamma(c, method, argsEl); break;
               case "pearson3": val = EvalPearson3(c, method, argsEl); break;
               case "empirical": val = EvalEmpirical(c, method, argsEl); break;
+              case "empirical_stacking": val = EvalEmpiricalStacking(c, method, argsEl); break;
               case "convergence_criteria": val = EvalConvergenceCriteria(c, method, argsEl); break;
               case "histogram": val = EvalHistogram(c, method, argsEl); break;
               case "paired_data": val = EvalPaired(c, method, argsEl); break;
