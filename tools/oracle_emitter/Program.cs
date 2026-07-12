@@ -18,6 +18,7 @@ using HEC.FDA.Model.extensions;
 using HEC.FDA.Model.structures;
 using HEC.FDA.Model.metrics;
 using HEC.FDA.Model.hydraulics;
+using HEC.FDA.Model.stageDamage;
 
 namespace oracle_emitter {
   class Program {
@@ -763,6 +764,91 @@ namespace oracle_emitter {
       throw new Exception("unknown hydraulic_profiles method: " + method);
     }
 
+    // ImpactAreaStageDamage GEOMETRY (Phase 4 Task 6) -- built from patched/ImpactAreaStageDamage.cs
+    // (see that file's header for the patch rationale: HydraulicDataset -> List<double>
+    // _ProfileProbabilities, MVVM base + ReportMessage severed to thrown exceptions, Compute()/CSV
+    // methods dropped as out of this task's scope). Two case shapes: (a) 'extrapolate_from_above'/
+    // 'extrapolate_from_below' call the two public static helpers directly, no ImpactAreaStageDamage
+    // construction. (b) 'tractable_geometry' builds a tractable 2-structure Residential Inventory
+    // (mirroring TractableStageDamageTests.cs's residential occ-type/structure data -- content is
+    // NOT read by any geometry method, see fixtures/stage_damage/stage_damage_geometry.json's note)
+    // + a graphical STAGE frequency (UsingStagesNotFlows=true) over `probabilities`/
+    // `graphical_stages` with `equivalent_record_length`, and mock per-profile WSEs built the same
+    // way TractableStageDamageTests.ComputeStagesAtStructures does (profile 0 = {hydraulic_stage1,
+    // hydraulic_stage2}, each subsequent profile = previous + 1), one profile per `probabilities`
+    // entry -- feeding `_ProfileProbabilities` directly with `probabilities` (this patch's
+    // HydraulicDataset replacement).
+    static Inventory MakeTractableResidentialInventory(int impactAreaID) {
+      double[] depths = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+      IDistribution[] structDamages = { new Deterministic(0), new Deterministic(10), new Deterministic(20), new Deterministic(30), new Deterministic(40), new Deterministic(50), new Deterministic(60), new Deterministic(70), new Deterministic(80), new Deterministic(90), new Deterministic(100) };
+      IDistribution[] contentDamages = { new Deterministic(0), new Deterministic(5), new Deterministic(15), new Deterministic(25), new Deterministic(35), new Deterministic(45), new Deterministic(55), new Deterministic(65), new Deterministic(75), new Deterministic(85), new Deterministic(95) };
+      var md = new CurveMetaData("x", "y", "oracle");
+      var structUpd = new UncertainPairedData(depths, structDamages, md);
+      var contentUpd = new UncertainPairedData(depths, contentDamages, md);
+
+      var residential = OccupancyType.Builder()
+        .WithName("Residential")
+        .WithDamageCategory("Residential")
+        .WithStructureDepthPercentDamage(structUpd)
+        .WithContentDepthPercentDamage(contentUpd)
+        .WithContentToStructureValueRatio(new ValueRatioWithUncertainty(50))
+        .Build();
+
+      var occTypes = new Dictionary<string, OccupancyType> { { "Residential", residential } };
+      var structures = new List<Structure> {
+        new Structure("1", firstFloorElevation: 14, val_struct: 100, st_damcat: "Residential", occtype: "Residential", impactAreaID: impactAreaID, groundElevation: 12),
+        new Structure("2", firstFloorElevation: 15, val_struct: 200, st_damcat: "Residential", occtype: "Residential", impactAreaID: impactAreaID, groundElevation: 12),
+      };
+      return new Inventory(occTypes, structures);
+    }
+
+    static object EvalStageDamageGeometry(JsonElement caseEl, string method, JsonElement argsEl) {
+      if (method == "extrapolate_from_above") {
+        float[] input = argsEl[0].EnumerateArray().Select(x => (float)x.GetDouble()).ToArray();
+        float upperInterval = (float)D(argsEl[1]);
+        int stepCount = argsEl[2].GetInt32();
+        return ImpactAreaStageDamage.ExtrapolateFromAboveAtIndexLocation(input, upperInterval, stepCount).Select(v => (double)v).ToArray();
+      }
+      if (method == "extrapolate_from_below") {
+        float[] input = argsEl[0].EnumerateArray().Select(x => (float)x.GetDouble()).ToArray();
+        float interval = (float)D(argsEl[1]);
+        int i = argsEl[2].GetInt32();
+        int numInterpolated = argsEl[3].GetInt32();
+        return ImpactAreaStageDamage.ExtrapolateFromBelowStagesAtIndexLocation(input, interval, i, numInterpolated).Select(v => (double)v).ToArray();
+      }
+
+      var c = caseEl.GetProperty("construct");
+      int impactAreaID = c.GetProperty("impact_area_id").GetInt32();
+      double[] probabilities = DA(c.GetProperty("probabilities"));
+      double[] graphicalStages = DA(c.GetProperty("graphical_stages"));
+      int erl = c.GetProperty("equivalent_record_length").GetInt32();
+      float stage1 = (float)c.GetProperty("hydraulic_stage1").GetDouble();
+      float stage2 = (float)c.GetProperty("hydraulic_stage2").GetDouble();
+
+      var stageFrequencyMd = new CurveMetaData("probability", "stages", "graphical stage frequency");
+      var stageFrequency = new GraphicalUncertainPairedData(probabilities, graphicalStages, erl, stageFrequencyMd, usingStagesNotFlows: true);
+
+      var inventory = MakeTractableResidentialInventory(impactAreaID);
+      // hydraulic_stage1/hydraulic_stage2 (mirroring TractableStageDamageTests.
+      // ComputeStagesAtStructures's mock per-structure WSEs) are accepted above for fixture-shape
+      // parity with the C++ test's mock HydraulicProfiles construction, but are NOT read here:
+      // no geometry method (verified against the C# source) reads per-profile WSE values, only
+      // _ProfileProbabilities -- see patched/ImpactAreaStageDamage.cs's header.
+      _ = stage1;
+      _ = stage2;
+
+      var impactAreaStageDamage = new ImpactAreaStageDamage(impactAreaID, inventory, probabilities.ToList(), analysisYear: 9999,
+        analyticalFlowFrequency: null, graphicalFrequency: stageFrequency, dischargeStage: null, unregulatedRegulated: null, usingMockData: true);
+
+      if (method == "compute_stages_at_index_location") return impactAreaStageDamage.ComputeStagesAtIndexLocation(probabilities.ToList());
+      if (method == "bottom_extrapolation_points") return (double)impactAreaStageDamage.BottomExtrapolationPoints;
+      if (method == "central_interpolation_points") return (double)impactAreaStageDamage.CentralInterpolationPoints;
+      if (method == "top_extrapolation_points") return (double)impactAreaStageDamage.TopExtrapolationPoints;
+      if (method == "min_stage_for_area") return impactAreaStageDamage.MinStageForArea;
+      if (method == "max_stage_for_area") return impactAreaStageDamage.MaxStageForArea;
+      throw new Exception("unknown stage_damage_geometry method: " + method);
+    }
+
     // AggregatedConsequencesBinned (Phase 4 Task 3) is the histogram-staging Monte Carlo
     // accumulator -- built from patched/AggregatedConsequencesBinned.cs (see that file's header
     // for why it's a patched local copy: WriteToXML/ReadFromXML/
@@ -899,6 +985,7 @@ namespace oracle_emitter {
               case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
+              case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

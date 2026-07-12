@@ -17,6 +17,7 @@
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/model/stage_damage/hydraulic_profiles.hpp"
+#include "hecfda/model/stage_damage/impact_area_stage_damage.hpp"
 #include "hecfda/model/structures/deterministic_occupancy_type.hpp"
 #include "hecfda/model/structures/first_floor_elevation_uncertainty.hpp"
 #include "hecfda/model/structures/inventory.hpp"
@@ -2046,6 +2047,185 @@ TEST_CASE("hydraulic_profiles fixture") {
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for ImpactAreaStageDamage GEOMETRY (Phase 4 Task 6): the constructor +
+// EstablishAggregationStages (central stage-frequency, min/max stage, coordinate quantities) and
+// the pure static stage-interval helpers. Two case shapes -- see
+// fixtures/stage_damage/stage_damage_geometry.json's note for the full rationale: (a)
+// 'extrapolate_from_above'/'extrapolate_from_below' call the two public static helpers directly,
+// `construct` empty; (b) 'tractable_geometry' builds a real ImpactAreaStageDamage from a graphical
+// STAGE frequency (UsingStagesNotFlows=true) + a tractable 2-structure Residential Inventory
+// (content unused by any geometry method -- see the fixture note) + mock HydraulicProfiles built
+// the same way TractableStageDamageTests.ComputeStagesAtStructures does.
+using ImpactAreaStageDamage = hecfda::model::stage_damage::ImpactAreaStageDamage;
+
+static hecfda::model::structures::Inventory make_tractable_residential_inventory(int impact_area_id) {
+    using namespace hecfda::model::structures;
+    using hecfda::model::paired_data::UncertainPairedData;
+    using hecfda::statistics::distributions::Deterministic;
+    using hecfda::statistics::distributions::IDistribution;
+
+    // ported from: TractableStageDamageTests.cs's residential occ-type/structure data (depths,
+    // residentialStructureDamage, residentialContentAndCommercialStructureDamage, residentialCSVR,
+    // structure1/structure2).
+    std::vector<double> depths = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    std::vector<double> struct_damage_vals = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+    std::vector<double> content_damage_vals = {0, 5, 15, 25, 35, 45, 55, 65, 75, 85, 95};
+
+    auto make_deterministic_upd = [](const std::vector<double>& xs, const std::vector<double>& vals) {
+        std::vector<std::unique_ptr<IDistribution>> ys;
+        ys.reserve(vals.size());
+        for (double v : vals) ys.push_back(std::make_unique<Deterministic>(v));
+        return UncertainPairedData(xs, std::move(ys));
+    };
+
+    OccupancyType residential =
+        OccupancyType::builder()
+            .with_name("Residential")
+            .with_damage_category("Residential")
+            .with_structure_depth_percent_damage(make_deterministic_upd(depths, struct_damage_vals))
+            .with_content_depth_percent_damage(make_deterministic_upd(depths, content_damage_vals))
+            .with_content_to_structure_value_ratio(ValueRatioWithUncertainty(50))
+            .build();
+
+    std::map<std::string, OccupancyType> occ_types;
+    occ_types.emplace("Residential", std::move(residential));
+
+    std::vector<Structure> structures;
+    structures.push_back(Structure("1", /*first_floor_elevation=*/14, /*val_struct=*/100, "Residential",
+                                    "Residential", impact_area_id, /*val_cont=*/0, /*val_vehic=*/0,
+                                    /*val_other=*/0, "unassigned", Structure::kDefaultMissingValue,
+                                    /*ground_elevation=*/12));
+    structures.push_back(Structure("2", /*first_floor_elevation=*/15, /*val_struct=*/200, "Residential",
+                                    "Residential", impact_area_id, /*val_cont=*/0, /*val_vehic=*/0,
+                                    /*val_other=*/0, "unassigned", Structure::kDefaultMissingValue,
+                                    /*ground_elevation=*/12));
+
+    return Inventory(std::move(occ_types), std::move(structures));
+}
+
+// ported from: TractableStageDamageTests.cs's ComputeStagesAtStructures(stage1, stage2): profile 0
+// = {stage1, stage2}; each subsequent profile's per-structure WSE = previous profile's + 1. One
+// profile per `probabilities` entry.
+static std::vector<std::vector<float>> make_mock_wses_by_profile(float stage1, float stage2,
+                                                                    std::size_t profile_count) {
+    std::vector<std::vector<float>> wses;
+    wses.reserve(profile_count);
+    wses.push_back({stage1, stage2});
+    for (std::size_t i = 1; i < profile_count; ++i) {
+        const auto& previous = wses.back();
+        wses.push_back({previous[0] + 1.0f, previous[1] + 1.0f});
+    }
+    return wses;
+}
+
+TEST_CASE("stage_damage_geometry fixture") {
+    using hecfda::model::paired_data::CurveMetaData;
+    using hecfda::model::paired_data::GraphicalUncertainPairedData;
+    using hecfda::model::stage_damage::HydraulicProfiles;
+
+    std::ifstream f(fixtures_dir() + "/stage_damage/stage_damage_geometry.json");
+    REQUIRE(f.good());
+    json fx;
+    f >> fx;
+    CHECK(fx["target"] == "stage_damage_geometry");
+    for (const auto& c : fx["cases"]) {
+        const auto& ctor = c["construct"];
+        for (const auto& a : c["assertions"]) {
+            std::string method = a["method"].get<std::string>();
+            const auto& args = a["args"];
+
+            if (method == "extrapolate_from_above") {
+                std::vector<float> input = args[0].get<std::vector<float>>();
+                float upper_interval = args[1].get<float>();
+                int step_count = args[2].get<int>();
+                auto got = ImpactAreaStageDamage::extrapolate_from_above_at_index_location(input, upper_interval,
+                                                                                             step_count);
+                std::vector<double> got_d(got.begin(), got.end());
+                std::vector<double> exp = a["expected"].get<std::vector<double>>();
+                double tol = a["tol"].get<double>();
+                std::string mode = a["mode"].get<std::string>();
+                if (!hecfda_test::compare_by_mode(got_d, exp, tol, mode)) {
+                    FAIL((std::string("comparison failed for case: ") + c["name"].get<std::string>()).c_str());
+                }
+                continue;
+            }
+            if (method == "extrapolate_from_below") {
+                std::vector<float> input = args[0].get<std::vector<float>>();
+                float interval = args[1].get<float>();
+                int i = args[2].get<int>();
+                int num_interpolated = args[3].get<int>();
+                auto got = ImpactAreaStageDamage::extrapolate_from_below_stages_at_index_location(
+                    input, interval, i, num_interpolated);
+                std::vector<double> got_d(got.begin(), got.end());
+                std::vector<double> exp = a["expected"].get<std::vector<double>>();
+                double tol = a["tol"].get<double>();
+                std::string mode = a["mode"].get<std::string>();
+                if (!hecfda_test::compare_by_mode(got_d, exp, tol, mode)) {
+                    FAIL((std::string("comparison failed for case: ") + c["name"].get<std::string>()).c_str());
+                }
+                continue;
+            }
+
+            // 'tractable_geometry': build a fresh ImpactAreaStageDamage per assertion (cheap, and
+            // matches this file's "fresh construction per assertion" convention).
+            int impact_area_id = ctor["impact_area_id"].get<int>();
+            std::vector<double> probabilities = ctor["probabilities"].get<std::vector<double>>();
+            std::vector<double> graphical_stages = ctor["graphical_stages"].get<std::vector<double>>();
+            int erl = ctor["equivalent_record_length"].get<int>();
+            float stage1 = ctor["hydraulic_stage1"].get<float>();
+            float stage2 = ctor["hydraulic_stage2"].get<float>();
+
+            CurveMetaData stage_frequency_metadata("probability", "stages", "graphical stage frequency");
+            GraphicalUncertainPairedData stage_frequency(probabilities, graphical_stages, erl,
+                                                          stage_frequency_metadata, /*using_stages_not_flows=*/true);
+
+            auto inventory = make_tractable_residential_inventory(impact_area_id);
+            auto wses_by_profile = make_mock_wses_by_profile(stage1, stage2, probabilities.size());
+            HydraulicProfiles hydraulics(probabilities, wses_by_profile);
+
+            ImpactAreaStageDamage impact_area_stage_damage(impact_area_id, std::move(inventory),
+                                                            std::move(hydraulics), /*analysis_year=*/9999,
+                                                            /*analytical_flow_frequency=*/nullptr, &stage_frequency,
+                                                            /*discharge_stage=*/nullptr,
+                                                            /*unregulated_regulated=*/nullptr,
+                                                            /*using_mock_data=*/true);
+
+            std::vector<double> got;
+            if (method == "compute_stages_at_index_location") {
+                got = impact_area_stage_damage.compute_stages_at_index_location(
+                    impact_area_stage_damage.hydraulics().profile_probabilities());
+            } else if (method == "bottom_extrapolation_points") {
+                got = {static_cast<double>(impact_area_stage_damage.bottom_extrapolation_points())};
+            } else if (method == "central_interpolation_points") {
+                got = {static_cast<double>(impact_area_stage_damage.central_interpolation_points())};
+            } else if (method == "top_extrapolation_points") {
+                got = {static_cast<double>(impact_area_stage_damage.top_extrapolation_points())};
+            } else if (method == "min_stage_for_area") {
+                got = {impact_area_stage_damage.min_stage_for_area()};
+            } else if (method == "max_stage_for_area") {
+                got = {impact_area_stage_damage.max_stage_for_area()};
+            } else {
+                FAIL((std::string("unknown stage_damage_geometry method: ") + method).c_str());
+            }
+
+            std::vector<double> exp;
+            if (a["expected"].is_array()) {
+                exp = a["expected"].get<std::vector<double>>();
+            } else {
+                exp = {a["expected"].get<double>()};
+            }
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + method;
                 FAIL(msg.c_str());
             }
         }
