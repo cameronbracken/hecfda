@@ -1,0 +1,144 @@
+{
+  "target": "alternative_comparison_report",
+  "kind": "alternative_comparison_report",
+  "source_test": "HEC.FDA.ModelTest/unittests/AlternativeComparisonReportConsolidationTests.cs",
+  "note": "Phase 6 Task 10 -- AlternativeComparisonReport.ComputeAlternativeComparisonReport, the FINAL numeric compute of the port (with/without-project damage-reduction benefits via empirical-distribution subtraction). Both cases mirror AlternativeComparisonReportConsolidationTests.CreateAlternativeResults/ComputeResults exactly: a without-project and a with-project AlternativeResults, each built DIRECTLY (no AnnualizationCompute) with a base-year and future-year ScenarioResults holding one impact area with a Damage AggregatedConsequencesBinned and a LifeLoss AggregatedConsequencesBinned, each from a DynamicHistogram over Enumerable.Repeat(value, 100) (a deterministic constant-valued sample, so SampleMean == value exactly), then compute_alternative_comparison_report(without, [with]). BaseYear=2025, FutureYear=2075, PeriodOfAnalysis=50, ConvergenceCriteria(minIterations=1, maxIterations=1) (matches the C# test's `new(minIterations: 1, maxIterations: 1)`), ImpactAreaID=1, DamageCategory='residential', AssetCategory='structure', RiskType.Fail throughout (the AggregatedConsequencesBinned/StudyAreaConsequencesBinned::GetConsequenceResult real default, matching alternative.json's own established RiskType.Fail convention for this same reason). `reduction` case: without={base_damage:1000, future_damage:2000, base_lifeloss:10, future_lifeloss:20}, with={base_damage:300, future_damage:500, base_lifeloss:3, future_lifeloss:5} -- asserts SampleMeanBaseYearEADReduced(Damage)=1000-300=700, SampleMeanFutureYearEADReduced(Damage)=2000-500=1500, SampleMeanBaseYearEADReduced(LifeLoss)=10-3=7, SampleMeanFutureYearEADReduced(LifeLoss)=20-5=15 (mirrors BaseYearDamageReduced_ReturnsCorrectMean/FutureYearDamageReduced_ReturnsCorrectMean/BaseYearLifeLossReduced_ReturnsCorrectMean/FutureYearLifeLossReduced_ReturnsCorrectMean). `zero_reduction` case: without and with both {base_damage:500, future_damage:500, base_lifeloss:5, future_lifeloss:5} -- asserts both reduced means are 0 (mirrors ZeroReduction_WhenWithAndWithoutProjectAreEqual). `expected: \"PIN\"`, gate-captured from the real C# AlternativeComparisonReport/AlternativeComparisonReportResults (abs tol 0.1, matching the C# test's own `Assert.Equal(expected, actual, 1)` one-decimal-place literal) -- never hand-derived, though the 700/1500/7/15/0 values are exact algebraic subtraction of the constant-valued histogram means so the PIN is expected to reproduce them exactly.",
+  "cases": [
+    {
+      "name": "reduction",
+      "impact_area_id": 1,
+      "damage_category": "residential",
+      "asset_category": "structure",
+      "base_year": 2025,
+      "future_year": 2075,
+      "period_of_analysis": 50,
+      "convergence": {
+        "min_iterations": 1,
+        "max_iterations": 1
+      },
+      "without_project": {
+        "alternative_id": 1,
+        "base_damage": 1000,
+        "future_damage": 2000,
+        "base_lifeloss": 10,
+        "future_lifeloss": 20
+      },
+      "with_project": {
+        "alternative_id": 2,
+        "base_damage": 300,
+        "future_damage": 500,
+        "base_lifeloss": 3,
+        "future_lifeloss": 5
+      },
+      "assertions": [
+        {
+          "method": "sample_mean_base_year_ead_reduced",
+          "args": [
+            2,
+            1,
+            "residential",
+            "structure",
+            "Damage"
+          ],
+          "expected": 700.0,
+          "tol": 0.1,
+          "mode": "abs"
+        },
+        {
+          "method": "sample_mean_future_year_ead_reduced",
+          "args": [
+            2,
+            1,
+            "residential",
+            "structure",
+            "Damage"
+          ],
+          "expected": 1500.0,
+          "tol": 0.1,
+          "mode": "abs"
+        },
+        {
+          "method": "sample_mean_base_year_ead_reduced",
+          "args": [
+            2,
+            1,
+            "residential",
+            "structure",
+            "LifeLoss"
+          ],
+          "expected": 7.0,
+          "tol": 0.1,
+          "mode": "abs"
+        },
+        {
+          "method": "sample_mean_future_year_ead_reduced",
+          "args": [
+            2,
+            1,
+            "residential",
+            "structure",
+            "LifeLoss"
+          ],
+          "expected": 15.0,
+          "tol": 0.1,
+          "mode": "abs"
+        }
+      ]
+    },
+    {
+      "name": "zero_reduction",
+      "impact_area_id": 1,
+      "damage_category": "residential",
+      "asset_category": "structure",
+      "base_year": 2025,
+      "future_year": 2075,
+      "period_of_analysis": 50,
+      "convergence": {
+        "min_iterations": 1,
+        "max_iterations": 1
+      },
+      "without_project": {
+        "alternative_id": 1,
+        "base_damage": 500,
+        "future_damage": 500,
+        "base_lifeloss": 5,
+        "future_lifeloss": 5
+      },
+      "with_project": {
+        "alternative_id": 2,
+        "base_damage": 500,
+        "future_damage": 500,
+        "base_lifeloss": 5,
+        "future_lifeloss": 5
+      },
+      "assertions": [
+        {
+          "method": "sample_mean_base_year_ead_reduced",
+          "args": [
+            2,
+            1,
+            "residential",
+            "structure",
+            "Damage"
+          ],
+          "expected": 0.0,
+          "tol": 0.1,
+          "mode": "abs"
+        },
+        {
+          "method": "sample_mean_base_year_ead_reduced",
+          "args": [
+            2,
+            1,
+            "residential",
+            "structure",
+            "LifeLoss"
+          ],
+          "expected": 0.0,
+          "tol": 0.1,
+          "mode": "abs"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,266 @@
+// PATCHED LOCAL COPY of HEC.FDA.Model/metrics/ScenarioResults.cs
+// @ f63682a86a30dc306a105689714a92bfd95956c5
+// Phase 6 Task 5. Kept VERBATIM: the ValidationErrorLogger base, both Properties (ComputeDate/
+// SoftwareVersion/ResultsList), the internal parameterless ctor, GetImpactAreaIDs/
+// GetAssetCategories/GetDamageCategories/GetRiskTypes/GetConsequenceTypes, the AEP/assurance
+// pass-throughs (GetAEPHistogramForPlotting/MeanAEP/MedianAEP/AssuranceOfAEP/
+// AEPWithGivenAssurance/LongTermExceedanceProbability/AssuranceOfEvent),
+// SampleMeanExpectedAnnualConsequences, ConsequencesExceededWithProbabilityQ,
+// GetConsequencesDistribution (INCLUDING its MVVM Fatal-ErrorMessage-on-empty fallback -- never
+// actually hit by this task's fixture, kept as-is rather than stripped since it compiles fine
+// transitively, same as StudyAreaConsequencesBinned.GetSpecificHistogram above),
+// GetAccumulatedLifeLossFnCurveData, AddResults, GetResults (including its own MVVM
+// Fatal-ErrorMessage+dummy-fallback), ConvertToStudyAreaConsequencesByQuantile, and Equals -- the
+// whole scenario-level aggregation surface this task ports to C++.
+//
+// Dropped (mirroring the C++ port's scenario_results.hpp SEVERANCES list):
+//  - WriteToXML()/static ReadFromXML(XElement): GENUINE COMPILE BLOCKER -- WriteToXML calls
+//    `impactAreaScenarioResults.WriteToXml()` and ReadFromXML calls
+//    `ImpactAreaScenarioResults.ReadFromXML(element)`, and patched/ImpactAreaScenarioResults.cs
+//    (Phase 5 Task 6) already dropped both of those methods, so this class's own XML methods
+//    would no longer compile even if kept. Also drops the now-unused `using System.Xml.Linq;`.
+using HEC.FDA.Model.metrics.Extensions;
+using HEC.FDA.Model.paireddata;
+using HEC.MVVMFramework.Base.Events;
+using HEC.MVVMFramework.Base.Implementations;
+using HEC.MVVMFramework.Model.Messaging;
+using Statistics.Distributions;
+using Statistics.Histograms;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace HEC.FDA.Model.metrics;
+
+public class ScenarioResults : ValidationErrorLogger
+{
+    #region Properties
+    public string ComputeDate { get; set; }
+    public string SoftwareVersion { get; set; }
+
+    public List<ImpactAreaScenarioResults> ResultsList { get; } = new List<ImpactAreaScenarioResults>();
+
+    #endregion
+
+    #region Constructor
+    internal ScenarioResults()
+    {
+    }
+
+    #endregion
+
+    #region Methods
+    public List<int> GetImpactAreaIDs(ConsequenceType consequenceType)
+    {
+        return ResultsList
+            .SelectMany(r => r.ConsequenceResults.ConsequenceResultList)
+            .Where(c => c.ConsequenceType == consequenceType)
+            .Select(c => c.RegionID)
+            .Distinct()
+            .ToList();
+    }
+    public List<string> GetAssetCategories(ConsequenceType consequenceType = ConsequenceType.Damage)
+    {
+        return ResultsList
+            .SelectMany(r => r.ConsequenceResults.ConsequenceResultList)
+            .Where(c => c.ConsequenceType == consequenceType)
+            .Select(c => c.AssetCategory)
+            .Distinct()
+            .ToList();
+    }
+    public List<string> GetDamageCategories(ConsequenceType consequenceType = ConsequenceType.Damage)
+    {
+        return ResultsList
+            .SelectMany(r => r.ConsequenceResults.ConsequenceResultList)
+            .Where(c => c.ConsequenceType == consequenceType)
+            .Select(c => c.DamageCategory)
+            .Distinct()
+            .ToList();
+    }
+    public List<RiskType> GetRiskTypes()
+    {
+        return ResultsList
+            .SelectMany(r => r.ConsequenceResults.ConsequenceResultList)
+            .Select(r => r.RiskType)
+            .Distinct()
+            .ToList();
+    }
+    public List<ConsequenceType> GetConsequenceTypes()
+    {
+        return ResultsList
+            .SelectMany(r => r.ConsequenceResults.ConsequenceResultList)
+            .Select(r => r.ConsequenceType)
+            .Distinct()
+            .ToList();
+    }
+    public IHistogram GetAEPHistogramForPlotting(int impactAreaID, int thresholdID = 0)
+    {
+        return GetResults(impactAreaID).GetAEPHistogramForPlotting(thresholdID);
+    }
+    public double MeanAEP(int impactAreaID, int thresholdID = 0)
+    {
+        return GetResults(impactAreaID).MeanAEP(thresholdID);
+    }
+    public double MedianAEP(int impactAreaID, int thresholdID = 0)
+    {
+        return GetResults(impactAreaID).MedianAEP(thresholdID);
+    }
+    public double AssuranceOfAEP(int impactAreaID, double exceedanceProbability, int thresholdID = 0)
+    {
+        return GetResults(impactAreaID).AssuranceOfAEP(thresholdID, exceedanceProbability);
+    }
+    public double AEPWithGivenAssurance(int impactAreaID, double assurance, int thresholdID = 0)
+    {
+        return GetResults(impactAreaID).AEPWithGivenAssurance(thresholdID, assurance);
+    }
+    public double LongTermExceedanceProbability(int impactAreaID, int years, int thresholdID = 0)
+    {
+        return GetResults(impactAreaID).LongTermExceedanceProbability(thresholdID, years);
+    }
+    public double AssuranceOfEvent(int impactAreaID, double standardNonExceedanceProbability, int thresholdID = 0)
+    {
+        return GetResults(impactAreaID).AssuranceOfEvent(thresholdID, standardNonExceedanceProbability);
+    }
+    public double SampleMeanExpectedAnnualConsequences(int impactAreaID = utilities.IntegerGlobalConstants.DEFAULT_MISSING_VALUE, string damageCategory = null, string assetCategory = null, ConsequenceType consequenceType = ConsequenceType.Damage, RiskType riskType = RiskType.Fail)
+    {
+        double consequenceValue = 0;
+        foreach (ImpactAreaScenarioResults impactAreaScenarioResults in ResultsList)
+        {
+            consequenceValue += impactAreaScenarioResults.ConsequenceResults.SampleMeanDamage(damageCategory, assetCategory, impactAreaID, consequenceType, riskType);
+        }
+        return consequenceValue;
+    }
+    public double ConsequencesExceededWithProbabilityQ(double exceedanceProbability,
+        int impactAreaID = utilities.IntegerGlobalConstants.DEFAULT_MISSING_VALUE,
+        string damageCategory = null,
+        string assetCategory = null,
+        ConsequenceType consequenceType = ConsequenceType.Damage,
+        RiskType riskType = RiskType.Total)
+    {
+        double nonExceedanceProbability = 1 - exceedanceProbability;
+        double consequenceValue = 0;
+        foreach (ImpactAreaScenarioResults impactAreaScenarioResults in ResultsList)
+        {
+            consequenceValue += impactAreaScenarioResults.ConsequenceResults.ConsequenceResultList
+               .FilterByCategories(damageCategory, assetCategory, impactAreaID, consequenceType, riskType)
+               .Sum((x) => x.ConsequenceHistogram.InverseCDF(nonExceedanceProbability));
+        }
+        return consequenceValue;
+    }
+    public Empirical GetConsequencesDistribution(int impactAreaID = utilities.IntegerGlobalConstants.DEFAULT_MISSING_VALUE, string damageCategory = null, string assetCategory = null, ConsequenceType consequenceType = ConsequenceType.Damage, RiskType riskType = RiskType.Total)
+    {
+        List<Empirical> empiricalDistsToStack = [];
+
+        foreach (ImpactAreaScenarioResults impactAreaScenarioResults in ResultsList)
+        {
+            var filtered = impactAreaScenarioResults.ConsequenceResults.ConsequenceResultList
+                .FilterByCategories(damageCategory, assetCategory, impactAreaID, consequenceType, riskType)
+                .Select((h) => DynamicHistogram.ConvertToEmpiricalDistribution(h.ConsequenceHistogram));
+
+            foreach (var consequenceResult in filtered)
+            {
+                empiricalDistsToStack.Add(consequenceResult);
+            }
+        }
+
+        if (empiricalDistsToStack.Count == 0)
+        {
+            string message = "The requested damage category - asset category - impact area combination could not be found. An arbitrary object is being returned";
+            ErrorMessage errorMessage = new(message, MVVMFramework.Base.Enumerations.ErrorLevel.Fatal);
+            ReportMessage(this, new MessageEventArgs(errorMessage));
+            return new Empirical();
+        }
+        else
+        {
+            return Empirical.StackEmpiricalDistributions(empiricalDistsToStack, Empirical.Sum);
+        }
+    }
+    public UncertainPairedData GetAccumulatedLifeLossFnCurveData()
+    {
+        List<UncertainPairedData> lifeLossUPDs = new();
+        foreach (ImpactAreaScenarioResults iaResult in ResultsList)
+        {
+            CategoriedUncertainPairedData curve = iaResult.UncertainConsequenceFrequencyCurves
+                .FirstOrDefault(c => c.ConsequenceType == ConsequenceType.LifeLoss);
+            if (curve != null && curve.YHistograms != null && curve.YHistograms.Count > 0)
+            {
+                lifeLossUPDs.Add(curve.GetUncertainPairedData());
+            }
+        }
+
+        if (lifeLossUPDs.Count <= 1) return null;
+
+        double[] referenceXvals = lifeLossUPDs[0].Xvals;
+        for (int i = 1; i < lifeLossUPDs.Count; i++)
+        {
+            if (!lifeLossUPDs[i].Xvals.SequenceEqual(referenceXvals))
+            {
+                return null;
+            }
+        }
+
+        Empirical[] stackedEmpiricals = new Empirical[referenceXvals.Length];
+        for (int i = 0; i < referenceXvals.Length; i++)
+        {
+            List<Empirical> empiricalsAtOrdinate = new();
+            foreach (UncertainPairedData upd in lifeLossUPDs)
+            {
+                DynamicHistogram histogram = (DynamicHistogram)upd.Yvals[i];
+                empiricalsAtOrdinate.Add(DynamicHistogram.ConvertToEmpiricalDistribution(histogram));
+            }
+            stackedEmpiricals[i] = Empirical.StackEmpiricalDistributions(empiricalsAtOrdinate, Empirical.Sum);
+        }
+
+        return new UncertainPairedData(referenceXvals, stackedEmpiricals, new CurveMetaData());
+    }
+
+    public void AddResults(ImpactAreaScenarioResults resultsToAdd)
+    {
+        ResultsList.Add(resultsToAdd);
+    }
+    public ImpactAreaScenarioResults GetResults(int impactAreaID)
+    {
+        foreach (ImpactAreaScenarioResults results in ResultsList.Cast<ImpactAreaScenarioResults>())
+        {
+            if (results.ImpactAreaID.Equals(impactAreaID))
+            {
+                return results;
+            }
+        }
+        int dummyImpactAreaID = 9999;
+        ImpactAreaScenarioResults dummyResults = new(dummyImpactAreaID, true);
+        string message = $"The IMPACT AREA SCENARIO RESULTS could not be found. An arbitrary object is being returned";
+        ErrorMessage errorMessage = new(message, MVVMFramework.Base.Enumerations.ErrorLevel.Fatal);
+        ReportMessage(this, new MessageEventArgs(errorMessage));
+        return dummyResults;
+    }
+
+    public static StudyAreaConsequencesByQuantile ConvertToStudyAreaConsequencesByQuantile(ScenarioResults results, ConsequenceType consequenceTypeFilter)
+    {
+        List<AggregatedConsequencesByQuantile> aggregatedConsequencesByQuantiles = new();
+        foreach (ImpactAreaScenarioResults impactAreaScenarioResults in results.ResultsList)
+        {
+            StudyAreaConsequencesByQuantile studyAreaConsequencesByQuantile = StudyAreaConsequencesBinned.ConvertToStudyAreaConsequencesByQuantile(impactAreaScenarioResults.ConsequenceResults, consequenceTypeFilter);
+            aggregatedConsequencesByQuantiles.AddRange(studyAreaConsequencesByQuantile.ConsequenceResultList);
+        }
+        StudyAreaConsequencesByQuantile allImpactAreas = new(aggregatedConsequencesByQuantiles);
+        return allImpactAreas;
+
+    }
+
+    public bool Equals(ScenarioResults scenarioResultsForComparison)
+    {
+        bool resultsAreEqual = true;
+        foreach (ImpactAreaScenarioResults scenarioResults in ResultsList)
+        {
+            ImpactAreaScenarioResults impactAreaScenarioResultsToCompare = scenarioResultsForComparison.GetResults(scenarioResults.ImpactAreaID);
+            resultsAreEqual = scenarioResults.Equals(impactAreaScenarioResultsToCompare);
+            if (!resultsAreEqual)
+            {
+                break;
+            }
+        }
+        return resultsAreEqual;
+    }
+    #endregion
+
+}

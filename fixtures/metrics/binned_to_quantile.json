@@ -1,0 +1,90 @@
+{
+  "target": "binned_to_quantile",
+  "kind": "binned_to_quantile",
+  "source_test": "HEC.FDA.Model/metrics/AggregatedConsequencesBinned.cs's ConvertToSingleEmpiricalDistributionOfConsequences + StudyAreaConsequencesBinned.cs's ConvertToStudyAreaConsequencesByQuantile (no upstream unit test file exists for either; oracle-gate-reproduced against the real methods directly)",
+  "note": "Phase 6 Task 4 (un-severed at Phase 4 Tasks 3/4). `consequence_results` is a list of {construct: {damage_category, asset_category, convergence: {min_iterations, max_iterations}, impact_area_id, consequence_type, risk_type}, realizations: [{iteration, damage, count}, ...]}, exactly the aggregated_consequences_binned.json construct/realizations shape -- one AggregatedConsequencesBinned per entry, staged via add_consequence_realization then put_data_into_histogram (Phase 4 Task 3 surface), then collected into a StudyAreaConsequencesBinned via its (vector<AggregatedConsequencesBinned>) ctor. `filter_consequence_type` is the ConsequenceType passed to convert_to_study_area_consequences_by_quantile (a plain `==` filter over each result's own ConsequenceType, NOT the wildcard-aware filter_by_categories predicate -- see study_area_consequences_binned.hpp). The resulting StudyAreaConsequencesByQuantile's sample_mean_damage(damage_category_or_null, asset_category_or_null, impact_area_id, query_consequence_type_or_omitted) is asserted (first three args match study_area_consequences_by_quantile.json's convention; the optional 4th arg is a ConsequenceType name passed as sample_mean_damage's own query parameter -- distinct from filter_consequence_type, which only controls the conversion step -- defaulting to Damage when omitted); since each AggregatedConsequencesByQuantile's Empirical.SampleMean is force-set (inside convert_to_empirical_distribution, Task 1) to the SOURCE histogram's own SampleMean rather than recomputed from the 2500-point empirical sweep, sample_mean_damage after conversion tracks the pre-conversion binned sample mean exactly, transitively through the ByQuantile collection's own summation. Cases: (1) single_damage_result -- one Damage-type binned result, IterationCount pinned to 1 (MaxIterations < 100 quirk, same as aggregated_consequences_binned.json's single_iteration_narrow_range), verifying the single-object conversion path (AggregatedConsequencesBinned::convert_to_single_empirical_distribution_of_consequences) end to end through both an exact-match and a fully-wildcarded sample_mean_damage query; (2) mixed_types_filter_excludes_lifeloss -- three binned results sharing damage_category/impact_area_id: two Damage-type (Structure, Content -- reusing aggregated_consequences_binned.json's multi_iteration_wide_range and single_iteration_narrow_range realization sets respectively, under new asset categories) and one LifeLoss-type sharing the SAME (damage_category, asset_category) tuple as the Structure/Damage result (realizations changed from aggregated_consequences_binned.json's negative_and_mixed_values -- which sum to exactly 0 and are therefore useless as an exclusion probe -- to {100,200,300,400}, a nonzero-sum set, specifically so a leaked LifeLoss item would be visible as a nonzero sum rather than silently vanishing into a zero) -- filtering by ConsequenceType::Damage must exclude the LifeLoss result entirely from the converted StudyAreaConsequencesByQuantile (not merely deprioritize it), verified by: a fully-wildcarded sample_mean_damage summing to ONLY the two Damage sample means; two category-scoped queries isolating each Damage result; AND a 4th, genuinely discriminating assertion that queries the CONVERTED collection directly for ConsequenceType::LifeLoss (args [null, null, 5, \"LifeLoss\"]) -- this is the actual exclusion proof: a correct converter yields a StudyAreaConsequencesByQuantile with no LifeLoss entries, so filter_by_categories matches nothing and the sum is exactly 0.0, whereas a regressed no-op/leaking converter would still carry the LifeLoss AggregatedConsequencesByQuantile through (its ConsequenceType field is untouched by conversion) and this query would return its nonzero force-set SampleMean instead. Earlier versions of this case asserted only the wildcarded/category-scoped Damage-typed queries, which cannot distinguish a correct filter from a no-op one: the old LifeLoss realizations summed to 0 (so a leaked item contributed nothing) AND sample_mean_damage's own consequence_type default (Damage) would have re-filtered out a leaked LifeLoss item regardless -- both independently masked the bug this case exists to catch. All `expected` values PIN (gate-captured, never hand-derived) -- DynamicHistogram::convert_to_empirical_distribution's SampleMean pass-through makes the expected numbers structurally predictable (should match the sample means an aggregated_consequences_binned fixture with the same realizations would report), but are still gate-pinned per project convention rather than cross-referenced by hand.",
+  "cases": [
+    {
+      "name": "single_damage_result",
+      "consequence_results": [
+        {
+          "construct": {
+            "damage_category": "Structure",
+            "asset_category": "Residential",
+            "convergence": { "min_iterations": 1, "max_iterations": 50 },
+            "impact_area_id": 7,
+            "consequence_type": "Damage",
+            "risk_type": "Fail"
+          },
+          "realizations": [
+            { "iteration": 0, "damage": 42.5, "count": 3 }
+          ]
+        }
+      ],
+      "filter_consequence_type": "Damage",
+      "assertions": [
+        { "method": "sample_mean_damage", "args": ["Structure", "Residential", 7], "expected": 42.5, "tol": 1e-9, "mode": "abs" },
+        { "method": "sample_mean_damage", "args": [null, null, 7], "expected": 42.5, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "mixed_types_filter_excludes_lifeloss",
+      "consequence_results": [
+        {
+          "construct": {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "convergence": { "min_iterations": 5, "max_iterations": 1000 },
+            "impact_area_id": 5,
+            "consequence_type": "Damage",
+            "risk_type": "Fail"
+          },
+          "realizations": [
+            { "iteration": 0, "damage": 1000, "count": 5 },
+            { "iteration": 1, "damage": 2000, "count": 8 },
+            { "iteration": 2, "damage": 1500, "count": 3 },
+            { "iteration": 3, "damage": 3000, "count": 10 },
+            { "iteration": 4, "damage": 500, "count": 2 },
+            { "iteration": 5, "damage": 2500, "count": 7 }
+          ]
+        },
+        {
+          "construct": {
+            "damage_category": "Residential",
+            "asset_category": "Content",
+            "convergence": { "min_iterations": 1, "max_iterations": 50 },
+            "impact_area_id": 5,
+            "consequence_type": "Damage",
+            "risk_type": "Fail"
+          },
+          "realizations": [
+            { "iteration": 0, "damage": 42.5, "count": 3 }
+          ]
+        },
+        {
+          "construct": {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "convergence": { "min_iterations": 3, "max_iterations": 200 },
+            "impact_area_id": 5,
+            "consequence_type": "LifeLoss",
+            "risk_type": "Non_Fail"
+          },
+          "realizations": [
+            { "iteration": 0, "damage": 100, "count": 1 },
+            { "iteration": 1, "damage": 200, "count": 2 },
+            { "iteration": 2, "damage": 300, "count": 0 },
+            { "iteration": 3, "damage": 400, "count": 3 }
+          ]
+        }
+      ],
+      "filter_consequence_type": "Damage",
+      "assertions": [
+        { "method": "sample_mean_damage", "args": [null, null, 5], "expected": 147.49999999999994, "tol": 1e-9, "mode": "abs" },
+        { "method": "sample_mean_damage", "args": ["Residential", "Structure", 5], "expected": 104.99999999999996, "tol": 1e-9, "mode": "abs" },
+        { "method": "sample_mean_damage", "args": ["Residential", "Content", 5], "expected": 42.5, "tol": 1e-9, "mode": "abs" },
+        { "method": "sample_mean_damage", "args": [null, null, 5, "LifeLoss"], "expected": 0.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    }
+  ]
+}

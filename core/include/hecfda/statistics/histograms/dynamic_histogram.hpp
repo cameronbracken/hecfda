@@ -11,6 +11,7 @@
 #include <vector>
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/distributions/continuous_distribution.hpp"
+#include "hecfda/statistics/distributions/empirical.hpp"
 #include "hecfda/statistics/distributions/i_distribution.hpp"
 #include "hecfda/statistics/distributions/i_distribution_enum.hpp"
 #include "hecfda/statistics/histograms/i_histogram.hpp"
@@ -48,11 +49,6 @@ namespace histograms {
 //    reconstruct a histogram via the public numeric ctors instead.
 //  - HistogramDebugVisualizer: there is no such member in the pinned source; the debug/GUI
 //    visualization surface referenced in the task lives elsewhere (WPF), nothing to sever here.
-//  - ConvertToEmpiricalDistribution(IHistogram): deferred. It couples the histogram to the
-//    Empirical distribution (constructs a 2500-point InverseCDF sweep and copies SampleMean into a
-//    new Empirical) and is NOT required for the histogram's own stats / PDF / CDF / InverseCDF
-//    surface. Port later when a caller actually needs it; the InverseCDF it would sweep is already
-//    ported and oracle-verified here.
 //  - The parameterless `DynamicHistogram()` "ARBITRARY histogram" ctor (adds ten 0-observations):
 //    a serialization/placeholder helper, not a data-collection surface. Not ported.
 class DynamicHistogram : public distributions::ContinuousDistribution, public IHistogram {
@@ -207,6 +203,35 @@ class DynamicHistogram : public distributions::ContinuousDistribution, public IH
             double bin_offset = static_cast<double>(static_cast<int>(bin_counts_.size()) - index);
             return max_ - bin_width_ * bin_offset + bin_width_ * fraction;
         }
+    }
+
+    // ported from: DynamicHistogram.cs static ConvertToEmpiricalDistribution(IHistogram histogram) @
+    // f63682a86a30dc306a105689714a92bfd95956c5. Deferred in Phase 4/5 (see the class-level
+    // DONE_WITH_CONCERNS note this bullet used to live under -- now restored in Phase 6 as the
+    // binned-histogram -> Empirical bridge the quantile/benefits chain needs). Upstream's static
+    // method takes an `IHistogram histogram` parameter but every call site invokes it as
+    // `ConvertToEmpiricalDistribution(someHistogram)` on the histogram itself, so it is ported as an
+    // instance method on `this` (matching this port's existing pattern for other IHistogram members,
+    // e.g. `is_histogram_converged`). Sweeps InverseCDF at the same 2500 evenly-spaced quantile
+    // probabilities `(i + 0.5) / 2500` as Empirical::stack_empirical_distributions (a different
+    // upstream method that happens to use the same probability-step formula and step count),
+    // builds a new Empirical from (probabilities, values) via the two-array ctor (which derives
+    // Min/Max from the first/last Quantiles entries -- InverseCDF is non-decreasing in p, so the
+    // swept values are already ascending), then force-sets SampleMean from this histogram's own raw
+    // running SampleMean (NOT recomputed by Empirical's ctor -- see Empirical.cs's own SampleMean
+    // doc comment: "must be set from outside this class").
+    distributions::Empirical convert_to_empirical_distribution() const {
+        constexpr int probability_steps = 2500;
+        std::vector<double> cumulative_probabilities(static_cast<std::size_t>(probability_steps));
+        std::vector<double> inverse_cdfs(static_cast<std::size_t>(probability_steps));
+        for (int i = 0; i < probability_steps; ++i) {
+            double probability_step = (static_cast<double>(i) + 0.5) / probability_steps;
+            cumulative_probabilities[static_cast<std::size_t>(i)] = probability_step;
+            inverse_cdfs[static_cast<std::size_t>(i)] = inverse_cdf(probability_step);
+        }
+        distributions::Empirical new_empirical(cumulative_probabilities, inverse_cdfs);
+        new_empirical.set_sample_mean(sample_mean_);
+        return new_empirical;
     }
 
     // ported from: DynamicHistogram.cs Equals(IDistribution distribution). The C# `distribution.Type

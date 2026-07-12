@@ -62,6 +62,17 @@ class UncertainPairedData {
     const std::vector<double>& xvals() const { return xs_; }
     const CurveMetaData& metadata() const { return metadata_; }
 
+    // Indexed Yvals accessor, added Phase 6 Task 5 (ScenarioResults::
+    // get_accumulated_life_loss_fn_curve_data): C#'s `(DynamicHistogram)upd.Yvals[i]` reads one
+    // per-ordinate distribution out of an already-built UncertainPairedData and hard-casts it.
+    // ys_ has no other public accessor (every existing consumer either builds a NEW
+    // UncertainPairedData from scratch or samples through inverse_cdf), so this is the minimal
+    // read-only surface needed for that one caller: bounds-checked (`.at`, matching C#'s
+    // array-index-out-of-range IndexOutOfRangeException on a bad index) rather than the
+    // unchecked `operator[]` the private helpers below use internally.
+    std::size_t size() const { return ys_.size(); }
+    const IDistribution& y_at(std::size_t i) const { return *ys_.at(i); }
+
     // ported from: UncertainPairedData.cs GenerateRandomNumbers(int seed, long size).
     // C#: `Random random = new Random(seed); for i: randos[i] = random.NextDouble();`. Delegated to
     // RandomProvider(seed).next_random_sequence(size), which reproduces `new Random(seed).

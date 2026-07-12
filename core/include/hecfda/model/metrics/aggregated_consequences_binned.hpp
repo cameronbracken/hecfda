@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "hecfda/model/metrics/aggregated_consequences_by_quantile.hpp"
 #include "hecfda/model/metrics/consequence_type.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/histograms/dynamic_histogram.hpp"
@@ -41,10 +42,6 @@ namespace metrics {
 // DONE_WITH_CONCERNS (scoped out, not ported; documented per repo convention):
 //  - WriteToXML() / ReadFromXML(XElement): XML (de)serialization, no equivalent surface in this
 //    port (matches the repo-wide XML severance elsewhere, e.g. convergence_criteria.hpp).
-//  - ConvertToSingleEmpiricalDistributionOfConsequences(...): couples to
-//    DynamicHistogram::ConvertToEmpiricalDistribution, itself deferred (see
-//    dynamic_histogram.hpp's DONE_WITH_CONCERNS) and to the Empirical/AggregatedConsequencesByQuantile
-//    quantile types this task does not port. Not needed by the histogram-staging surface below.
 //  - The two "null/dummy" ctors -- `AggregatedConsequencesBinned(int impactAreaID,
 //    ConsequenceType, RiskType)` and `AggregatedConsequencesBinned(string, string, int,
 //    ConsequenceType = Damage, RiskType = Fail)` (both set IsNull = true) -- construct
@@ -54,10 +51,17 @@ namespace metrics {
 //    here would require porting that placeholder ctor first; neither is needed by this task's
 //    compute path (Task 4/7 construct via the ConvergenceCriteria ctor below). Deferred, not
 //    permanently severed -- revisit if a later task needs an explicit "null" sentinel instance.
+//    UN-SEVERED Phase 6 Task 10 (see the `(string, string, int, ConsequenceType, RiskType)` ctor
+//    below): `AlternativeComparisonReport::compute_distribution_ead_reduced` needed exactly this
+//    "no counterpart" placeholder. The OTHER dummy ctor (`(int, ConsequenceType, RiskType)`, which
+//    hardcodes DamageCategory/AssetCategory to "UNASSIGNED") remains un-ported -- still no caller
+//    needs it.
 //  - `AggregatedConsequencesBinned(string, string, IHistogram histogram, int, ConsequenceType =
 //    Damage, RiskType = Fail)` (reconstructs from an already-built histogram, reading
 //    ConvergenceCriteria off it): not required by this task; trivial to add later (it needs no
-//    unported dependency) if a caller needs to wrap a pre-built histogram.
+//    unported dependency) if a caller needs to wrap a pre-built histogram. UN-SEVERED Phase 6 Task
+//    9 (see that ctor below) -- `Alternative`'s own upstream unit tests construct
+//    `AggregatedConsequencesBinned` directly from a pre-built `DynamicHistogram` this way.
 //  - The C# `RegionID` field's initializer `= utilities.IntegerGlobalConstants.DEFAULT_MISSING_VALUE`
 //    (-999): every ported ctor (only the compute ctor below) unconditionally overwrites RegionID
 //    with the impactAreaID argument in the ctor body, so the initializer value is never actually
@@ -86,6 +90,81 @@ class AggregatedConsequencesBinned {
           temp_results_(static_cast<std::size_t>(convergence_criteria.iteration_count()), 0.0),
           temp_counts_(static_cast<std::size_t>(convergence_criteria.iteration_count()), 0.0),
           histogram_not_constructed_(true) {}
+
+    // ported from: AggregatedConsequencesBinned.cs `public AggregatedConsequencesBinned(string
+    // damageCategory, string assetCategory, IHistogram histogram, int impactAreaID, ConsequenceType
+    // consequenceType = ConsequenceType.Damage, RiskType riskType = RiskType.Fail)` -- reconstructs
+    // from an already-built histogram. UN-SEVERED Phase 6 Task 9 (the class comment's
+    // DONE_WITH_CONCERNS originally deferred this: "not required by this task; trivial to add
+    // later"): `Alternative`'s own upstream unit tests (AlternativeTest.cs, e.g.
+    // `LifeLossResultsExcludedFromEqad`) construct `AggregatedConsequencesBinned` directly from a
+    // pre-built `DynamicHistogram` this way, so this task's fixture needs the same surface.
+    // `damaged_element_quantity_histogram_` is left null/unset here, matching C# leaving
+    // `DamagedElementQuantityHistogram` at its default null (never assigned in this ctor).
+    // Takes ownership of the histogram via `unique_ptr` (the value-semantics analogue of C#'s
+    // `ConsequenceHistogram = histogram` reference assignment) rather than a raw/const reference,
+    // matching every other move-only-member ctor in this port. `temp_results_`/`temp_counts_` are
+    // still allocated and sized to `convergence_criteria.iteration_count()` per the C# ctor body
+    // (dead storage here: `histogram_not_constructed_` stays false, so
+    // `put_data_into_histogram()`'s branch that would consume them never runs) -- kept anyway for
+    // faithfulness, matching how the C# ctor allocates `_TempResults`/`_TempCounts` unconditionally
+    // too.
+    AggregatedConsequencesBinned(std::string damage_category, std::string asset_category,
+                                  std::unique_ptr<statistics::histograms::DynamicHistogram> histogram,
+                                  int impact_area_id,
+                                  ConsequenceType consequence_type = ConsequenceType::Damage,
+                                  RiskType risk_type = RiskType::Fail)
+        : damage_category_(std::move(damage_category)),
+          asset_category_(std::move(asset_category)),
+          consequence_type_(consequence_type),
+          risk_type_(risk_type),
+          region_id_(impact_area_id),
+          is_null_(false),
+          convergence_criteria_(histogram->convergence_criteria()),
+          temp_results_(static_cast<std::size_t>(convergence_criteria_.iteration_count()), 0.0),
+          temp_counts_(static_cast<std::size_t>(convergence_criteria_.iteration_count()), 0.0),
+          histogram_not_constructed_(false),
+          consequence_histogram_(std::move(histogram)) {}
+
+    // ported from: AggregatedConsequencesBinned.cs `public AggregatedConsequencesBinned(string
+    // damageCategory, string assetCategory, int impactAreaID, ConsequenceType consequenceType =
+    // ConsequenceType.Damage, RiskType riskType = RiskType.Fail)` -- the "null"/dummy ctor.
+    // UN-SEVERED Phase 6 Task 10: `AlternativeComparisonReport::compute_distribution_ead_reduced`
+    // needs an explicit "no counterpart" placeholder `AggregatedConsequencesBinned` when a
+    // with-project (or without-project) consequence result has no matching counterpart on the
+    // other side -- exactly the scenario this class's original DONE_WITH_CONCERNS deferred ("not
+    // needed by this task's compute path... revisit if a later task needs an explicit null
+    // sentinel instance"). That later task has arrived.
+    //
+    // C#'s `ConsequenceHistogram = new DynamicHistogram()` / `DamagedElementQuantityHistogram =
+    // new DynamicHistogram()` both call the parameterless "ARBITRARY histogram" ctor
+    // (dynamic_histogram.hpp's own DONE_WITH_CONCERNS explicitly declined to port it as a
+    // standalone ctor -- "a serialization/placeholder helper, not a data-collection surface").
+    // Rather than adding that ctor to DynamicHistogram, this port reproduces its documented effect
+    // (`BinWidth = DEFAULT_BIN_WIDTH; _minHasNotBeenSet = true; ConvergenceCriteria = new
+    // ConvergenceCriteria(); ten AddObservationToHistogram(0) calls`) inline via the existing
+    // public `DynamicHistogram(double bin_width, ConvergenceCriteria)` ctor (which already sets
+    // min_has_not_been_set_ = true, matching `_minHasNotBeenSet = true`) plus ten
+    // `add_observation_to_histogram(0.0)` calls -- byte-identical resulting histogram state, built
+    // from already-ported public surface instead of a new dedicated ctor. Note: DamageCategory/
+    // AssetCategory are NOT overwritten to "UNASSIGNED" here (unlike the sibling `(int, ConsequenceType,
+    // RiskType)` dummy ctor a few lines above, which this port declined to add -- not needed by any
+    // caller yet) -- this ctor stores the given strings verbatim, matching the C# source exactly.
+    AggregatedConsequencesBinned(std::string damage_category, std::string asset_category, int impact_area_id,
+                                  ConsequenceType consequence_type = ConsequenceType::Damage,
+                                  RiskType risk_type = RiskType::Fail)
+        : damage_category_(std::move(damage_category)),
+          asset_category_(std::move(asset_category)),
+          consequence_type_(consequence_type),
+          risk_type_(risk_type),
+          region_id_(impact_area_id),
+          is_null_(true),
+          convergence_criteria_(),
+          temp_results_(static_cast<std::size_t>(convergence_criteria_.iteration_count()), 0.0),
+          temp_counts_(static_cast<std::size_t>(convergence_criteria_.iteration_count()), 0.0),
+          histogram_not_constructed_(false),
+          consequence_histogram_(make_arbitrary_histogram()),
+          damaged_element_quantity_histogram_(make_arbitrary_histogram()) {}
 
     const std::string& damage_category() const { return damage_category_; }
     const std::string& asset_category() const { return asset_category_; }
@@ -175,7 +254,37 @@ class AggregatedConsequencesBinned {
         return consequence_histogram_->equals(*other.consequence_histogram_);
     }
 
+    // ported from: AggregatedConsequencesBinned.cs `public static AggregatedConsequencesByQuantile
+    // ConvertToSingleEmpiricalDistributionOfConsequences(AggregatedConsequencesBinned
+    // consequenceDistributionResult)`. UN-SEVERED Phase 6 Task 4 (deferred at Phase 4 Task 3, see
+    // this class's DONE_WITH_CONCERNS history -- it depended on DynamicHistogram::
+    // convert_to_empirical_distribution, un-severed Phase 6 Task 1, and on
+    // AggregatedConsequencesByQuantile, ported Phase 6 Task 2). The C# version is `static`, taking
+    // the source object as its sole parameter; ported here as a `const` instance method (using
+    // `this` in place of the C# parameter, per this task's brief) -- semantically identical, since
+    // the C# body only ever reads off `consequenceDistributionResult`. Field mapping transcribed in
+    // the exact order the C# ctor call lists them: DamageCategory, AssetCategory, the converted
+    // Empirical, RegionID, ConsequenceType, RiskType.
+    AggregatedConsequencesByQuantile convert_to_single_empirical_distribution_of_consequences() const {
+        statistics::distributions::Empirical empirical = consequence_histogram_->convert_to_empirical_distribution();
+        return AggregatedConsequencesByQuantile(damage_category_, asset_category_, std::move(empirical),
+                                                 region_id_, consequence_type_, risk_type_);
+    }
+
    private:
+    // ported from: DynamicHistogram.cs `public DynamicHistogram()` (the "ARBITRARY histogram"
+    // ctor) -- see the "null"/dummy ctor's comment above for why this is reproduced inline here
+    // rather than as a standalone DynamicHistogram ctor. Builds a fresh histogram each call (a
+    // move-only unique_ptr can't be shared between the two dummy-ctor members).
+    static std::unique_ptr<statistics::histograms::DynamicHistogram> make_arbitrary_histogram() {
+        auto histogram = std::make_unique<statistics::histograms::DynamicHistogram>(
+            statistics::histograms::DynamicHistogram::DEFAULT_BIN_WIDTH, statistics::ConvergenceCriteria());
+        for (int i = 0; i < 10; ++i) {
+            histogram->add_observation_to_histogram(0.0);
+        }
+        return histogram;
+    }
+
     std::string damage_category_;
     std::string asset_category_;
     ConsequenceType consequence_type_;

@@ -1,0 +1,278 @@
+{
+  "target": "alternative_results",
+  "kind": "alternative_results",
+  "source_test": "HEC.FDA.Model/metrics/AlternativeResults.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real AlternativeResults/ScenarioResults/StudyAreaConsequencesByQuantile directly)",
+  "note": "Phase 6 Task 6. Constructs an AlternativeResults directly via the internal 'public for testing' (StudyAreaConsequencesByQuantile, id, analysisYears, periodOfAnalysis, isNull) ctor, then assigns base_year_scenario_results_/future_year_scenario_results_ (both caller-set fields per the class comment) and scenarios_are_identical_ directly -- this exercises the delegation logic in isolation, independent of where the flag would actually be computed (Alternative::annualization_compute, Task 9, not yet ported). `base_year_impact_areas`/`future_year_impact_areas` are each a list of entries in EXACTLY the impact_area_scenario_results.json construct/consequence_realizations/aep_observations/stage_observations shape (reused via make_impact_area_scenario_results_case, same as scenario_results.json's own `impact_areas` field) -- one ImpactAreaScenarioResults per entry, add_results'd into a fresh ScenarioResults in order. `eqad_results` is a study_area_consequences_by_quantile.json-shaped {consequence_results: [...]} object -- one AggregatedConsequencesByQuantile per entry (construction order) via the (string,string,Empirical,int,ConsequenceType,RiskType) ctor, with Empirical.SampleMean force-set to the entry's own `sample_mean` field, collected into a StudyAreaConsequencesByQuantile via its (List<AggregatedConsequencesByQuantile>) ctor -- this becomes the AlternativeResults ctor's `eqad_results` argument directly (`is_null=false`). Both cases below reuse IDENTICAL base_year/future_year/eqad_results construction data -- only `scenarios_are_identical` differs -- so any difference between the two cases' `sample_mean_eqad`/`get_eqad_distribution_sample_mean` results is caused SOLELY by the delegation branch flipping, not by different underlying data. `method` dispatches (args always [damage_category_or_null, asset_category_or_null, impact_area_id], ConsequenceType.Damage/RiskType.Total implicit at every level, matching how both the ScenarioResults consequence realizations and the eqad_results entries were built): `sample_mean_eqad` -- THE delegator: scenarios_are_identical_ ? base_year_scenario_results_.SampleMeanExpectedAnnualConsequences(...) : eqad_results_.SampleMeanDamage(...); `sample_mean_base_year_ead`/`sample_mean_future_year_ead` -- straight pass-throughs to base_year_scenario_results_/future_year_scenario_results_.SampleMeanExpectedAnnualConsequences(...), NEVER branching on scenarios_are_identical_ (proving base and future stay independently readable regardless of the flag); `get_eqad_distribution_sample_mean` -- the Empirical-returning sibling of sample_mean_eqad (scenarios_are_identical_ ? base_year_scenario_results_.GetConsequencesDistribution(...).SampleMean : eqad_results_.GetAggregateEmpiricalDistribution(...).SampleMean). eqad_results_'s two entries' SampleMean fields (250.0 covering impact area 7, 100.0 covering impact area 8) are force-set to values that don't coincide with either scenario's own expected-annual-consequences figure, and StudyAreaConsequencesByQuantile.SampleMeanDamage/GetAggregateEmpiricalDistribution().SampleMean over the wildcard filter both reduce to a left-to-right SUM of the matched entries' own SampleMean fields (250.0 + 100.0 = 350.0 exactly -- see study_area_consequences_by_quantile.json's own note for why StackEmpiricalDistributions' SampleMean bookkeeping is itself just that sum), so `get_eqad_distribution_sample_mean`'s eqad-branch value (350.0) is a safe hand-derived cross-check even though every other assertion is gate-PIN-captured (the ScenarioResults SampleMeanExpectedAnnualConsequences figures route through real consequence-histogram binning, not a simple average of the raw realizations, so those are never hand-derived). All values PIN unless noted, gate-captured, never hand-derived beyond the one documented exception above.",
+  "cases": [
+    {
+      "name": "identical_scenarios_delegates_to_base",
+      "scenarios_are_identical": true,
+      "base_year_impact_areas": [
+        {
+          "construct": {
+            "impact_area_id": 7,
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "consequence_convergence": { "min_iterations": 5, "max_iterations": 1000 },
+            "threshold": {
+              "id": 3,
+              "type": "DefaultExteriorStage",
+              "value": 12.5,
+              "convergence": { "min_iterations": 5, "max_iterations": 1000 }
+            }
+          },
+          "consequence_realizations": [
+            { "iteration": 0, "damage": 1000.0 },
+            { "iteration": 1, "damage": 1500.0 },
+            { "iteration": 2, "damage": 1200.0 },
+            { "iteration": 3, "damage": 1800.0 },
+            { "iteration": 4, "damage": 900.0 }
+          ],
+          "aep_observations": [
+            { "iteration": 0, "result": 0.05 },
+            { "iteration": 1, "result": 0.08 },
+            { "iteration": 2, "result": 0.03 },
+            { "iteration": 3, "result": 0.10 },
+            { "iteration": 4, "result": 0.06 }
+          ],
+          "stage_observations": [
+            { "iteration": 0, "result": 10.1 },
+            { "iteration": 1, "result": 10.3 },
+            { "iteration": 2, "result": 9.9 },
+            { "iteration": 3, "result": 10.5 },
+            { "iteration": 4, "result": 10.0 }
+          ]
+        }
+      ],
+      "future_year_impact_areas": [
+        {
+          "construct": {
+            "impact_area_id": 8,
+            "damage_category": "Commercial",
+            "asset_category": "Content",
+            "consequence_convergence": { "min_iterations": 3, "max_iterations": 200 },
+            "threshold": {
+              "id": 4,
+              "type": "AdditionalExteriorStage",
+              "value": 8.25,
+              "convergence": { "min_iterations": 3, "max_iterations": 200 }
+            }
+          },
+          "consequence_realizations": [
+            { "iteration": 0, "damage": 500.0 },
+            { "iteration": 1, "damage": 650.0 },
+            { "iteration": 2, "damage": 300.0 },
+            { "iteration": 3, "damage": 800.0 }
+          ],
+          "aep_observations": [
+            { "iteration": 0, "result": 0.12 },
+            { "iteration": 1, "result": 0.09 },
+            { "iteration": 2, "result": 0.15 },
+            { "iteration": 3, "result": 0.07 }
+          ],
+          "stage_observations": [
+            { "iteration": 0, "result": 6.5 },
+            { "iteration": 1, "result": 6.8 },
+            { "iteration": 2, "result": 6.2 },
+            { "iteration": 3, "result": 7.0 }
+          ]
+        }
+      ],
+      "eqad_results": {
+        "consequence_results": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "impact_area_id": 7,
+            "consequence_type": "Damage",
+            "risk_type": "Total",
+            "empirical": { "probabilities": [0.25, 0.5, 0.75, 1.0], "values": [100, 200, 300, 400] },
+            "sample_mean": 250.0
+          },
+          {
+            "damage_category": "Commercial",
+            "asset_category": "Content",
+            "impact_area_id": 8,
+            "consequence_type": "Damage",
+            "risk_type": "Total",
+            "empirical": { "probabilities": [0.5, 1.0], "values": [50, 150] },
+            "sample_mean": 100.0
+          }
+        ]
+      },
+      "assertions": [
+        { "method": "sample_mean_eqad", "args": [null, null, -999], "expected": 63.99999999999998, "tol": 1e-9, "mode": "abs" },
+        { "method": "sample_mean_base_year_ead", "args": [null, null, -999], "expected": 63.99999999999998, "tol": 1e-9, "mode": "abs" },
+        { "method": "sample_mean_future_year_ead", "args": [null, null, -999], "expected": 22.499999999999982, "tol": 1e-9, "mode": "abs" },
+        { "method": "get_eqad_distribution_sample_mean", "args": [null, null, -999], "expected": 63.99999999999998, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "different_scenarios_delegates_to_eqad",
+      "scenarios_are_identical": false,
+      "base_year_impact_areas": [
+        {
+          "construct": {
+            "impact_area_id": 7,
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "consequence_convergence": { "min_iterations": 5, "max_iterations": 1000 },
+            "threshold": {
+              "id": 3,
+              "type": "DefaultExteriorStage",
+              "value": 12.5,
+              "convergence": { "min_iterations": 5, "max_iterations": 1000 }
+            }
+          },
+          "consequence_realizations": [
+            { "iteration": 0, "damage": 1000.0 },
+            { "iteration": 1, "damage": 1500.0 },
+            { "iteration": 2, "damage": 1200.0 },
+            { "iteration": 3, "damage": 1800.0 },
+            { "iteration": 4, "damage": 900.0 }
+          ],
+          "aep_observations": [
+            { "iteration": 0, "result": 0.05 },
+            { "iteration": 1, "result": 0.08 },
+            { "iteration": 2, "result": 0.03 },
+            { "iteration": 3, "result": 0.10 },
+            { "iteration": 4, "result": 0.06 }
+          ],
+          "stage_observations": [
+            { "iteration": 0, "result": 10.1 },
+            { "iteration": 1, "result": 10.3 },
+            { "iteration": 2, "result": 9.9 },
+            { "iteration": 3, "result": 10.5 },
+            { "iteration": 4, "result": 10.0 }
+          ]
+        }
+      ],
+      "future_year_impact_areas": [
+        {
+          "construct": {
+            "impact_area_id": 8,
+            "damage_category": "Commercial",
+            "asset_category": "Content",
+            "consequence_convergence": { "min_iterations": 3, "max_iterations": 200 },
+            "threshold": {
+              "id": 4,
+              "type": "AdditionalExteriorStage",
+              "value": 8.25,
+              "convergence": { "min_iterations": 3, "max_iterations": 200 }
+            }
+          },
+          "consequence_realizations": [
+            { "iteration": 0, "damage": 500.0 },
+            { "iteration": 1, "damage": 650.0 },
+            { "iteration": 2, "damage": 300.0 },
+            { "iteration": 3, "damage": 800.0 }
+          ],
+          "aep_observations": [
+            { "iteration": 0, "result": 0.12 },
+            { "iteration": 1, "result": 0.09 },
+            { "iteration": 2, "result": 0.15 },
+            { "iteration": 3, "result": 0.07 }
+          ],
+          "stage_observations": [
+            { "iteration": 0, "result": 6.5 },
+            { "iteration": 1, "result": 6.8 },
+            { "iteration": 2, "result": 6.2 },
+            { "iteration": 3, "result": 7.0 }
+          ]
+        }
+      ],
+      "eqad_results": {
+        "consequence_results": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "impact_area_id": 7,
+            "consequence_type": "Damage",
+            "risk_type": "Total",
+            "empirical": { "probabilities": [0.25, 0.5, 0.75, 1.0], "values": [100, 200, 300, 400] },
+            "sample_mean": 250.0
+          },
+          {
+            "damage_category": "Commercial",
+            "asset_category": "Content",
+            "impact_area_id": 8,
+            "consequence_type": "Damage",
+            "risk_type": "Total",
+            "empirical": { "probabilities": [0.5, 1.0], "values": [50, 150] },
+            "sample_mean": 100.0
+          }
+        ]
+      },
+      "assertions": [
+        { "method": "sample_mean_eqad", "args": [null, null, -999], "expected": 350.0, "tol": 1e-9, "mode": "abs" },
+        { "method": "sample_mean_base_year_ead", "args": [null, null, -999], "expected": 63.99999999999998, "tol": 1e-9, "mode": "abs" },
+        { "method": "sample_mean_future_year_ead", "args": [null, null, -999], "expected": 22.499999999999982, "tol": 1e-9, "mode": "abs" },
+        { "method": "get_eqad_distribution_sample_mean", "args": [null, null, -999], "expected": 350.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "add_consequence_results_appends_on_true_miss",
+      "note": "Covers AddConsequenceResults (AlternativeResults.cs:231-238), which had ZERO fixture coverage before Phase 6 Task 6's faithfulness pass. eqad_results starts with exactly one entry keyed (Residential, Structure, impact_area 7, Damage, Fail). consequence_result_to_add uses a DIFFERENT impact_area_id (8), so its (damageCategory, assetCategory, RegionID, ConsequenceType) key doesn't match the existing entry under ANY risk type. GetConsequenceResult(...)'s Total-defaulted 4-arg call (consequence_extensions::filter_by_categories' RiskType predicate is `risk_type == Total || risk_type == candidate.risk_type()` -- Total is a WILDCARD matching any candidate risk type, not an exact-Total match, see AggregatedConsequencesByQuantile.cs's FilterByCategories) therefore finds no match regardless of risk type -> check.IsNull is true -> unconditional append -> list count 1 -> 2.",
+      "scenarios_are_identical": false,
+      "base_year_impact_areas": [],
+      "future_year_impact_areas": [],
+      "eqad_results": {
+        "consequence_results": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "impact_area_id": 7,
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "empirical": { "probabilities": [1.0], "values": [100] },
+            "sample_mean": 100.0
+          }
+        ]
+      },
+      "consequence_result_to_add": {
+        "damage_category": "Residential",
+        "asset_category": "Structure",
+        "impact_area_id": 8,
+        "consequence_type": "Damage",
+        "risk_type": "Fail",
+        "empirical": { "probabilities": [1.0], "values": [200] },
+        "sample_mean": 200.0
+      },
+      "assertions": [
+        { "method": "eqad_consequence_result_list_count", "args": [null, null, -999], "expected": 2.0, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "add_consequence_results_skips_when_any_risk_type_already_matches_key",
+      "note": "The Total-wildcard companion to the case above: eqad_results starts with one entry keyed (Residential, Structure, impact_area 7, Damage, Fail). consequence_result_to_add shares that EXACT SAME key but a DIFFERENT specific risk type (Non_Fail), not Fail and not Total. Because GetConsequenceResult's riskType arg is omitted (defaults to RiskType.Total, a wildcard that matches a candidate of ANY risk type -- NOT an exact-Total match), the dedup check matches the existing Fail-risk-type entry regardless of the new item's own Non_Fail risk type -> check.IsNull is false -> append is skipped, list count stays 1. This locks in the (non-obvious) Total-as-wildcard dedup semantics: AddConsequenceResults dedupes on (damageCategory, assetCategory, RegionID, ConsequenceType) ONLY, ignoring RiskType entirely, so at most one entry per that 4-tuple can ever exist regardless of how many distinct RiskTypes are attempted.",
+      "scenarios_are_identical": false,
+      "base_year_impact_areas": [],
+      "future_year_impact_areas": [],
+      "eqad_results": {
+        "consequence_results": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "impact_area_id": 7,
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "empirical": { "probabilities": [1.0], "values": [100] },
+            "sample_mean": 100.0
+          }
+        ]
+      },
+      "consequence_result_to_add": {
+        "damage_category": "Residential",
+        "asset_category": "Structure",
+        "impact_area_id": 7,
+        "consequence_type": "Damage",
+        "risk_type": "Non_Fail",
+        "empirical": { "probabilities": [1.0], "values": [200] },
+        "sample_mean": 200.0
+      },
+      "assertions": [
+        { "method": "eqad_consequence_result_list_count", "args": [null, null, -999], "expected": 1.0, "tol": 0.0, "mode": "exact" }
+      ]
+    }
+  ]
+}

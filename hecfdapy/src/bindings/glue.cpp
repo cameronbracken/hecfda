@@ -22,6 +22,8 @@
 #include "hecfda/model/stage_damage/hydraulic_profiles.hpp"
 #include "hecfda/model/stage_damage/impact_area_stage_damage.hpp"
 #include "hecfda/model/compute/impact_area_scenario_simulation.hpp"
+#include "hecfda/model/scenarios/scenario.hpp"
+#include "hecfda/model/alternatives/alternative.hpp"
 namespace py = pybind11;
 namespace nd = hecfda::statistics::distributions;
 namespace pd = hecfda::model::paired_data;
@@ -384,13 +386,15 @@ static double system_performance_results(int min_iterations, int max_iterations,
 // assembly, default-threshold, mean_aep, assurance_of_event, the seeded benchmark) traverse the
 // identical binding + compiled core and stay validated in C++ (core/tests/test_fixtures.cpp) + the
 // dotnet oracle gate only.
-static double impact_area_scenario_simulation(
+// Shared construction (Phase 6 Task 12 extracted this out of impact_area_scenario_simulation's
+// body, unchanged, so the scenario binding below can reuse it to fan out N of these -- one per the
+// scenario binding's impact_area_ids entry).
+static hecfda::model::compute::ImpactAreaScenarioSimulation py_build_impact_area_simulation(
     int impact_area_id, const std::string& flow_freq_type, std::vector<double> flow_freq_params,
     std::vector<double> flow_stage_xs, const std::vector<std::string>& flow_stage_types,
     const std::vector<std::vector<double>>& flow_stage_params, std::vector<double> stage_damage_xs,
     const std::vector<std::string>& stage_damage_types, const std::vector<std::vector<double>>& stage_damage_params,
-    const std::string& damage_category, const std::string& asset_category, int threshold_id, double threshold_value,
-    int min_iterations, int max_iterations, bool compute_is_deterministic) {
+    const std::string& damage_category, const std::string& asset_category, int threshold_id, double threshold_value) {
     using hecfda::model::compute::ImpactAreaScenarioSimulation;
     using hecfda::model::metrics::Threshold;
     using hecfda::model::metrics::ThresholdEnum;
@@ -401,7 +405,7 @@ static double impact_area_scenario_simulation(
     auto ff_dist = nd::IDistributionFactory::create(nd::distribution_type_from_name(flow_freq_type), flow_freq_params);
     auto* ff_continuous = dynamic_cast<nd::ContinuousDistribution*>(ff_dist.get());
     if (ff_continuous == nullptr) {
-        throw std::runtime_error("impact_area_scenario_simulation: flow_frequency is not continuous");
+        throw std::runtime_error("py_build_impact_area_simulation: flow_frequency is not continuous");
     }
     ff_dist.release();
     builder.with_flow_frequency(std::unique_ptr<nd::ContinuousDistribution>(ff_continuous));
@@ -423,10 +427,77 @@ static double impact_area_scenario_simulation(
     builder.with_additional_threshold(
         Threshold(threshold_id, threshold_cc, ThresholdEnum::DefaultExteriorStage, threshold_value));
 
-    auto simulation = builder.build();
+    return builder.build();
+}
+
+static double impact_area_scenario_simulation(
+    int impact_area_id, const std::string& flow_freq_type, std::vector<double> flow_freq_params,
+    std::vector<double> flow_stage_xs, const std::vector<std::string>& flow_stage_types,
+    const std::vector<std::vector<double>>& flow_stage_params, std::vector<double> stage_damage_xs,
+    const std::vector<std::string>& stage_damage_types, const std::vector<std::vector<double>>& stage_damage_params,
+    const std::string& damage_category, const std::string& asset_category, int threshold_id, double threshold_value,
+    int min_iterations, int max_iterations, bool compute_is_deterministic) {
+    using hecfda::statistics::ConvergenceCriteria;
+
+    auto simulation = py_build_impact_area_simulation(
+        impact_area_id, flow_freq_type, std::move(flow_freq_params), std::move(flow_stage_xs), flow_stage_types,
+        flow_stage_params, std::move(stage_damage_xs), stage_damage_types, stage_damage_params, damage_category,
+        asset_category, threshold_id, threshold_value);
     ConvergenceCriteria cc(min_iterations, max_iterations);
     auto results = simulation.compute(cc, compute_is_deterministic);
     return results.mean_expected_annual_consequences(impact_area_id, damage_category, asset_category);
+}
+
+// Bespoke dispatch for Alternative::compute_eqad (Phase 6 Task 12 Python binding, the phase's
+// headline scalar math -- the 8-row ComputeEqad oracle table in
+// fixtures/alternatives/alternative.json). Mirrors test_fixtures.cpp's run_alternative
+// "compute_eqad" kind exactly: args are (base_value, base_year, future_value, future_year,
+// period_of_analysis, discount_rate), matching Alternative::compute_eqad's own parameter order.
+// The fixture's other kind ("annualization", AlternativeResults-producing) and the rest of the
+// Alternative/AlternativeComparisonReport surface traverse the identical binding + compiled core
+// and stay validated in C++ (core/tests/test_fixtures.cpp) + the dotnet oracle gate only.
+static double alternative_compute_eqad(double base_value, int base_year, double future_value, int future_year,
+                                        int period_of_analysis, double discount_rate) {
+    return hecfda::model::alternatives::Alternative::compute_eqad(base_value, base_year, future_value, future_year,
+                                                                    period_of_analysis, discount_rate);
+}
+
+// Bespoke dispatch for Scenario (Phase 6 Task 12 Python binding, the impact-area fan-out
+// representative for Phase 6): reproduces test_fixtures.cpp's run_scenario_compute/run_scenario
+// for the "two_impact_area_fan_out" case of fixtures/scenarios/scenario.json -- N
+// ImpactAreaScenarioSimulation objects (one per impact_area_ids entry, each built via
+// py_build_impact_area_simulation with the SAME flow/stage/damage/threshold params, since that
+// fixture's impact_areas entries are byte-identical except impact_area_id), moved into a fresh
+// Scenario and computed once via Scenario::compute. Only mean_eac
+// (ScenarioResults::sample_mean_expected_annual_consequences) is exposed -- consequence_type is
+// never passed, relying on that method's own ConsequenceType::Damage default (matching the
+// fixture's args, which are always "Damage") and RiskType::Fail default (never passed, same as
+// run_scenario's own dispatch). impact_area_id may be the DEFAULT_MISSING_VALUE wildcard (-999),
+// matching the fixture's third assertion.
+static double scenario(std::vector<int> impact_area_ids, const std::string& flow_freq_type,
+                        std::vector<double> flow_freq_params, std::vector<double> flow_stage_xs,
+                        const std::vector<std::string>& flow_stage_types,
+                        const std::vector<std::vector<double>>& flow_stage_params, std::vector<double> stage_damage_xs,
+                        const std::vector<std::string>& stage_damage_types,
+                        const std::vector<std::vector<double>>& stage_damage_params, const std::string& damage_category,
+                        const std::string& asset_category, int threshold_id, double threshold_value,
+                        int min_iterations, int max_iterations, bool compute_is_deterministic,
+                        int query_impact_area_id) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::scenarios::Scenario;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    std::vector<ImpactAreaScenarioSimulation> simulations;
+    for (int impact_area_id : impact_area_ids) {
+        simulations.push_back(py_build_impact_area_simulation(
+            impact_area_id, flow_freq_type, flow_freq_params, flow_stage_xs, flow_stage_types, flow_stage_params,
+            stage_damage_xs, stage_damage_types, stage_damage_params, damage_category, asset_category, threshold_id,
+            threshold_value));
+    }
+    Scenario sc(std::move(simulations));
+    ConvergenceCriteria cc(min_iterations, max_iterations);
+    auto results = sc.compute(cc, compute_is_deterministic);
+    return results.sample_mean_expected_annual_consequences(query_impact_area_id, damage_category, asset_category);
 }
 
 PYBIND11_MODULE(_core, mod) {
@@ -459,4 +530,13 @@ PYBIND11_MODULE(_core, mod) {
              py::arg("stage_damage_types"), py::arg("stage_damage_params"), py::arg("damage_category"),
              py::arg("asset_category"), py::arg("threshold_id"), py::arg("threshold_value"),
              py::arg("min_iterations"), py::arg("max_iterations"), py::arg("compute_is_deterministic"));
+    mod.def("alternative_compute_eqad", &alternative_compute_eqad, py::arg("base_value"), py::arg("base_year"),
+             py::arg("future_value"), py::arg("future_year"), py::arg("period_of_analysis"),
+             py::arg("discount_rate"));
+    mod.def("scenario", &scenario, py::arg("impact_area_ids"), py::arg("flow_freq_type"),
+             py::arg("flow_freq_params"), py::arg("flow_stage_xs"), py::arg("flow_stage_types"),
+             py::arg("flow_stage_params"), py::arg("stage_damage_xs"), py::arg("stage_damage_types"),
+             py::arg("stage_damage_params"), py::arg("damage_category"), py::arg("asset_category"),
+             py::arg("threshold_id"), py::arg("threshold_value"), py::arg("min_iterations"),
+             py::arg("max_iterations"), py::arg("compute_is_deterministic"), py::arg("query_impact_area_id"));
 }

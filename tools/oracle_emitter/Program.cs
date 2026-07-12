@@ -17,8 +17,11 @@ using HEC.FDA.Model.utilities;
 using HEC.FDA.Model.extensions;
 using HEC.FDA.Model.structures;
 using HEC.FDA.Model.metrics;
+using HEC.FDA.Model.alternatives;
+using HEC.FDA.Model.alternativeComparisonReport;
 using HEC.FDA.Model.hydraulics;
 using HEC.FDA.Model.stageDamage;
+using HEC.FDA.Model.scenarios;
 
 namespace oracle_emitter {
   class Program {
@@ -203,6 +206,38 @@ namespace oracle_emitter {
       if (method == "cdf") return hist.CDF(D(argsEl[0]));
       if (method == "inverse_cdf") return hist.InverseCDF(D(argsEl[0]));
       throw new Exception("unknown histogram method: " + method);
+    }
+    // Empirical::stack_empirical_distributions (sum/subtract) + DynamicHistogram::
+    // ConvertToEmpiricalDistribution (Phase 6 Task 1 un-severance) against the real C#. `construct`
+    // is either `{"op": "sum"|"subtract", "distributions": [{"probabilities":[...], "values":[...],
+    // "sample_mean": m}, ...]}` (stacking cases, mirroring run_empirical_stacking in
+    // test_fixtures.cpp: build each Empirical via the two-array ctor, then set SampleMean
+    // explicitly since neither ctor assigns it) or `{"histogram": {"bin_width": w, "data": [...],
+    // "added": [...]}}` (built the same way as EvalHistogram above).
+    static object EvalEmpiricalStacking(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      Empirical result;
+      if (c.TryGetProperty("histogram", out var h)) {
+        var hist = new DynamicHistogram(h.GetProperty("bin_width").GetDouble(), new ConvergenceCriteria());
+        hist.AddObservationsToHistogram(DA(h.GetProperty("data")));
+        if (h.TryGetProperty("added", out var added)) {
+          foreach (var x in added.EnumerateArray()) hist.AddObservationToHistogram(x.GetDouble());
+        }
+        result = DynamicHistogram.ConvertToEmpiricalDistribution(hist);
+      } else {
+        var dists = new List<Empirical>();
+        foreach (var d in c.GetProperty("distributions").EnumerateArray()) {
+          var e = new Empirical(DA(d.GetProperty("probabilities")), DA(d.GetProperty("values")));
+          e.SampleMean = d.GetProperty("sample_mean").GetDouble();
+          dists.Add(e);
+        }
+        string op = c.GetProperty("op").GetString();
+        Func<double, double, double> addOrSubtract = op == "sum" ? Empirical.Sum : Empirical.Subtract;
+        result = Empirical.StackEmpiricalDistributions(dists, addOrSubtract);
+      }
+      if (method == "sample_mean") return result.SampleMean;
+      if (method == "inverse_cdf") return result.InverseCDF(D(argsEl[0]));
+      throw new Exception("unknown empirical_stacking method: " + method);
     }
     static PairedData MakePaired(JsonElement c) => new PairedData(DA(c.GetProperty("xs")), DA(c.GetProperty("ys")));
     // Extended (Task P2T2) beyond f/f_inverse/Integrate: compose/SumYsForGivenX/multiply (each
@@ -1015,6 +1050,68 @@ namespace oracle_emitter {
       throw new Exception("unknown aggregated_consequences_binned method: " + method);
     }
 
+    // AggregatedConsequencesByQuantile (Phase 6 Task 2) is the Empirical-backed quantile-result
+    // leaf, sibling to AggregatedConsequencesBinned above -- built straight from the real
+    // AggregatedConsequencesByQuantile.cs (compiled unpatched, see oracle_emitter.csproj's Task
+    // Phase6T2 comment: it's a clean POCO, no MVVM/XML surface). `construct` is
+    // {damage_category, asset_category, empirical: {probabilities, values}, impact_area_id,
+    // consequence_type, risk_type}, matching the (string, string, Empirical, int, ConsequenceType,
+    // RiskType) ctor; the Empirical is built via the two-array (probabilities, values) ctor, same
+    // as EvalEmpirical above. `method` dispatches ConsequenceSampleMean (args []) or
+    // ConsequenceExceededWithProbabilityQ (args [q]) -- both `internal`, but AggregatedConsequences
+    // ByQuantile.cs is compiled directly into THIS project via a Compile Include (same assembly),
+    // so no reflection is needed (mirrors EvalAggregatedConsequencesBinned).
+    static object EvalAggregatedConsequencesByQuantile(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var emp = c.GetProperty("empirical");
+      var empirical = new Empirical(DA(emp.GetProperty("probabilities")), DA(emp.GetProperty("values")));
+      var consequenceType = Enum.Parse<ConsequenceType>(c.GetProperty("consequence_type").GetString());
+      var riskType = Enum.Parse<RiskType>(c.GetProperty("risk_type").GetString());
+      var acq = new AggregatedConsequencesByQuantile(c.GetProperty("damage_category").GetString(), c.GetProperty("asset_category").GetString(), empirical, c.GetProperty("impact_area_id").GetInt32(), consequenceType, riskType);
+      if (method == "consequence_sample_mean") return acq.ConsequenceSampleMean();
+      if (method == "consequence_exceeded_with_probability_q") return acq.ConsequenceExceededWithProbabilityQ(D(argsEl[0]));
+      throw new Exception("unknown aggregated_consequences_by_quantile method: " + method);
+    }
+
+    // StudyAreaConsequencesByQuantile (Phase 6 Task 3) is the collection wrapper over
+    // AggregatedConsequencesByQuantile results, ByQuantile sibling of StudyAreaConsequencesBinned
+    // above -- built straight from the real StudyAreaConsequencesByQuantile.cs (compiled
+    // unpatched, see oracle_emitter.csproj's Task Phase6T3 comment: Validation/MessageReport are
+    // already reachable transitively, same as OccupancyType.cs). `construct` is
+    // {consequence_results: [{damage_category, asset_category, impact_area_id, consequence_type,
+    // risk_type, empirical: {probabilities, values}, sample_mean}, ...]}; one
+    // AggregatedConsequencesByQuantile is built per entry (list order), with Empirical.SampleMean
+    // force-set to the entry's `sample_mean` field (SampleMean is external bookkeeping, always 0
+    // straight out of the two-array ctor). An optional `add_existing` list of the same per-entry
+    // shape is then applied via AddExistingConsequenceResultObject(...) in order. `method`
+    // dispatches SampleMeanDamage (args [damageCategory, assetCategory, impactAreaID]) or a thin
+    // GetAggregateEmpiricalDistribution(...).SampleMean read (same args).
+    static AggregatedConsequencesByQuantile BuildAggregatedConsequencesByQuantileEntry(JsonElement entry) {
+      var emp = entry.GetProperty("empirical");
+      var empirical = new Empirical(DA(emp.GetProperty("probabilities")), DA(emp.GetProperty("values")));
+      empirical.SampleMean = D(entry.GetProperty("sample_mean"));
+      var consequenceType = Enum.Parse<ConsequenceType>(entry.GetProperty("consequence_type").GetString());
+      var riskType = Enum.Parse<RiskType>(entry.GetProperty("risk_type").GetString());
+      return new AggregatedConsequencesByQuantile(entry.GetProperty("damage_category").GetString(), entry.GetProperty("asset_category").GetString(), empirical, entry.GetProperty("impact_area_id").GetInt32(), consequenceType, riskType);
+    }
+    static string OptionalString(JsonElement e) => e.ValueKind == JsonValueKind.Null ? null : e.GetString();
+    static object EvalStudyAreaConsequencesByQuantile(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var results = c.GetProperty("consequence_results").EnumerateArray().Select(BuildAggregatedConsequencesByQuantileEntry).ToList();
+      var study = new StudyAreaConsequencesByQuantile(results);
+      if (caseEl.TryGetProperty("add_existing", out var addExisting)) {
+        foreach (var entry in addExisting.EnumerateArray()) {
+          study.AddExistingConsequenceResultObject(BuildAggregatedConsequencesByQuantileEntry(entry));
+        }
+      }
+      string damageCategory = OptionalString(argsEl[0]);
+      string assetCategory = OptionalString(argsEl[1]);
+      int impactAreaID = argsEl[2].GetInt32();
+      if (method == "sample_mean_damage") return study.SampleMeanDamage(damageCategory, assetCategory, impactAreaID);
+      if (method == "get_aggregate_empirical_distribution_sample_mean") return study.GetAggregateEmpiricalDistribution(damageCategory, assetCategory, impactAreaID).SampleMean;
+      throw new Exception("unknown study_area_consequences_by_quantile method: " + method);
+    }
+
     // StudyAreaConsequencesBinned (Phase 4 Task 4) is the collection wrapper over
     // per-asset-category AggregatedConsequencesBinned results -- built from
     // patched/StudyAreaConsequencesBinned.cs + patched/ConsequenceExtensions.cs (see those files'
@@ -1064,6 +1161,53 @@ namespace oracle_emitter {
       if (method == "to_uncertain_paired_data_damage_yvals") return damageUpds[assetIndex].SamplePairedData(0, true).Yvals.ToArray();
       if (method == "to_uncertain_paired_data_quantity_yvals") return quantityUpds[assetIndex].SamplePairedData(0, true).Yvals.ToArray();
       throw new Exception("unknown study_area_consequences_binned method: " + method);
+    }
+
+    // Binned->quantile converters (Phase 6 Task 4): AggregatedConsequencesBinned.
+    // ConvertToSingleEmpiricalDistributionOfConsequences + StudyAreaConsequencesBinned.
+    // ConvertToStudyAreaConsequencesByQuantile, restored in patched/AggregatedConsequencesBinned.cs
+    // + patched/StudyAreaConsequencesBinned.cs (see those files' updated headers). `construct` (per
+    // consequence_results entry) is {damage_category, asset_category, convergence: {min_iterations,
+    // max_iterations}, impact_area_id, consequence_type, risk_type}, exactly
+    // EvalAggregatedConsequencesBinned's construct shape; `realizations` (per entry) is staged via
+    // AddConsequenceRealization then a single PutDataIntoHistogram(), one AggregatedConsequencesBinned
+    // per entry, collected into a StudyAreaConsequencesBinned. `filter_consequence_type` feeds
+    // ConvertToStudyAreaConsequencesByQuantile directly. `method` dispatches SampleMeanDamage on the
+    // resulting StudyAreaConsequencesByQuantile; `args` is [damage_category_or_null,
+    // asset_category_or_null, impact_area_id], matching EvalStudyAreaConsequencesByQuantile's
+    // convention, plus an OPTIONAL 4th element: a ConsequenceType name to pass as SampleMeanDamage's
+    // own consequenceType query parameter (default Damage when omitted). This is distinct from
+    // filter_consequence_type -- it lets an assertion query the CONVERTED collection for a type the
+    // case claims was excluded during conversion, so an exclusion claim is actually falsifiable
+    // (a leaked entry would surface as a nonzero sum instead of the expected 0).
+    static AggregatedConsequencesBinned BuildStagedAggregatedConsequencesBinned(JsonElement entry) {
+      var c = entry.GetProperty("construct");
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+      var consequenceType = Enum.Parse<ConsequenceType>(c.GetProperty("consequence_type").GetString());
+      var riskType = Enum.Parse<RiskType>(c.GetProperty("risk_type").GetString());
+      var acb = new AggregatedConsequencesBinned(c.GetProperty("damage_category").GetString(), c.GetProperty("asset_category").GetString(), cc, c.GetProperty("impact_area_id").GetInt32(), consequenceType, riskType);
+      foreach (var r in entry.GetProperty("realizations").EnumerateArray()) {
+        acb.AddConsequenceRealization(D(r.GetProperty("damage")), r.GetProperty("iteration").GetInt64(), r.GetProperty("count").GetInt32());
+      }
+      acb.PutDataIntoHistogram();
+      return acb;
+    }
+    static object EvalBinnedToQuantile(JsonElement caseEl, string method, JsonElement argsEl) {
+      var results = caseEl.GetProperty("consequence_results").EnumerateArray().Select(BuildStagedAggregatedConsequencesBinned).ToList();
+      var study = new StudyAreaConsequencesBinned(results);
+      var filterType = Enum.Parse<ConsequenceType>(caseEl.GetProperty("filter_consequence_type").GetString());
+      var quantileStudy = StudyAreaConsequencesBinned.ConvertToStudyAreaConsequencesByQuantile(study, filterType);
+      string damageCategory = OptionalString(argsEl[0]);
+      string assetCategory = OptionalString(argsEl[1]);
+      int impactAreaID = argsEl[2].GetInt32();
+      // args[3] is an optional ConsequenceType override for the query itself (distinct from
+      // filter_consequence_type, which controls the conversion), defaulting to Damage to match
+      // SampleMeanDamage's own default and keep pre-existing 3-arg assertions unchanged. Lets a
+      // case query the CONVERTED collection for a type it claims was excluded during conversion.
+      var queryConsequenceType = argsEl.GetArrayLength() > 3 ? Enum.Parse<ConsequenceType>(argsEl[3].GetString()) : ConsequenceType.Damage;
+      if (method == "sample_mean_damage") return quantileStudy.SampleMeanDamage(damageCategory, assetCategory, impactAreaID, queryConsequenceType);
+      throw new Exception("unknown binned_to_quantile method: " + method);
     }
 
     // CategoriedPairedData + CategoriedUncertainPairedData (Phase 5 Task 4) is the per-
@@ -1304,7 +1448,11 @@ namespace oracle_emitter {
     // mean_expected_annual_consequences (args [impactAreaID]), and results_are_converged (args
     // [upper, lower] -- ResultsAreConverged(upper, lower, checkConsequenceResults: true), returned
     // as 1.0/0.0).
-    static object EvalImpactAreaScenarioResults(JsonElement caseEl, string method, JsonElement argsEl) {
+    // Shared per-case builder for one ImpactAreaScenarioResults, factored out (Phase 6 Task 5) so
+    // EvalScenarioResults below can build MULTIPLE such objects (one per `impact_areas` entry)
+    // from the exact same construct/consequence_realizations/aep_observations/stage_observations
+    // shape EvalImpactAreaScenarioResults already used for its single object.
+    static (ImpactAreaScenarioResults results, string damageCategory, string assetCategory) BuildImpactAreaScenarioResultsCase(JsonElement caseEl) {
       var c = caseEl.GetProperty("construct");
       int impactAreaID = c.GetProperty("impact_area_id").GetInt32();
       string damageCategory = c.GetProperty("damage_category").GetString();
@@ -1338,6 +1486,12 @@ namespace oracle_emitter {
         threshold.SystemPerformanceResults.AddStageForAssurance(0.98, D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
       }
       threshold.SystemPerformanceResults.PutDataIntoHistograms();
+
+      return (results, damageCategory, assetCategory);
+    }
+
+    static object EvalImpactAreaScenarioResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var (results, damageCategory, assetCategory) = BuildImpactAreaScenarioResultsCase(caseEl);
 
       if (method == "mean_aep") return results.MeanAEP(argsEl[0].GetInt32());
       if (method == "median_aep") return results.MedianAEP(argsEl[0].GetInt32());
@@ -1388,6 +1542,464 @@ namespace oracle_emitter {
         return curveB.GetUncertainPairedData().SamplePairedData(1, true).Yvals;
       }
       throw new Exception("unknown impact_area_scenario_results method: " + method);
+    }
+
+    // ScenarioResults (Phase 6 Task 5): the compute-output container holding a list of
+    // ImpactAreaScenarioResults plus the scenario-level aggregators that sum/enumerate across
+    // every impact area. `impact_areas` is a list of entries in EXACTLY the
+    // impact_area_scenario_results.json construct/consequence_realizations/aep_observations/
+    // stage_observations shape (reused via BuildImpactAreaScenarioResultsCase above) -- one
+    // ImpactAreaScenarioResults per entry, AddResults'd into a fresh ScenarioResults in order.
+    // `method` dispatches: sample_mean_expected_annual_consequences (args [], ConsequenceType.
+    // Damage/RiskType.Total explicit -- matches how every impact area's
+    // AggregatedConsequencesBinned was built; this level's own C# default, RiskType.Fail, would
+    // match none of it); consequences_distribution_sample_mean (args []) --
+    // GetConsequencesDistribution()'s own defaults (wildcard impact area, ConsequenceType.Damage,
+    // RiskType.Total) already match the built data, .SampleMean of the result; mean_aep (args
+    // [impact_area_id, threshold_id]) -- a straight GetResults(impactAreaID).MeanAEP(thresholdID)
+    // pass-through, exercising GetResults' lookup-by-ID across MULTIPLE stored impact areas.
+    static object EvalScenarioResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var scenario = new ScenarioResults();
+      foreach (var iaCase in caseEl.GetProperty("impact_areas").EnumerateArray()) {
+        var (results, _, _) = BuildImpactAreaScenarioResultsCase(iaCase);
+        scenario.AddResults(results);
+      }
+      if (method == "sample_mean_expected_annual_consequences") {
+        return scenario.SampleMeanExpectedAnnualConsequences(IntegerGlobalConstants.DEFAULT_MISSING_VALUE, null, null, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "consequences_distribution_sample_mean") {
+        return scenario.GetConsequencesDistribution().SampleMean;
+      }
+      if (method == "mean_aep") {
+        return scenario.MeanAEP(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+      }
+      throw new Exception("unknown scenario_results method: " + method);
+    }
+
+    // AlternativeResults (Phase 6 Task 6): the compute-output container Alternative.
+    // AnnualizationCompute (Task 9, not yet ported) returns -- the EqAD StudyAreaConsequencesByQuantile
+    // results plus the base-year/future-year ScenarioResults they were computed from, and THE
+    // identical-vs-eqad delegation pattern. Built via the internal "public for testing"
+    // (StudyAreaConsequencesByQuantile, id, analysisYears, periodOfAnalysis, isNull) ctor, then
+    // BaseYearScenarioResults/FutureYearScenarioResults/ScenariosAreIdentical are assigned directly
+    // (all `internal set`, accessible since AlternativeResults.cs compiles into this same
+    // assembly). `base_year_impact_areas`/`future_year_impact_areas` are each a list of entries in
+    // EXACTLY the impact_area_scenario_results.json construct/consequence_realizations/
+    // aep_observations/stage_observations shape (reused via BuildImpactAreaScenarioResultsCase,
+    // same as EvalScenarioResults above) -- one ImpactAreaScenarioResults per entry, AddResults'd
+    // into a fresh ScenarioResults in order. `eqad_results` is a
+    // study_area_consequences_by_quantile.json-shaped {consequence_results: [...]} object, built
+    // via BuildAggregatedConsequencesByQuantileEntry per entry and collected into a
+    // StudyAreaConsequencesByQuantile via its (List<AggregatedConsequencesByQuantile>) ctor.
+    // `scenarios_are_identical` sets ScenariosAreIdentical directly. `method` dispatches (args
+    // always [damage_category_or_null, asset_category_or_null, impact_area_id],
+    // ConsequenceType.Damage/RiskType.Total explicit at every level): sample_mean_eqad/
+    // sample_mean_base_year_ead/sample_mean_future_year_ead, and get_eqad_distribution_sample_mean
+    // (GetEqadDistribution(...).SampleMean). See fixtures/metrics/alternative_results.json's note.
+    static object EvalAlternativeResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var eqadEntries = caseEl.GetProperty("eqad_results").GetProperty("consequence_results")
+          .EnumerateArray().Select(BuildAggregatedConsequencesByQuantileEntry).ToList();
+      var eqadResults = new StudyAreaConsequencesByQuantile(eqadEntries);
+
+      var alt = new AlternativeResults(eqadResults, 1, new List<int> { 2030, 2049 }, 50, false);
+      alt.ScenariosAreIdentical = caseEl.GetProperty("scenarios_are_identical").GetBoolean();
+
+      var baseYear = new ScenarioResults();
+      foreach (var iaCase in caseEl.GetProperty("base_year_impact_areas").EnumerateArray()) {
+        var (results, _, _) = BuildImpactAreaScenarioResultsCase(iaCase);
+        baseYear.AddResults(results);
+      }
+      alt.BaseYearScenarioResults = baseYear;
+
+      var futureYear = new ScenarioResults();
+      foreach (var iaCase in caseEl.GetProperty("future_year_impact_areas").EnumerateArray()) {
+        var (results, _, _) = BuildImpactAreaScenarioResultsCase(iaCase);
+        futureYear.AddResults(results);
+      }
+      alt.FutureYearScenarioResults = futureYear;
+
+      // Optional (Phase 6 Task 6 coverage addition): exercises AlternativeResults.
+      // AddConsequenceResults (AlternativeResults.cs:231-238) against the EqadResults built above --
+      // this method had no fixture coverage before. Its riskType arg to GetConsequenceResult is
+      // omitted, defaulting to RiskType.Total, which FilterByCategories treats as a WILDCARD
+      // matching a candidate of ANY risk type (not an exact-Total match) -- so the dedup key is
+      // really just (damageCategory, assetCategory, RegionID, ConsequenceType).
+      if (caseEl.TryGetProperty("consequence_result_to_add", out var addEl)) {
+        alt.AddConsequenceResults(BuildAggregatedConsequencesByQuantileEntry(addEl));
+      }
+
+      string damageCategory = OptionalString(argsEl[0]);
+      string assetCategory = OptionalString(argsEl[1]);
+      int impactAreaID = argsEl[2].GetInt32();
+
+      if (method == "eqad_consequence_result_list_count") {
+        return (double)alt.EqadResults.ConsequenceResultList.Count;
+      }
+      if (method == "sample_mean_eqad") {
+        return alt.SampleMeanEqad(impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "sample_mean_base_year_ead") {
+        return alt.SampleMeanBaseYearEAD(impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "sample_mean_future_year_ead") {
+        return alt.SampleMeanFutureYearEAD(impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "get_eqad_distribution_sample_mean") {
+        return alt.GetEqadDistribution(impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total).SampleMean;
+      }
+      throw new Exception("unknown alternative_results method: " + method);
+    }
+
+    // AlternativeComparisonReportResults (Phase 6 Task 7): the container
+    // AlternativeComparisonReport.ComputeAlternativeComparisonReport (Task 10, not yet ported)
+    // returns -- the with/without-project AlternativeResults plus three lists of REDUCED (benefit)
+    // StudyAreaConsequencesByQuantile results (EqAD-reduced, base-year-EAD-reduced,
+    // future-year-EAD-reduced). `with_project`/`without_project` are each
+    // {alternative_id, eqad_results, base_year_impact_areas, future_year_impact_areas} objects,
+    // built the same way EvalAlternativeResults above builds its `alt` (the (StudyAreaConsequences
+    // ByQuantile, id, analysisYears, periodOfAnalysis, isNull) ctor for the AlternativeResults-level
+    // EqadResults field, then BaseYearScenarioResults/FutureYearScenarioResults assigned via
+    // BuildImpactAreaScenarioResultsCase + AddResults). Each of the three `*_reduced_results_list`
+    // fields is a list of {alternative_id, consequence_results} objects: a
+    // StudyAreaConsequencesByQuantile built via the (int alternativeID) ctor (the only ctor that
+    // sets a real, non-zero AlternativeID) then AddExistingConsequenceResultObject-ed with its
+    // consequence_results entries. `method` dispatch: alternative_id-taking methods read
+    // args=[alternative_id, damage_category_or_null, asset_category_or_null, impact_area_id]; the
+    // without-project delegators read args=[damage_category_or_null, asset_category_or_null,
+    // impact_area_id]. See fixtures/metrics/alternative_comparison_report_results.json's note.
+    static AlternativeResults BuildAlternativeComparisonAlternativeResults(JsonElement alt) {
+      var eqadEntries = alt.GetProperty("eqad_results").GetProperty("consequence_results")
+          .EnumerateArray().Select(BuildAggregatedConsequencesByQuantileEntry).ToList();
+      var eqadResults = new StudyAreaConsequencesByQuantile(eqadEntries);
+
+      var results = new AlternativeResults(eqadResults, alt.GetProperty("alternative_id").GetInt32(), new List<int> { 2030, 2049 }, 50, false);
+
+      var baseYear = new ScenarioResults();
+      foreach (var iaCase in alt.GetProperty("base_year_impact_areas").EnumerateArray()) {
+        var (iaResults, _, _) = BuildImpactAreaScenarioResultsCase(iaCase);
+        baseYear.AddResults(iaResults);
+      }
+      results.BaseYearScenarioResults = baseYear;
+
+      var futureYear = new ScenarioResults();
+      foreach (var iaCase in alt.GetProperty("future_year_impact_areas").EnumerateArray()) {
+        var (iaResults, _, _) = BuildImpactAreaScenarioResultsCase(iaCase);
+        futureYear.AddResults(iaResults);
+      }
+      results.FutureYearScenarioResults = futureYear;
+
+      return results;
+    }
+    static StudyAreaConsequencesByQuantile BuildAlternativeComparisonReducedResultsEntry(JsonElement entry) {
+      var study = new StudyAreaConsequencesByQuantile(entry.GetProperty("alternative_id").GetInt32());
+      foreach (var cr in entry.GetProperty("consequence_results").EnumerateArray()) {
+        study.AddExistingConsequenceResultObject(BuildAggregatedConsequencesByQuantileEntry(cr));
+      }
+      return study;
+    }
+    static List<StudyAreaConsequencesByQuantile> BuildAlternativeComparisonReducedResultsList(JsonElement listEl) {
+      return listEl.EnumerateArray().Select(BuildAlternativeComparisonReducedResultsEntry).ToList();
+    }
+    static object EvalAlternativeComparisonReportResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var withProject = caseEl.GetProperty("with_project").EnumerateArray().Select(BuildAlternativeComparisonAlternativeResults).ToList();
+      var withoutProject = BuildAlternativeComparisonAlternativeResults(caseEl.GetProperty("without_project"));
+
+      var report = new AlternativeComparisonReportResults(
+          withProject, withoutProject,
+          BuildAlternativeComparisonReducedResultsList(caseEl.GetProperty("eqad_reduced_results_list")),
+          BuildAlternativeComparisonReducedResultsList(caseEl.GetProperty("base_year_ead_reduced_results_list")),
+          BuildAlternativeComparisonReducedResultsList(caseEl.GetProperty("future_year_ead_reduced_results_list")));
+
+      if (method == "sample_mean_without_project_base_year_ead" || method == "sample_mean_without_project_future_year_ead") {
+        string dc0 = OptionalString(argsEl[0]);
+        string ac0 = OptionalString(argsEl[1]);
+        int ia0 = argsEl[2].GetInt32();
+        if (method == "sample_mean_without_project_base_year_ead") {
+          return report.SampleMeanWithoutProjectBaseYearEAD(ia0, dc0, ac0, ConsequenceType.Damage);
+        }
+        return report.SampleMeanWithoutProjectFutureYearEAD(ia0, dc0, ac0, ConsequenceType.Damage);
+      }
+
+      // Phase 6 Task 7 review fix coverage: GetRiskTypes(consequenceType) filters
+      // _EqadReducedResultsList's ConsequenceResultList by ConsequenceType (like its three
+      // siblings GetImpactAreaIDs/GetAssetCategories/GetDamageCategories), so the count returned
+      // here for ConsequenceType.Damage must be strictly smaller than the unfiltered count when
+      // the fixture data mixes Damage and LifeLoss entries -- that difference is what the C++
+      // fixture pins to catch a missing filter.
+      if (method == "get_risk_types_count") {
+        return (double)report.GetRiskTypes(ConsequenceType.Damage).Count;
+      }
+
+      int alternativeID = argsEl[0].GetInt32();
+      string damageCategory = OptionalString(argsEl[1]);
+      string assetCategory = OptionalString(argsEl[2]);
+      int impactAreaID = argsEl[3].GetInt32();
+
+      if (method == "sample_mean_eqad_reduced") {
+        return report.SampleMeanEqadReduced(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "sample_mean_base_year_ead_reduced") {
+        return report.SampleMeanBaseYearEADReduced(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "sample_mean_future_year_ead_reduced") {
+        return report.SampleMeanFutureYearEADReduced(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "sample_mean_with_project_base_year_ead") {
+        return report.SampleMeanWithProjectBaseYearEAD(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage);
+      }
+      if (method == "sample_mean_with_project_future_year_ead") {
+        return report.SampleMeanWithProjectFutureYearEAD(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage);
+      }
+      if (method == "get_eqad_reduced_results_histogram_sample_mean") {
+        return report.GetEqadReducedResultsHistogram(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage).SampleMean;
+      }
+      if (method == "get_base_year_ead_reduced_results_histogram_sample_mean") {
+        return report.GetBaseYearEADReducedResultsHistogram(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total).SampleMean;
+      }
+      if (method == "get_future_year_ead_reduced_results_histogram_sample_mean") {
+        return report.GetFutureYearEADReducedResultsHistogram(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total).SampleMean;
+      }
+      throw new Exception("unknown alternative_comparison_report_results method: " + method);
+    }
+
+    // Alternative (Phase 6 Task 9): the headline EqAD annualization math -- Alternative.
+    // ComputeEqad (interpolate/present-value/PVIFA, no ScenarioResults involved) and Alternative.
+    // AnnualizationCompute (single- and two-scenario paths), via patched/Alternative.cs (drops the
+    // ProgressReporter parameter/calls -- see that file's header). Two case `kind`s: `compute_eqad`
+    // dispatches straight to Alternative.ComputeEqad with args [baseYearEAD, baseYear,
+    // mostLikelyFutureEAD, mostLikelyFutureYear, periodOfAnalysis, discountRate]. `annualization`
+    // builds `base_impact_area`/`future_impact_area` (either may be JSON null) via
+    // BuildAlternativeBinnedEntry below -- an AggregatedConsequencesBinned constructed directly
+    // from an already-built DynamicHistogram (the (string,string,IHistogram,int,ConsequenceType,
+    // RiskType) ctor), `values_start`/`values_count` reproducing
+    // `Enumerable.Range(start,count).Select(i => (double)i)` -- mirrors AlternativeTest.cs's own
+    // construction (e.g. LifeLossResultsExcludedFromEqad) exactly, RiskType.Fail throughout. See
+    // fixtures/alternatives/alternative.json's note for the full method dispatch rationale.
+    static AggregatedConsequencesBinned BuildAlternativeBinnedEntry(JsonElement entry, int impactAreaID, ConvergenceCriteria cc) {
+      int start = entry.GetProperty("values_start").GetInt32();
+      int count = entry.GetProperty("values_count").GetInt32();
+      var values = Enumerable.Range(start, count).Select(i => (double)i).ToList();
+      var histogram = new DynamicHistogram(values, cc);
+      return new AggregatedConsequencesBinned(
+          entry.GetProperty("damage_category").GetString(), entry.GetProperty("asset_category").GetString(),
+          histogram, impactAreaID,
+          Enum.Parse<ConsequenceType>(entry.GetProperty("consequence_type").GetString()),
+          Enum.Parse<RiskType>(entry.GetProperty("risk_type").GetString()));
+    }
+    static ScenarioResults BuildAlternativeScenarioResults(JsonElement impactAreaEl, int impactAreaID, ConvergenceCriteria cc) {
+      var scenario = new ScenarioResults();
+      var ia = new ImpactAreaScenarioResults(impactAreaID);
+      foreach (var entry in impactAreaEl.GetProperty("consequence_results").EnumerateArray()) {
+        ia.ConsequenceResults.AddExistingConsequenceResultObject(BuildAlternativeBinnedEntry(entry, impactAreaID, cc));
+      }
+      scenario.AddResults(ia);
+      return scenario;
+    }
+    static bool AlternativeScenarioHasLifeLoss(ScenarioResults results) {
+      return results.ResultsList.SelectMany(r => r.ConsequenceResults.ConsequenceResultList)
+          .Any(c => c.ConsequenceType == ConsequenceType.LifeLoss);
+    }
+    static object EvalAlternative(JsonElement caseEl, string method, JsonElement argsEl) {
+      string kind = caseEl.GetProperty("kind").GetString();
+      if (kind == "compute_eqad") {
+        return Alternative.ComputeEqad(D(argsEl[0]), argsEl[1].GetInt32(), D(argsEl[2]), argsEl[3].GetInt32(),
+                                        argsEl[4].GetInt32(), D(argsEl[5]));
+      }
+
+      // kind == "annualization"
+      int impactAreaID = caseEl.GetProperty("impact_area_id").GetInt32();
+      var conv = caseEl.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+
+      var baseEl = caseEl.GetProperty("base_impact_area");
+      ScenarioResults baseResults = baseEl.ValueKind == JsonValueKind.Null ? null : BuildAlternativeScenarioResults(baseEl, impactAreaID, cc);
+      var futureEl = caseEl.GetProperty("future_impact_area");
+      ScenarioResults futureResults = futureEl.ValueKind == JsonValueKind.Null ? null : BuildAlternativeScenarioResults(futureEl, impactAreaID, cc);
+
+      AlternativeResults alt = Alternative.AnnualizationCompute(
+          D(caseEl.GetProperty("discount_rate")), caseEl.GetProperty("period_of_analysis").GetInt32(),
+          caseEl.GetProperty("alternative_id").GetInt32(), baseResults, futureResults,
+          caseEl.GetProperty("base_year").GetInt32(), caseEl.GetProperty("future_year").GetInt32());
+
+      if (method == "sample_mean_eqad") {
+        return alt.SampleMeanEqad(impactAreaID, argsEl[0].GetString(), argsEl[1].GetString(), ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "eqad_count_by_type") {
+        var want = Enum.Parse<ConsequenceType>(argsEl[0].GetString());
+        return (double)alt.EqadResults.ConsequenceResultList.Count(r => r.ConsequenceType == want);
+      }
+      if (method == "base_has_lifeloss") {
+        return AlternativeScenarioHasLifeLoss(alt.BaseYearScenarioResults) ? 1.0 : 0.0;
+      }
+      if (method == "future_has_lifeloss") {
+        return AlternativeScenarioHasLifeLoss(alt.FutureYearScenarioResults) ? 1.0 : 0.0;
+      }
+      throw new Exception("unknown alternative method: " + method);
+    }
+
+    // AlternativeComparisonReport (Phase 6 Task 10): the FINAL numeric compute of the port --
+    // with/without-project damage-reduction (benefits) via empirical-distribution subtraction, via
+    // patched/AlternativeComparisonReport.cs (drops the ProgressReporter parameter/calls and the
+    // OperationResult validation early-exit -- see that file's header). `without_project`/
+    // `with_project` are each {alternative_id, base_damage, future_damage, base_lifeloss,
+    // future_lifeloss} objects, built via BuildAlternativeComparisonReportAlternativeResults below
+    // to mirror AlternativeComparisonReportConsolidationTests.CreateAlternativeResults exactly: a
+    // base-year and future-year ScenarioResults, each one impact area holding a Damage and a
+    // LifeLoss AggregatedConsequencesBinned built from a DynamicHistogram over 100 COPIES of a
+    // constant value (Enumerable.Repeat(value, 100)), RiskType.Fail throughout (the real
+    // AggregatedConsequencesBinned/StudyAreaConsequencesBinned.GetConsequenceResult default,
+    // matching alternative.json's own established convention). `method` dispatches (args=
+    // [alternative_id, impact_area_id, damage_category, asset_category, consequence_type_name]):
+    // sample_mean_base_year_ead_reduced/sample_mean_future_year_ead_reduced --
+    // AlternativeComparisonReportResults's own same-named methods (RiskType.Total default). See
+    // fixtures/alternatives/alternative_comparison_report.json's note for full construction detail.
+    static AggregatedConsequencesBinned BuildAlternativeComparisonReportBinnedEntry(
+        string damageCategory, string assetCategory, ConsequenceType consequenceType, double value,
+        int impactAreaID, ConvergenceCriteria cc) {
+      var values = Enumerable.Repeat(value, 100).ToList();
+      var histogram = new DynamicHistogram(values, cc);
+      return new AggregatedConsequencesBinned(damageCategory, assetCategory, histogram, impactAreaID, consequenceType, RiskType.Fail);
+    }
+    static ScenarioResults BuildAlternativeComparisonReportScenarioResults(
+        string damageCategory, string assetCategory, double damageValue, double lifeLossValue, int impactAreaID,
+        ConvergenceCriteria cc) {
+      var scenario = new ScenarioResults();
+      var ia = new ImpactAreaScenarioResults(impactAreaID);
+      ia.ConsequenceResults.AddExistingConsequenceResultObject(
+          BuildAlternativeComparisonReportBinnedEntry(damageCategory, assetCategory, ConsequenceType.Damage, damageValue, impactAreaID, cc));
+      ia.ConsequenceResults.AddExistingConsequenceResultObject(
+          BuildAlternativeComparisonReportBinnedEntry(damageCategory, assetCategory, ConsequenceType.LifeLoss, lifeLossValue, impactAreaID, cc));
+      scenario.AddResults(ia);
+      return scenario;
+    }
+    static AlternativeResults BuildAlternativeComparisonReportAlternativeResults(
+        JsonElement alt, string damageCategory, string assetCategory, int impactAreaID,
+        List<int> analysisYears, int periodOfAnalysis, ConvergenceCriteria cc) {
+      var results = new AlternativeResults(alt.GetProperty("alternative_id").GetInt32(), analysisYears, periodOfAnalysis);
+      results.BaseYearScenarioResults = BuildAlternativeComparisonReportScenarioResults(
+          damageCategory, assetCategory, D(alt.GetProperty("base_damage")), D(alt.GetProperty("base_lifeloss")), impactAreaID, cc);
+      results.FutureYearScenarioResults = BuildAlternativeComparisonReportScenarioResults(
+          damageCategory, assetCategory, D(alt.GetProperty("future_damage")), D(alt.GetProperty("future_lifeloss")), impactAreaID, cc);
+      return results;
+    }
+    static object EvalAlternativeComparisonReport(JsonElement caseEl, string method, JsonElement argsEl) {
+      int impactAreaID = caseEl.GetProperty("impact_area_id").GetInt32();
+      string damageCategory = caseEl.GetProperty("damage_category").GetString();
+      string assetCategory = caseEl.GetProperty("asset_category").GetString();
+      var analysisYears = new List<int> { caseEl.GetProperty("base_year").GetInt32(), caseEl.GetProperty("future_year").GetInt32() };
+      int periodOfAnalysis = caseEl.GetProperty("period_of_analysis").GetInt32();
+      var conv = caseEl.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+
+      AlternativeResults withoutProject = BuildAlternativeComparisonReportAlternativeResults(
+          caseEl.GetProperty("without_project"), damageCategory, assetCategory, impactAreaID, analysisYears, periodOfAnalysis, cc);
+      AlternativeResults withProject = BuildAlternativeComparisonReportAlternativeResults(
+          caseEl.GetProperty("with_project"), damageCategory, assetCategory, impactAreaID, analysisYears, periodOfAnalysis, cc);
+
+      AlternativeComparisonReportResults report = AlternativeComparisonReport.ComputeAlternativeComparisonReport(
+          withoutProject, new List<AlternativeResults> { withProject });
+
+      int alternativeID = argsEl[0].GetInt32();
+      int queryImpactAreaID = argsEl[1].GetInt32();
+      string queryDamageCategory = argsEl[2].GetString();
+      string queryAssetCategory = argsEl[3].GetString();
+      var consequenceType = Enum.Parse<ConsequenceType>(argsEl[4].GetString());
+
+      if (method == "sample_mean_base_year_ead_reduced") {
+        return report.SampleMeanBaseYearEADReduced(alternativeID, queryImpactAreaID, queryDamageCategory, queryAssetCategory, consequenceType, RiskType.Total);
+      }
+      if (method == "sample_mean_future_year_ead_reduced") {
+        return report.SampleMeanFutureYearEADReduced(alternativeID, queryImpactAreaID, queryDamageCategory, queryAssetCategory, consequenceType, RiskType.Total);
+      }
+      throw new Exception("unknown alternative_comparison_report method: " + method);
+    }
+
+    // End-to-end capstone (Phase 6 Task 11): the FULL simulated pipeline -- Scenario.Compute ->
+    // Alternative.AnnualizationCompute -> AlternativeComparisonReport.ComputeAlternativeComparisonReport
+    // -- built from impact-area SIMULATIONS (via BuildSimulation, same construct shape every
+    // simulation-target fixture uses), unlike alternative.json/alternative_comparison_report.json's
+    // direct ScenarioResults/AlternativeResults construction. Three case `kind`s, args always []
+    // (every parameter comes off the case object itself, not `args`), see
+    // fixtures/alternatives/end_to_end.json's `note` for full construction detail per kind.
+    static object EvalEndToEnd(JsonElement caseEl, string method, JsonElement argsEl) {
+      var conv = caseEl.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+      bool computeIsDeterministic = caseEl.GetProperty("compute_is_deterministic").GetBoolean();
+      string kind = caseEl.GetProperty("kind").GetString();
+
+      ScenarioResults ComputeOneImpactArea(JsonElement simConstruct) {
+        var sim = BuildSimulation(simConstruct);
+        var scenario = new Scenario(new List<ImpactAreaScenarioSimulation> { sim });
+        return scenario.Compute(cc, computeIsDeterministic);
+      }
+
+      if (kind == "annualization") {
+        ScenarioResults baseResults = ComputeOneImpactArea(caseEl.GetProperty("base_construct"));
+        ScenarioResults futureResults = ComputeOneImpactArea(caseEl.GetProperty("future_construct"));
+        AlternativeResults alt = Alternative.AnnualizationCompute(
+            D(caseEl.GetProperty("discount_rate")), caseEl.GetProperty("period_of_analysis").GetInt32(),
+            caseEl.GetProperty("alternative_id").GetInt32(), baseResults, futureResults,
+            caseEl.GetProperty("base_year").GetInt32(), caseEl.GetProperty("future_year").GetInt32());
+
+        int impactAreaID = caseEl.GetProperty("impact_area_id").GetInt32();
+        string damCat = caseEl.GetProperty("damage_category").GetString();
+        string assetCat = caseEl.GetProperty("asset_category").GetString();
+        double q = D(caseEl.GetProperty("exceedance_probability"));
+
+        if (method == "sample_mean_eqad") return alt.SampleMeanEqad(impactAreaID, damCat, assetCat);
+        if (method == "eqad_exceeded_with_probability_q") return alt.EqadExceededWithProbabilityQ(q, impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_base_year_ead") return alt.SampleMeanBaseYearEAD(impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_future_year_ead") return alt.SampleMeanFutureYearEAD(impactAreaID, damCat, assetCat);
+        if (method == "base_year_ead_exceeded_with_probability_q") return alt.BaseYearEADDamageExceededWithProbabilityQ(q, impactAreaID, damCat, assetCat);
+        if (method == "future_year_ead_exceeded_with_probability_q") return alt.FutureYearEADDamageExceededWithProbabilityQ(q, impactAreaID, damCat, assetCat);
+        throw new Exception("unknown end_to_end annualization method: " + method);
+      }
+
+      if (kind == "comparison_report") {
+        ScenarioResults withoutBase = ComputeOneImpactArea(caseEl.GetProperty("without_base_construct"));
+        ScenarioResults withoutFuture = ComputeOneImpactArea(caseEl.GetProperty("without_future_construct"));
+        ScenarioResults withBase = ComputeOneImpactArea(caseEl.GetProperty("with_base_construct"));
+        ScenarioResults withFuture = ComputeOneImpactArea(caseEl.GetProperty("with_future_construct"));
+
+        double discountRate = D(caseEl.GetProperty("discount_rate"));
+        int poa = caseEl.GetProperty("period_of_analysis").GetInt32();
+        int baseYear = caseEl.GetProperty("base_year").GetInt32();
+        int futureYear = caseEl.GetProperty("future_year").GetInt32();
+        int withoutAltId = caseEl.GetProperty("without_alternative_id").GetInt32();
+        int withAltId = caseEl.GetProperty("with_alternative_id").GetInt32();
+
+        AlternativeResults without = Alternative.AnnualizationCompute(discountRate, poa, withoutAltId, withoutBase, withoutFuture, baseYear, futureYear);
+        AlternativeResults with = Alternative.AnnualizationCompute(discountRate, poa, withAltId, withBase, withFuture, baseYear, futureYear);
+
+        AlternativeComparisonReportResults report = AlternativeComparisonReport.ComputeAlternativeComparisonReport(
+            without, new List<AlternativeResults> { with });
+
+        int impactAreaID = caseEl.GetProperty("impact_area_id").GetInt32();
+        string damCat = caseEl.GetProperty("damage_category").GetString();
+        string assetCat = caseEl.GetProperty("asset_category").GetString();
+        double q = D(caseEl.GetProperty("exceedance_probability"));
+
+        if (method == "eqad_reduced_exceeded_with_probability_q") return report.EqadReducedExceededWithProbabilityQ(q, withAltId, impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_base_year_ead_reduced") return report.SampleMeanBaseYearEADReduced(withAltId, impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_future_year_ead_reduced") return report.SampleMeanFutureYearEADReduced(withAltId, impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_without_project_base_year_ead") return report.SampleMeanWithoutProjectBaseYearEAD(impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_base_year_ead_without_alt") return without.SampleMeanBaseYearEAD(impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_with_project_eqad") return report.SampleMeanWithProjectEqad(withAltId, impactAreaID, damCat, assetCat);
+        if (method == "sample_mean_eqad_with_alt") return with.SampleMeanEqad(impactAreaID, damCat, assetCat);
+        throw new Exception("unknown end_to_end comparison_report method: " + method);
+      }
+
+      if (kind == "muncie") {
+        ScenarioResults results = ComputeOneImpactArea(caseEl.GetProperty("construct"));
+        int impactAreaID = caseEl.GetProperty("impact_area_id").GetInt32();
+        if (method == "mean_eac") {
+          string damCat = argsEl[0].GetString();
+          return results.SampleMeanExpectedAnnualConsequences(impactAreaID, damCat);
+        }
+        throw new Exception("unknown end_to_end muncie method: " + method);
+      }
+
+      throw new Exception("unknown end_to_end kind: " + kind);
     }
 
     // ImpactAreaScenarioSimulation (Phase 5 Task 7): the skeleton + fluent SimulationBuilder +
@@ -1589,6 +2201,37 @@ namespace oracle_emitter {
       throw new Exception("unknown simulation method: " + method);
     }
 
+    // Scenario (Phase 6 Task 8): the impact-area fan-out built from patched/Scenario.cs (MVVM
+    // messaging + CancellationToken dropped, the Compute() loop + ComputeDate/SoftwareVersion
+    // stamp kept verbatim -- see that file's header). `construct.impact_areas` is a list of
+    // entries in the exact BuildSimulation() shape (reused directly via the shared helper above),
+    // one ImpactAreaScenarioSimulation per entry, moved into a single Scenario. `method` is always
+    // mean_eac, args [min_iterations, max_iterations, compute_is_deterministic (0/1),
+    // impact_area_id (or -999 for the DEFAULT_MISSING_VALUE wildcard), damage_category,
+    // asset_category, consequence_type_name]: Compute(cc, computeIsDeterministic).
+    // SampleMeanExpectedAnnualConsequences(impactAreaID, damageCategory, assetCategory,
+    // consequenceType) -- RiskType is never passed, relying on that method's own RiskType.Fail
+    // default (matches every consequence realization this construct's ComputeEAD path adds via
+    // RiskType.Fail).
+    static object EvalScenario(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var simulations = c.GetProperty("impact_areas").EnumerateArray().Select(BuildSimulation).ToList();
+      IList<ImpactAreaScenarioSimulation> impactAreaSimulations = simulations;
+      var scenario = new Scenario(impactAreaSimulations);
+
+      if (method == "mean_eac") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        bool computeIsDeterministic = argsEl[2].GetDouble() != 0.0;
+        int impactAreaID = argsEl[3].GetInt32();
+        string damageCategory = argsEl[4].GetString();
+        string assetCategory = argsEl[5].GetString();
+        var consequenceType = Enum.Parse<ConsequenceType>(argsEl[6].GetString());
+        ScenarioResults results = scenario.Compute(cc, computeIsDeterministic);
+        return results.SampleMeanExpectedAnnualConsequences(impactAreaID, damageCategory, assetCategory, consequenceType);
+      }
+      throw new Exception("unknown scenario method: " + method);
+    }
+
     // ContinuousDistributionExtensions.BootstrapToPairedData(this ContinuousDistribution, long
     // iterationNumber, double[] ExceedanceProbabilities, bool computeIsDeterministic) (Phase 5
     // Task 5) -- the analytical-frequency realization Task 8's EAD compute uses to turn a fitted
@@ -1647,6 +2290,7 @@ namespace oracle_emitter {
               case "shifted_gamma": val = EvalShiftedGamma(c, method, argsEl); break;
               case "pearson3": val = EvalPearson3(c, method, argsEl); break;
               case "empirical": val = EvalEmpirical(c, method, argsEl); break;
+              case "empirical_stacking": val = EvalEmpiricalStacking(c, method, argsEl); break;
               case "convergence_criteria": val = EvalConvergenceCriteria(c, method, argsEl); break;
               case "histogram": val = EvalHistogram(c, method, argsEl); break;
               case "paired_data": val = EvalPaired(c, method, argsEl); break;
@@ -1665,13 +2309,23 @@ namespace oracle_emitter {
               case "inventory_compute_damages": val = EvalInventoryComputeDamages(c, method); break;
               case "consequence_result": val = EvalConsequenceResult(c, method); break;
               case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
+              case "aggregated_consequences_by_quantile": val = EvalAggregatedConsequencesByQuantile(c, method, argsEl); break;
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
+              case "study_area_consequences_by_quantile": val = EvalStudyAreaConsequencesByQuantile(c, method, argsEl); break;
+              case "binned_to_quantile": val = EvalBinnedToQuantile(c, method, argsEl); break;
               case "categoried_uncertain_paired_data": val = EvalCategoriedUncertainPairedData(c, method, argsEl); break;
               case "assurance_result_storage": val = EvalAssuranceResultStorage(c, method, argsEl); break;
               case "system_performance_results": val = EvalSystemPerformanceResults(c, method, argsEl); break;
               case "performance_by_thresholds": val = EvalPerformanceByThresholds(c, method, argsEl); break;
               case "impact_area_scenario_results": val = EvalImpactAreaScenarioResults(c, method, argsEl); break;
+              case "scenario_results": val = EvalScenarioResults(c, method, argsEl); break;
+              case "alternative_results": val = EvalAlternativeResults(c, method, argsEl); break;
+              case "alternative_comparison_report_results": val = EvalAlternativeComparisonReportResults(c, method, argsEl); break;
+              case "alternative": val = EvalAlternative(c, method, argsEl); break;
+              case "alternative_comparison_report": val = EvalAlternativeComparisonReport(c, method, argsEl); break;
               case "simulation": val = EvalSimulation(c, method, argsEl); break;
+              case "scenario": val = EvalScenario(c, method, argsEl); break;
+              case "end_to_end": val = EvalEndToEnd(c, method, argsEl); break;
               case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;

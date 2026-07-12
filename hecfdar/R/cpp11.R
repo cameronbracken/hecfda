@@ -39,3 +39,11 @@ hecfda_system_performance_results <- function(min_iterations, max_iterations, st
 hecfda_impact_area_scenario_simulation <- function(impact_area_id, flow_freq_type, flow_freq_params, flow_stage_xs, flow_stage_types, flow_stage_params, stage_damage_xs, stage_damage_types, stage_damage_params, damage_category, asset_category, threshold_id, threshold_value, min_iterations, max_iterations, compute_is_deterministic) {
   .Call(`_hecfdar_hecfda_impact_area_scenario_simulation`, impact_area_id, flow_freq_type, flow_freq_params, flow_stage_xs, flow_stage_types, flow_stage_params, stage_damage_xs, stage_damage_types, stage_damage_params, damage_category, asset_category, threshold_id, threshold_value, min_iterations, max_iterations, compute_is_deterministic)
 }
+
+hecfda_alternative_compute_eqad <- function(base_value, base_year, future_value, future_year, period_of_analysis, discount_rate) {
+  .Call(`_hecfdar_hecfda_alternative_compute_eqad`, base_value, base_year, future_value, future_year, period_of_analysis, discount_rate)
+}
+
+hecfda_scenario <- function(impact_area_ids, flow_freq_type, flow_freq_params, flow_stage_xs, flow_stage_types, flow_stage_params, stage_damage_xs, stage_damage_types, stage_damage_params, damage_category, asset_category, threshold_id, threshold_value, min_iterations, max_iterations, compute_is_deterministic, query_impact_area_id) {
+  .Call(`_hecfdar_hecfda_scenario`, impact_area_ids, flow_freq_type, flow_freq_params, flow_stage_xs, flow_stage_types, flow_stage_params, stage_damage_xs, stage_damage_types, stage_damage_params, damage_category, asset_category, threshold_id, threshold_value, min_iterations, max_iterations, compute_is_deterministic, query_impact_area_id)
+}

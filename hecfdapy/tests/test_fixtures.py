@@ -209,3 +209,43 @@ def test_impact_area_scenario_simulation():
                 a["args"][0], a["args"][1], a["args"][2] != 0,
             )
             _close(got, a["expected"], a["tol"], a["mode"])
+
+# Phase 6 Task 12: representative subset (alternative's compute_eqad scalar dispatch, scenario's
+# impact-area fan-out). The remaining Phase-6 targets (annualization_compute/AlternativeResults,
+# AlternativeComparisonReport with/without benefits, the 5 ByQuantile/results metrics types, the
+# un-severed Empirical/quantile chain) traverse the identical binding + compiled core and are
+# validated in C++ (core/tests/test_fixtures.cpp) + the dotnet oracle gate only -- see
+# .claude/CLAUDE.md's "R/Python distribution coverage scope" convention.
+def test_alternative_compute_eqad():
+    fx = _read("alternatives/alternative.json")
+    # Only the "compute_eqad" kind (the 8-row scalar EqAD oracle table, the phase's headline math)
+    # is bound here; "annualization" (AlternativeResults-producing) traverses the identical binding
+    # + compiled core (see note above).
+    cases = [c for c in fx["cases"] if c["kind"] == "compute_eqad"]
+    for c in cases:
+        for a in c["assertions"]:
+            args = a["args"]
+            got = bf.alternative_compute_eqad(args[0], args[1], args[2], args[3], args[4], args[5])
+            _close(got, a["expected"], a["tol"], a["mode"])
+
+def test_scenario():
+    fx = _read("scenarios/scenario.json")
+    for c in fx["cases"]:
+        ias = c["construct"]["impact_areas"]
+        ia1 = ias[0]
+        sd = ia1["stage_damage"][0]
+        for a in c["assertions"]:
+            got = bf.scenario(
+                [ia["impact_area_id"] for ia in ias],
+                ia1["flow_frequency"]["type"], ia1["flow_frequency"]["params"],
+                ia1["flow_stage"]["xs"],
+                [y["type"] for y in ia1["flow_stage"]["ys"]],
+                [y["params"] for y in ia1["flow_stage"]["ys"]],
+                sd["xs"],
+                [y["type"] for y in sd["ys"]],
+                [y["params"] for y in sd["ys"]],
+                sd["damage_category"], sd["asset_category"],
+                ia1["additional_threshold"]["threshold_id"], ia1["additional_threshold"]["value"],
+                a["args"][0], a["args"][1], a["args"][2] != 0, a["args"][3],
+            )
+            _close(got, a["expected"], a["tol"], a["mode"])

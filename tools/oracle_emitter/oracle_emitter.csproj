@@ -97,24 +97,59 @@
     <!-- Task Phase4T3: AggregatedConsequencesBinned's real source pulls in System.Xml.Linq
          (WriteToXML/ReadFromXML) and AggregatedConsequencesByQuantile/Empirical
          (ConvertToSingleEmpiricalDistributionOfConsequences), neither reachable/needed by this
-         subset-compiled project. patched/AggregatedConsequencesBinned.cs drops exactly those three
-         members (and the now-unused System.Xml.Linq using); the ctors, PutDataIntoHistogram,
-         AddConsequenceRealization, the three accessor methods, and Equals are kept VERBATIM. Same
-         auto-pickup as patched/Structure.cs/Inventory.cs above, no explicit Compile Include. -->
-    <!-- Task Phase4T4: patched/ConsequenceExtensions.cs keeps ONLY the AggregatedConsequencesBinned
-         FilterByCategories overload; the sibling AggregatedConsequencesByQuantile overload is a
-         genuine compile blocker (that type isn't compiled into this project). patched/
-         StudyAreaConsequencesBinned.cs drops WriteToXML/ReadFromXML (calls AggregatedConsequencesBinned
-         methods the Task 3 patch already dropped) and ConvertToStudyAreaConsequencesByQuantile
-         (references the uncompiled quantile-result types); GetAggregateEmpiricalDistribution,
-         SampleMeanDamage, and ConsequenceExceededWithProbabilityQ are dropped too, matching the C++
-         port's scope (not hard compile blockers, but out of scope; see that file's header).
+         subset-compiled project at the time. patched/AggregatedConsequencesBinned.cs dropped
+         exactly those three members (and the now-unused System.Xml.Linq using); the ctors,
+         PutDataIntoHistogram, AddConsequenceRealization, the three accessor methods, and Equals
+         were kept VERBATIM. Same auto-pickup as patched/Structure.cs/Inventory.cs above, no
+         explicit Compile Include. RESTORED by Phase 6 Task 4 below (both dependencies now exist):
+         see that patched file's updated header. -->
+    <!-- Task Phase4T4: patched/ConsequenceExtensions.cs originally kept ONLY the
+         AggregatedConsequencesBinned FilterByCategories overload; the sibling
+         AggregatedConsequencesByQuantile overload was a genuine compile blocker back then (that
+         type wasn't compiled into this project yet). Phase 6 Task 2 below adds
+         AggregatedConsequencesByQuantile.cs, so patched/ConsequenceExtensions.cs now keeps BOTH
+         overloads verbatim (see that file's updated header). patched/StudyAreaConsequencesBinned.cs
+         dropped WriteToXML/ReadFromXML (calls AggregatedConsequencesBinned methods the Task 3 patch
+         already dropped, still dropped: GENUINE compile blocker, System.Xml.Linq unreachable) and
+         ConvertToStudyAreaConsequencesByQuantile (referenced StudyAreaConsequencesByQuantile, not
+         compiled into this project at the time, Phase 6 Task 3, RESTORED by Phase 6 Task 4 below,
+         see that patched file's updated header);
+         GetAggregateEmpiricalDistribution, SampleMeanDamage, and ConsequenceExceededWithProbabilityQ
+         are dropped too, matching the C++ port's scope (not hard compile blockers, but out of
+         scope; see that file's header), though SampleMeanDamage was later restored by Phase 5 Task 6.
          Everything else (both ctors, AddNewConsequenceResultObject,
          AddExistingConsequenceResultObject, both AddConsequenceRealization overloads,
          PutDataIntoHistograms, Equals, GetSpecificHistogram, RemainingIterations,
          ResultsAreConverged, ToUncertainPairedData, GetAssetCategories/GetDamageCategories,
          GetConsequenceResult) is kept VERBATIM. Same auto-pickup as the patched/ files above, no
          explicit Compile Include. -->
+    <!-- Task Phase6T2: AggregatedConsequencesByQuantile.cs (the Empirical-backed quantile-result
+         leaf) is a clean POCO, recon confirmed: its `using System.Xml.Linq;` is an unused leftover
+         (no WriteToXML/ReadFromXML on this class, unlike AggregatedConsequencesBinned), and its
+         only dependencies (Empirical, ConsequenceType, RiskType) are already compiled in above. No
+         patched/ copy needed, compiles unpatched, verbatim, in full. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/AggregatedConsequencesByQuantile.cs" />
+    <!-- Task Phase6T3: StudyAreaConsequencesByQuantile.cs (the collection wrapper over
+         AggregatedConsequencesByQuantile results) inherits `: Validation` and raises a
+         `MessageReport` event via `ReportMessage(this, ...)` on a GetConsequenceResult/
+         GetAggregateEmpiricalDistribution miss, but recon confirmed neither is a compile blocker:
+         `Validation`, `MessageReportedEventHandler`, `ErrorMessage`, and `MessageEventArgs` are all
+         already reachable transitively through the HEC.FDA.Statistics ProjectReference (the same
+         MVVM closure the Task Phase3T4 OccupancyType.cs recon above already established), and its
+         other dependencies (AggregatedConsequencesByQuantile, ConsequenceExtensions.FilterByCategories,
+         Empirical) are already compiled in above. Verified by direct `dotnet build`: compiles
+         clean, unpatched, 0 errors/warnings; no patched/StudyAreaConsequencesByQuantile.cs copy
+         needed (unlike patched/StudyAreaConsequencesBinned.cs, which needed real compile-blocker
+         trims for WriteToXML/ConvertToStudyAreaConsequencesByQuantile). -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/StudyAreaConsequencesByQuantile.cs" />
+    <!-- Task Phase6T4: both quantile-conversion methods deferred by Phase 4 Tasks 3/4 are restored
+         now that their dependencies (AggregatedConsequencesByQuantile.cs, Task Phase6T2;
+         StudyAreaConsequencesByQuantile.cs, Task Phase6T3, both above) are compiled in.
+         patched/AggregatedConsequencesBinned.cs restores ConvertToSingleEmpiricalDistributionOfConsequences
+         VERBATIM (DynamicHistogram.ConvertToEmpiricalDistribution lives in the real, unpatched
+         HEC.FDA.Statistics.dll referenced via ProjectReference above, so no further patch needed
+         there). patched/StudyAreaConsequencesBinned.cs restores ConvertToStudyAreaConsequencesByQuantile
+         VERBATIM. See both patched files' updated headers. -->
     <!-- Task Phase4T5: patched/HydraulicDataset.cs keeps ONLY the two pure-numeric
          CorrectDryStructureWSEs overloads (VERBATIM) plus a thin CorrectAllProfiles wrapper
          reproducing GetHydraulicDatasetInFloatsWithProbabilities's post-read correction loop
@@ -188,5 +223,62 @@
          and BootstrapToUncertainPairedData are out of this task's scope but cost nothing to keep
          compiled in). -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/extensions/ContinuousDistributionExtensions.cs" />
+    <!-- Task Phase6T5: ScenarioResults's real source pulls in System.Xml.Linq (WriteToXML/
+         ReadFromXML), which call ImpactAreaScenarioResults.WriteToXml()/ReadFromXML(...): those
+         are already dropped by patched/ImpactAreaScenarioResults.cs (Phase5T3), so this class's
+         own XML methods would no longer compile even if kept. patched/ScenarioResults.cs drops
+         exactly those two methods (and the now-unused System.Xml.Linq using); the
+         ValidationErrorLogger base, both Properties, the internal parameterless ctor, and every
+         other method (GetImpactAreaIDs/GetAssetCategories/GetDamageCategories/GetRiskTypes/
+         GetConsequenceTypes, the AEP/assurance pass-throughs, SampleMeanExpectedAnnualConsequences,
+         ConsequencesExceededWithProbabilityQ, GetConsequencesDistribution (INCLUDING its MVVM
+         Fatal-ErrorMessage-on-empty fallback, which compiles fine transitively, same as
+         StudyAreaConsequencesBinned.GetSpecificHistogram above), GetAccumulatedLifeLossFnCurveData,
+         AddResults, GetResults (including its own MVVM Fatal-ErrorMessage+dummy-fallback),
+         ConvertToStudyAreaConsequencesByQuantile, and Equals are kept VERBATIM. Same auto-pickup
+         as the patched/ files above, no explicit Compile Include for the patched file. -->
+    <!-- Task Phase6T6: AlternativeResults.cs (the EqAD-results container Alternative.
+         AnnualizationCompute returns) is a clean POCO relative to this subset-compiled project:
+         its `: ValidationErrorLogger` base + `AddRules()`'s `AddSinglePropertyRule`/`Rule`
+         registrations are already reachable transitively through the HEC.FDA.Statistics
+         ProjectReference (the same MVVM closure Task Phase3T4's OccupancyType.cs recon and
+         patched/ScenarioResults.cs above already established compiles clean, unpatched), and its
+         other dependencies (StudyAreaConsequencesByQuantile, ScenarioResults,
+         AggregatedConsequencesByQuantile, ConsequenceType/RiskType) are already compiled in above.
+         Verified by direct `dotnet build`: compiles clean, unpatched, 0 errors/warnings. No
+         patched/AlternativeResults.cs copy needed (unlike patched/StudyAreaConsequencesBinned.cs,
+         which needed real compile-blocker trims). -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/AlternativeResults.cs" />
+    <!-- Task Phase6T7: AlternativeComparisonReportResults.cs (the with/without-project
+         damage-reduction report container AlternativeComparisonReport.ComputeAlternativeComparisonReport,
+         Task 10, not yet ported, returns) is a clean POCO relative to this subset-compiled project
+         for the exact same reason Task Phase6T6's AlternativeResults.cs above is: its
+         `: ValidationErrorLogger` base + `ReportMessage(...)` calls are already reachable
+         transitively through the HEC.FDA.Statistics ProjectReference (the same MVVM closure), and
+         its other dependencies (AlternativeResults, StudyAreaConsequencesByQuantile,
+         AggregatedConsequencesByQuantile, ConsequenceType/RiskType, Empirical) are already compiled
+         in above. Verified by direct `dotnet build`: compiles clean, unpatched, 0 errors/warnings.
+         No patched/AlternativeComparisonReportResults.cs copy needed. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/AlternativeComparisonReportResults.cs" />
+    <!-- Task Phase6T8: Scenario.cs (the impact-area fan-out one level above
+         ImpactAreaScenarioSimulation) implements IReportMessage (MVVM messaging: the
+         MessageReport event + ReportMessage(object, MessageEventArgs)), a genuine compile blocker
+         not reachable/needed by this subset-compiled project, plus the 3-arg
+         Compute(ConvergenceCriteria, CancellationToken, bool) overload's System.Threading
+         dependency. patched/Scenario.cs drops exactly those (and the now-unused internal
+         parameterless ctor, no real upstream caller); the public ctor, the 2-arg Compute() loop
+         (construct ScenarioResults, foreach impact area Compute()+AddResults()), and the
+         ComputeDate/SoftwareVersion stamp are kept VERBATIM. Same auto-pickup as the patched/
+         files above, no explicit Compile Include. -->
+    <!-- Task Phase6T9: Alternative.cs (the headline EqAD annualization static class) pulls in
+         Utility.Progress (ProgressReporter) via its `ProgressReporter reporter = null` parameters
+         and `reporter.Report*` calls, a genuine compile blocker not reachable/needed by this
+         subset-compiled project (same rationale as patched/ImpactAreaStageDamage.cs's own
+         ProgressReporter strip). patched/Alternative.cs drops exactly the reporter
+         parameters/calls (and the now-unused `using Utility.Progress;`); CanCompute,
+         AnnualizationCompute, RunAnnualizationCompute, ProcessBaseAndFutureYearScenarioResults,
+         IterateOnEqad (Parallel.For KEPT verbatim: plain BCL, deterministic per-step), ComputeEqad,
+         IntoEquivalentAnnualTerms, PresentValueCompute, and Interpolate are kept VERBATIM. Same
+         auto-pickup as the patched/ files above, no explicit Compile Include. -->
   </ItemGroup>
 </Project>

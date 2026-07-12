@@ -1,6 +1,6 @@
 # Plan: `hecfdar` (R) + `hecfdapy` (Python) from a shared C++ core, ported from HEC-FDA
 
-> **Current status (kept in sync by hand):** Phase 0 through Phase 5 are **complete**. The full
+> **Current status (kept in sync by hand): PORT COMPLETE -- all 6 phases done.** The full
 > toolchain is proven end to end: seeded .NET `Random` -> `Normal` -> `PairedData` ->
 > `UncertainPairedData` integrate-and-sample, identical in C++, R, and Python, and reproduced by
 > the real HEC-FDA C#. Phase 1 added the validation subsystem, full `SpecialFunctions`,
@@ -30,9 +30,23 @@
 > `consequence_result`, `impact_area_stage_damage`; compute/metrics:
 > `system_performance_results`'s `rng_conformance` case, `impact_area_scenario_simulation`'s
 > `compute_ead` case); the rest are validated in C++ + the gate only, per the established
-> coverage-scope convention. The oracle gate reproduces 695 fixture assertions, 0 failed. Phase 6
-> (scenarios & alternatives: `Scenario`/`Alternative`/`AlternativeComparisonReport` + the
-> `ScenarioResults`/`*ByQuantile` types) has not started and is next.
+> coverage-scope convention. The oracle gate reproduced 695 fixture assertions, 0 failed, at the
+> Phase-5 merge.
+>
+> **PORT COMPLETE.** Phase 6 (scenarios & alternatives, the final phase) is done: `Scenario`,
+> `Alternative` (`compute_eqad` + `annualization_compute`), `AlternativeComparisonReport`
+> (with/without benefits), the un-severed `Empirical`/`DynamicHistogram` quantile chain, and the
+> five remaining metrics types (`AggregatedConsequencesByQuantile`,
+> `StudyAreaConsequencesByQuantile`, `ScenarioResults`, `AlternativeResults`,
+> `AlternativeComparisonReportResults`) are all ported and validated against the real C#, capped by
+> an end-to-end capstone chaining `Scenario.compute` -> `Alternative.annualization_compute` ->
+> `AlternativeComparisonReport::compute_alternative_comparison_report`. R and Python bind a
+> representative subset (`alternative`'s `compute_eqad`, `scenario`'s deterministic fan-out). The
+> exit gate is green on all four legs: `test-core` (ctest), `test-r` (148 passed), `test-py` (16
+> passed), and `oracles` (dotnet gate, **820 reproduced, 0 failed** -- the final count for the whole
+> port). All 6 phases are complete; see "Status" in `CLAUDE.md` (same directory) for the full
+> closeout and the "post-port cleanup backlog" at the end of this file for remaining Minor
+> follow-ups.
 >
 > Phase 0 delivered the canonical C++17 header core at `core/include/hecfda/`
 > (`sampling::DotNetRandom`, `model::compute::RandomProvider`,
@@ -268,13 +282,24 @@ fixed 100-iteration benchmark (`121194.5159789352`), on top of five deterministi
 RNG seeding uses seven fixed constants (1234/2345/3456/4567/5678/6789/7891); `Parallel.For` is
 severed to a serial loop (safe: index-addressed sampling has no ordering dependency).
 
-**Phase 6 -- NEXT (scenarios & alternatives).** `Scenario`, `Alternative` (period-of-analysis EAD,
-EqAD), `AlternativeComparisonReport` (with/without comparison), `ScenarioResults`, and the two
-`*ByQuantile` types, built on the EAD compute layer Phase 5 delivered.
+**Phase 6 -- COMPLETE (scenarios & alternatives, the final phase).** Un-severed the
+`Empirical`/`DynamicHistogram` quantile chain (`stack_empirical_distributions`/`fit_to_sample`/
+`convert_to_empirical_distribution`), ported the five remaining metrics types
+(`AggregatedConsequencesByQuantile`, `StudyAreaConsequencesByQuantile`, `ScenarioResults`,
+`AlternativeResults`, `AlternativeComparisonReportResults`) and their binned-to-quantile
+converters, and added the three top-level domain classes: `Scenario` (impact-area fan-out),
+`Alternative` (`compute_eqad` -- interpolate/present-value/PVIFA annualization -- +
+`annualization_compute`), and `AlternativeComparisonReport` (with/without-project benefits via
+empirical-distribution subtraction). A capstone task chained all three end to end, reproducing the
+real C#'s `AlternativeResults_Test` values and a 50000-iteration seeded Muncie benchmark. Exit
+criterion met: `test-core`/`test-r`/`test-py`/`oracles` all green, oracle gate at **820 reproduced
+/ 0 failed** (up from Phase 5's 695). R and Python bind a representative subset (`alternative`'s
+`compute_eqad`, `scenario`'s deterministic fan-out); the remaining Phase-6 targets, including the
+Muncie benchmark, are validated in C++ + the gate only. **This completes the port.**
 
 Each phase merges only when its fixtures pass in all three harnesses and CI is green on all three
-platforms. The user-facing R/Python API grows with each phase, reaching the full compute surface
-at Phase 6.
+platforms. The user-facing R/Python API grew with each phase, reaching the full compute surface at
+Phase 6. **All 6 phases are now complete.**
 
 ## Development process (superpowers SDD)
 
@@ -324,35 +349,57 @@ Python fixtures pass; `verify_oracles.py` green (when `dotnet` is available); th
   every fixture passes identically to its stated tolerances.
 - **dotnet oracle gate:** dev-only, reproduces every fixture against the real upstream C#.
 
-## Open items carried into Phase 6
+## Post-port cleanup backlog (aggregated across all 6 phases' whole-branch reviews)
 
-- **Next phase target:** Phase 6 -- scenarios & alternatives (`Scenario`, `Alternative`
-  (period-of-analysis EAD, EqAD), `AlternativeComparisonReport` (with/without),
-  `ScenarioResults`, and the two `*ByQuantile` types), which builds on the EAD compute layer Phase
-  5 delivered.
+The port is complete -- everything below is a Minor follow-up, not a blocking gap. None of these
+were flagged Critical or Important by any phase's whole-branch review; each is either unexercised
+by any fixture, a faithful upstream quirk, or a cosmetic nit.
+
+- **`ConvergenceCriteria`'s `[this]`-capturing `Validation`-rule predicates (open since Phase 1).**
+  Same UB shape already fixed in the three Phase 3 structures samplers + `Structure` (see
+  CLAUDE.md's "By-value capture in Validation-rule predicates"). `Threshold` holds
+  `SystemPerformanceResults` (itself holding `ConvergenceCriteria`) by value inside
+  `PerformanceByThresholds`' `std::vector<Threshold>` -- a relocating container -- but no fixture in
+  any of the 6 phases calls `validate()` on a `ConvergenceCriteria` reached this way, so the ASan
+  hazard remains latent. Fix opportunistically if a future caller reaches it.
+- **`OccupancyType::error_messages_for()` formats `ErrorLevel` as a raw int** rather than the C#
+  `[Flags]` enum name (e.g. "2" instead of "Minor") -- a pre-existing gap in
+  `hecfda::statistics::Validation` (no enum-to-name map), not exercised by any fixture; carried
+  forward from Phase 3.
+- **A few include-ordering nits** flagged in Phase 6 whole-branch reviews (e.g. Task 8's `Scenario`
+  header) -- cosmetic only, no functional effect.
+- **Coverage gaps closed during the port, not remaining:** Task 7's `get_risk_types(ConsequenceType)`
+  filter-discard bug was caught and fixed within Phase 6 (see CLAUDE.md's Git & CI-adjacent history
+  / the task's own REVIEW-FIX note in `.superpowers/sdd/progress.md`) -- listed here only so a
+  future reader doesn't go looking for it as an open item.
+- **Filter branches not fixture-exercised (systemic, pre-existing):** several `risk_type`/
+  `consequence_type` exact-match filter branches across the metrics types (first flagged in Phase 6
+  Task 3's `StudyAreaConsequencesByQuantile`) have no dedicated fixture proving the non-matching
+  path; the matching path is well-covered. Low priority -- add discriminating fixtures if a future
+  consumer depends on the filter-miss behavior specifically.
+- **`StudyAreaConsequencesBinned::convert_to_study_area_consequences_by_quantile`'s doc/code
+  mismatch:** the upstream doc comment claims `ConsequenceType.All` means "no filter," but the
+  actual code does a plain `==` comparison (so `All` filters for literal `All`, not a wildcard).
+  Transcribed faithfully (behavior matches code, not the misleading comment); flagged in Phase 6
+  Task 4.
+- **`ScenarioResults::equals()` throws on a missing impact-area ID** rather than the C#
+  dummy-false-comparison fallback; matches the repo-wide severed-miss convention already
+  established for `get_threshold`-style lookups, unexercised by any fixture. Flagged in Phase 6
+  Task 5.
 - `CurveMetaData`/`GraphicalDistribution`/`GraphicalUncertainPairedData` XML +
-  `ValidationErrorLogger`/GUI wiring -- severed (adapter/GUI layer, not the numeric core).
-- `UncertainPairedData.CombineWithWeights` -- depends on severed `Empirical` stacking, currently
-  untested; `Equals` and `ConvertDamagedElementCountToText` also deferred.
+  `ValidationErrorLogger`/GUI wiring -- severed (adapter/GUI layer, not the numeric core; will
+  never be ported).
+- `UncertainPairedData.CombineWithWeights` -- depends on severed `Empirical` stacking weighting
+  variant (the un-severed `stack_empirical_distributions` covers sum/subtract only, not a weighted
+  combine), currently untested; `Equals` and `ConvertDamagedElementCountToText` also deferred.
 - The graphical path (`GraphicalUncertainPairedData`/`GraphicalDistribution`) is validated in C++
-  and the oracle gate but not yet bound in R/Python. Documented follow-up; the
-  `-ffp-contract=off` flag is already in place in both language builds for when it lands.
-- `Empirical` stacking/weighting and `DynamicHistogram` XML/plotting/`ConvertToEmpiricalDistribution`
-  -- severed from Phase 1, still pending. (The converter's `IHistogram` case was closed in Phase 4
-  Task 4 -- no longer deferred.)
+  and the oracle gate but not bound in R/Python. Documented follow-up; the `-ffp-contract=off` flag
+  is already in place in both language builds for when it lands.
+- `Empirical`'s weighting variant (see `CombineWithWeights` above) and `DynamicHistogram`
+  XML/plotting -- severed from Phase 1, still pending (the stacking/sum-subtract path and
+  `ConvertToEmpiricalDistribution` were un-severed in Phase 6 Task 1, no longer deferred).
 - `Inventory::get_inventory_and_water_trimmed_to_damage_category` -- ported but has no fixture
-  coverage (not exercised by any Phase 3 Task 6 case); revisit when a future phase needs it.
-- `OccupancyType::error_messages_for()` formats `ErrorLevel` as a raw int rather than the C#
-  `[Flags]` enum name -- a pre-existing gap in `hecfda::statistics::Validation` (no enum-to-name
-  map), not exercised by any fixture; carried forward from Phase 3.
-- `ConvergenceCriteria` (Phase 1) still captures `[this]` in its `Validation`-rule predicates, the
-  same UB shape fixed in the three Phase 3 structures samplers + `Structure`. **Still open as of
-  Phase 5:** `Threshold` holds `SystemPerformanceResults` (itself holding `ConvergenceCriteria`) by
-  value inside `PerformanceByThresholds`' `std::vector<Threshold>` -- another relocating container
-  -- but no code path in Phase 5's fixtures calls `validate()` on a `ConvergenceCriteria` reached
-  this way, so the ASan hazard remains latent rather than triggered. Fix in Phase 6 or a cleanup
-  pass if a new call path reaches it (see CLAUDE.md's "By-value capture in Validation-rule
-  predicates" for the full invariant).
+  coverage (not exercised by any Phase 3 Task 6 case); revisit if a future consumer needs it.
 - Phase 4's `ImpactAreaStageDamage::identify_central_stage_frequency_at_index_location` analytical-
   flow-frequency-with-discharge-stage branch throws (needs unported
   `ContinuousDistribution::to_coordinates`); no fixture reaches it. `produce_zero_damage_functions`
@@ -375,3 +422,7 @@ Python fixtures pass; `verify_oracles.py` green (when `dotnet` is available); th
   enough to be worth packaging for real).
 - Confirm 0BSD license compatibility holds as more of HEC-FDA (MIT-licensed) is ported; no
   incompatibility found so far.
+- Phase 6's `AlternativeComparisonReportResults` unreachable trailing throw, the
+  `AddAlternativeResults` apparent upstream bug, and `Empirical::stack_empirical_distributions`'s
+  unguarded empty-vector access are recorded in full in CLAUDE.md's "Faithful upstream bugs" list;
+  none are exercised by any call path in this port, so no fix is pending, only documentation.
