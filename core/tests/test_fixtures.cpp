@@ -9,9 +9,11 @@
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/extensions/graphical_distribution.hpp"
 #include "hecfda/model/metrics/aggregated_consequences_binned.hpp"
+#include "hecfda/model/metrics/assurance_result_storage.hpp"
 #include "hecfda/model/metrics/consequence_extensions.hpp"
 #include "hecfda/model/metrics/consequence_result.hpp"
 #include "hecfda/model/metrics/study_area_consequences_binned.hpp"
+#include "hecfda/model/metrics/threshold_enum.hpp"
 #include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
 #include "hecfda/model/paired_data/interpolate_quantiles.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
@@ -1884,6 +1886,63 @@ TEST_CASE("aggregated_consequences_binned fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_aggregated_consequences_binned(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for AssuranceResultStorage (Phase 5 Task 1): the histogram-staging Monte Carlo
+// accumulator for one assurance metric. `construct` is {assurance_type, bin_width, convergence:
+// {min_iterations, max_iterations}, standard_non_exceedance_probability} matching the compute
+// ctor; ConvergenceCriteria is built with the 2-arg (minIterations, maxIterations) ctor, same
+// convention as run_aggregated_consequences_binned. `observations` is applied in order via
+// add_observation(result, iteration) before a single put_data_into_histogram() call -- ONE object
+// per case, shared across all of the case's assertions. `method` dispatches sample_mean (args [])
+// or inverse_cdf (args [p]), both read off assurance_histogram(). See
+// fixtures/metrics/assurance_result_storage.json's note for what each case exercises.
+static hecfda::model::metrics::AssuranceResultStorage make_assurance_result_storage(const json& ctor) {
+    using namespace hecfda::model::metrics;
+    const auto& conv = ctor["convergence"];
+    hecfda::statistics::ConvergenceCriteria cc(conv["min_iterations"].get<int>(),
+                                                conv["max_iterations"].get<int>());
+    return AssuranceResultStorage(ctor["assurance_type"].get<std::string>(),
+                                   ctor["bin_width"].get<double>(), cc,
+                                   ctor["standard_non_exceedance_probability"].get<double>());
+}
+
+static double run_assurance_result_storage(const json& c, const std::string& method, const json& args) {
+    auto ars = make_assurance_result_storage(c["construct"]);
+    for (const auto& o : c["observations"]) {
+        ars.add_observation(o["result"].get<double>(), o["iteration"].get<int>());
+    }
+    ars.put_data_into_histogram();
+    if (method == "sample_mean") {
+        return ars.assurance_histogram().sample_mean();
+    }
+    if (method == "inverse_cdf") {
+        return ars.assurance_histogram().inverse_cdf(args[0].get<double>());
+    }
+    auto msg = std::string("unknown assurance_result_storage method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("assurance_result_storage fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/assurance_result_storage.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "assurance_result_storage");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_assurance_result_storage(c, a["method"].get<std::string>(), a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();

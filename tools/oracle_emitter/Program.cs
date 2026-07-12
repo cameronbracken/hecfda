@@ -1066,6 +1066,32 @@ namespace oracle_emitter {
       throw new Exception("unknown study_area_consequences_binned method: " + method);
     }
 
+    // AssuranceResultStorage (Phase 5 Task 1) is the histogram-staging Monte Carlo accumulator for
+    // one assurance metric -- built from patched/AssuranceResultStorage.cs (see that file's header
+    // for why it's a patched local copy: WriteToXML/ReadFromXML and the XML-only private ctor
+    // dropped, everything else verbatim). `construct` is {assurance_type, bin_width, convergence:
+    // {min_iterations, max_iterations}, standard_non_exceedance_probability}, matching the
+    // (string, double, ConvergenceCriteria, double) compute ctor; ConvergenceCriteria uses the
+    // 2-arg (minIterations, maxIterations) ctor, same as EvalAggregatedConsequencesBinned.
+    // `observations` is a list of {iteration, result} applied in order via AddObservation before a
+    // single PutDataIntoHistogram() call; one object is built and staged per case, shared across
+    // all of that case's assertions (mirrors run_assurance_result_storage in test_fixtures.cpp).
+    // `method` dispatches SampleMean (args []) or InverseCDF (args [p]), both read off
+    // AssuranceHistogram (a plain DynamicHistogram property, not IHistogram, so no cast needed).
+    static object EvalAssuranceResultStorage(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+      var ars = new AssuranceResultStorage(c.GetProperty("assurance_type").GetString(), D(c.GetProperty("bin_width")), cc, D(c.GetProperty("standard_non_exceedance_probability")));
+      foreach (var o in caseEl.GetProperty("observations").EnumerateArray()) {
+        ars.AddObservation(D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+      }
+      ars.PutDataIntoHistogram();
+      if (method == "sample_mean") return ars.AssuranceHistogram.SampleMean;
+      if (method == "inverse_cdf") return ars.AssuranceHistogram.InverseCDF(D(argsEl[0]));
+      throw new Exception("unknown assurance_result_storage method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -1117,6 +1143,7 @@ namespace oracle_emitter {
               case "consequence_result": val = EvalConsequenceResult(c, method); break;
               case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
+              case "assurance_result_storage": val = EvalAssuranceResultStorage(c, method, argsEl); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;
               case "impact_area_stage_damage": val = EvalImpactAreaStageDamage(c, method, argsEl); break;
