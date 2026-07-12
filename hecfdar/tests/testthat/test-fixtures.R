@@ -168,3 +168,52 @@ test_that("impact_area_stage_damage fixture", {
     cmp(got, a$expected, a$tol, a$mode)
   }
 })
+
+# Phase 5 Task 12: representative subset (system_performance_results,
+# impact_area_scenario_simulation). The remaining Phase-5 targets (assurance_result_storage,
+# performance_by_thresholds/threshold, categoried_paired_data/categoried_uncertain_paired_data,
+# bootstrap_to_paired_data, frequency_stage_sample, default_threshold, and the seeded
+# impact_area_scenario_simulation benchmarks) traverse the identical binding + compiled core and
+# are validated in C++ (core/tests/test_fixtures.cpp) + the dotnet oracle gate only -- see
+# .claude/CLAUDE.md's "R/Python distribution coverage scope" convention.
+test_that("system_performance_results fixture", {
+  fx <- read_fx("metrics/system_performance_results.json")
+  # Only the "rng_conformance" case_kind -- the seeded DotNetRandom(1234) conformance pin -- is
+  # bound here; "aep"/"levee" traverse the identical binding + compiled core (see note above).
+  cs <- Filter(function(x) x$construct$case_kind == "rng_conformance", fx$cases)
+  for (c in cs) for (a in c$assertions) {
+    ctor <- c$construct
+    got <- ns$hecfda_system_performance_results(
+      as.integer(ctor$convergence$min_iterations), as.integer(ctor$convergence$max_iterations),
+      ctor$standard_probability, as.integer(ctor$master_seed), ctor$threshold_value,
+      as.integer(ctor$compute_chunks), a$method
+    )
+    cmp(got, a$expected, a$tol, a$mode)
+  }
+})
+
+test_that("impact_area_scenario_simulation fixture", {
+  fx <- read_fx("compute/impact_area_scenario_simulation_deterministic.json")
+  # Only the "compute_ead" case -- the phase's headline deterministic EAD oracle (150000) -- is
+  # bound here; the levee/total-risk/EALL/preview/AEP cases and the seeded benchmarks traverse the
+  # identical binding + compiled core (see note above).
+  cs <- Filter(function(x) x$name == "compute_ead", fx$cases)
+  for (c in cs) for (a in c$assertions) {
+    ctor <- c$construct
+    sd <- ctor$stage_damage[[1]]
+    got <- ns$hecfda_impact_area_scenario_simulation(
+      as.integer(ctor$impact_area_id),
+      ctor$flow_frequency$type, as.double(unlist(ctor$flow_frequency$params)),
+      as.double(unlist(ctor$flow_stage$xs)),
+      sapply(ctor$flow_stage$ys, function(y) y$type),
+      lapply(ctor$flow_stage$ys, function(y) as.double(unlist(y$params))),
+      as.double(unlist(sd$xs)),
+      sapply(sd$ys, function(y) y$type),
+      lapply(sd$ys, function(y) as.double(unlist(y$params))),
+      sd$damage_category, sd$asset_category,
+      as.integer(ctor$additional_threshold$threshold_id), ctor$additional_threshold$value,
+      as.integer(a$args[[1]]), as.integer(a$args[[2]]), a$args[[3]] != 0
+    )
+    cmp(got, a$expected, a$tol, a$mode)
+  }
+})

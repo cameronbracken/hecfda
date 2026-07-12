@@ -21,6 +21,7 @@
 #include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
 #include "hecfda/model/stage_damage/hydraulic_profiles.hpp"
 #include "hecfda/model/stage_damage/impact_area_stage_damage.hpp"
+#include "hecfda/model/compute/impact_area_scenario_simulation.hpp"
 namespace py = pybind11;
 namespace nd = hecfda::statistics::distributions;
 namespace pd = hecfda::model::paired_data;
@@ -332,6 +333,102 @@ static double impact_area_stage_damage(int impact_area_id, const std::string& da
     return sampled.f(stage);
 }
 
+// Bespoke dispatch for SystemPerformanceResults (Phase 5 Task 12 Python binding): reproduces
+// test_fixtures.cpp's run_system_performance_results "rng_conformance" case_kind exactly -- the
+// PerformanceTest.AssuranceResultStorageShould RNG-port-conformance pin, the case that proves the
+// seeded DotNetRandom(1234) -> RandomProvider -> Normal InverseCDF chain reproduces the real C#
+// through this metrics leaf. The "aep" and "levee" case_kinds traverse the identical binding +
+// compiled core and stay validated in C++ (core/tests/test_fixtures.cpp) + the dotnet oracle gate
+// only -- see .claude/CLAUDE.md's "R/Python distribution coverage scope" convention.
+static double system_performance_results(int min_iterations, int max_iterations, double standard_probability,
+                                          int master_seed, double threshold_value, int compute_chunks,
+                                          const std::string& method) {
+    using namespace hecfda::model::metrics;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    ConvergenceCriteria cc(min_iterations, max_iterations);
+    SystemPerformanceResults spr(cc);
+    spr.add_stage_assurance_histogram(standard_probability);
+
+    int iteration_count = cc.iteration_count();
+    hecfda::sampling::DotNetRandom master_seed_list(master_seed);
+    std::vector<int> seeds(static_cast<std::size_t>(iteration_count));
+    for (int i = 0; i < iteration_count; ++i) {
+        seeds[static_cast<std::size_t>(i)] = master_seed_list.internal_sample();
+    }
+
+    nd::Normal standard_normal(0.0, 1.0);
+    for (int j = 0; j < compute_chunks; ++j) {
+        for (int i = 0; i < iteration_count; ++i) {
+            hecfda::model::compute::RandomProvider provider(seeds[static_cast<std::size_t>(i)]);
+            double inv_cdf = standard_normal.inverse_cdf(provider.next_random());
+            spr.add_stage_for_assurance(standard_probability, inv_cdf, i);
+        }
+        spr.put_data_into_histograms();
+    }
+    if (method == "assurance_of_event") return spr.assurance_of_event(standard_probability, threshold_value);
+    if (method == "normal_cdf_reference") return standard_normal.cdf(threshold_value);
+    throw std::invalid_argument("system_performance_results: unknown method: " + method);
+}
+
+// Bespoke dispatch for ImpactAreaScenarioSimulation (Phase 5 Task 12 Python binding, the phase's
+// headline end-to-end EAD compute): reproduces test_fixtures.cpp's build_simulation/run_simulation
+// for the "compute_ead" case of
+// fixtures/compute/impact_area_scenario_simulation_deterministic.json -- one flow_frequency
+// ContinuousDistribution (via with_flow_frequency), a two-point flow_stage UncertainPairedData (via
+// with_flow_stage, reusing py_make_curve), one CurveMetaData-tagged stage_damage
+// UncertainPairedData (via with_stage_damages), and an additional_threshold (always
+// ThresholdEnum::DefaultExteriorStage/ConvergenceCriteria(1,1), matching that case). Only mean_eac
+// (mean_expected_annual_consequences's own ConsequenceType::Damage/RiskType::Total defaults) is
+// exposed -- the phase's headline oracle; the remaining simulation methods (frequency-stage
+// assembly, default-threshold, mean_aep, assurance_of_event, the seeded benchmark) traverse the
+// identical binding + compiled core and stay validated in C++ (core/tests/test_fixtures.cpp) + the
+// dotnet oracle gate only.
+static double impact_area_scenario_simulation(
+    int impact_area_id, const std::string& flow_freq_type, std::vector<double> flow_freq_params,
+    std::vector<double> flow_stage_xs, const std::vector<std::string>& flow_stage_types,
+    const std::vector<std::vector<double>>& flow_stage_params, std::vector<double> stage_damage_xs,
+    const std::vector<std::string>& stage_damage_types, const std::vector<std::vector<double>>& stage_damage_params,
+    const std::string& damage_category, const std::string& asset_category, int threshold_id, double threshold_value,
+    int min_iterations, int max_iterations, bool compute_is_deterministic) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::metrics::Threshold;
+    using hecfda::model::metrics::ThresholdEnum;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    auto builder = ImpactAreaScenarioSimulation::builder(impact_area_id);
+
+    auto ff_dist = nd::IDistributionFactory::create(nd::distribution_type_from_name(flow_freq_type), flow_freq_params);
+    auto* ff_continuous = dynamic_cast<nd::ContinuousDistribution*>(ff_dist.get());
+    if (ff_continuous == nullptr) {
+        throw std::runtime_error("impact_area_scenario_simulation: flow_frequency is not continuous");
+    }
+    ff_dist.release();
+    builder.with_flow_frequency(std::unique_ptr<nd::ContinuousDistribution>(ff_continuous));
+
+    builder.with_flow_stage(py_make_curve(std::move(flow_stage_xs), flow_stage_types, flow_stage_params));
+
+    pd::CurveMetaData stage_damage_metadata(damage_category, asset_category);
+    std::vector<std::unique_ptr<nd::IDistribution>> stage_damage_ys;
+    for (std::size_t i = 0; i < stage_damage_types.size(); ++i) {
+        stage_damage_ys.push_back(
+            nd::IDistributionFactory::create(nd::distribution_type_from_name(stage_damage_types[i]), stage_damage_params[i]));
+    }
+    std::vector<pd::UncertainPairedData> stage_damage;
+    stage_damage.push_back(
+        pd::UncertainPairedData(std::move(stage_damage_xs), std::move(stage_damage_ys), std::move(stage_damage_metadata)));
+    builder.with_stage_damages(std::move(stage_damage));
+
+    ConvergenceCriteria threshold_cc(1, 1);
+    builder.with_additional_threshold(
+        Threshold(threshold_id, threshold_cc, ThresholdEnum::DefaultExteriorStage, threshold_value));
+
+    auto simulation = builder.build();
+    ConvergenceCriteria cc(min_iterations, max_iterations);
+    auto results = simulation.compute(cc, compute_is_deterministic);
+    return results.mean_expected_annual_consequences(impact_area_id, damage_category, asset_category);
+}
+
 PYBIND11_MODULE(_core, mod) {
     mod.def("rng_sequence", &rng_sequence);
     mod.def("dist_eval", &dist_eval);
@@ -353,4 +450,13 @@ PYBIND11_MODULE(_core, mod) {
     mod.def("impact_area_stage_damage", &impact_area_stage_damage, py::arg("impact_area_id"),
              py::arg("damage_category"), py::arg("asset_category"), py::arg("hydraulic_stage1"),
              py::arg("hydraulic_stage2"), py::arg("use_reg_unreg"), py::arg("stage"));
+    mod.def("system_performance_results", &system_performance_results, py::arg("min_iterations"),
+             py::arg("max_iterations"), py::arg("standard_probability"), py::arg("master_seed"),
+             py::arg("threshold_value"), py::arg("compute_chunks"), py::arg("method"));
+    mod.def("impact_area_scenario_simulation", &impact_area_scenario_simulation, py::arg("impact_area_id"),
+             py::arg("flow_freq_type"), py::arg("flow_freq_params"), py::arg("flow_stage_xs"),
+             py::arg("flow_stage_types"), py::arg("flow_stage_params"), py::arg("stage_damage_xs"),
+             py::arg("stage_damage_types"), py::arg("stage_damage_params"), py::arg("damage_category"),
+             py::arg("asset_category"), py::arg("threshold_id"), py::arg("threshold_value"),
+             py::arg("min_iterations"), py::arg("max_iterations"), py::arg("compute_is_deterministic"));
 }

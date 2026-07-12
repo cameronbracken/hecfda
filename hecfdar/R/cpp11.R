@@ -31,3 +31,11 @@ hecfda_consequence_result <- function(damage_category, increments, method, compa
 hecfda_impact_area_stage_damage <- function(impact_area_id, damage_category, asset_category, hydraulic_stage1, hydraulic_stage2, use_reg_unreg, stage) {
   .Call(`_hecfdar_hecfda_impact_area_stage_damage`, impact_area_id, damage_category, asset_category, hydraulic_stage1, hydraulic_stage2, use_reg_unreg, stage)
 }
+
+hecfda_system_performance_results <- function(min_iterations, max_iterations, standard_probability, master_seed, threshold_value, compute_chunks, method) {
+  .Call(`_hecfdar_hecfda_system_performance_results`, min_iterations, max_iterations, standard_probability, master_seed, threshold_value, compute_chunks, method)
+}
+
+hecfda_impact_area_scenario_simulation <- function(impact_area_id, flow_freq_type, flow_freq_params, flow_stage_xs, flow_stage_types, flow_stage_params, stage_damage_xs, stage_damage_types, stage_damage_params, damage_category, asset_category, threshold_id, threshold_value, min_iterations, max_iterations, compute_is_deterministic) {
+  .Call(`_hecfdar_hecfda_impact_area_scenario_simulation`, impact_area_id, flow_freq_type, flow_freq_params, flow_stage_xs, flow_stage_types, flow_stage_params, stage_damage_xs, stage_damage_types, stage_damage_params, damage_category, asset_category, threshold_id, threshold_value, min_iterations, max_iterations, compute_is_deterministic)
+}

@@ -7,4 +7,6 @@ from ._core import (
     structure,
     consequence_result,
     impact_area_stage_damage,
+    system_performance_results,
+    impact_area_scenario_simulation,
 )
