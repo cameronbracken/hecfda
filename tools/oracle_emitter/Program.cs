@@ -1160,6 +1160,44 @@ namespace oracle_emitter {
       throw new Exception("unknown study_area_consequences_binned method: " + method);
     }
 
+    // Binned->quantile converters (Phase 6 Task 4): AggregatedConsequencesBinned.
+    // ConvertToSingleEmpiricalDistributionOfConsequences + StudyAreaConsequencesBinned.
+    // ConvertToStudyAreaConsequencesByQuantile, restored in patched/AggregatedConsequencesBinned.cs
+    // + patched/StudyAreaConsequencesBinned.cs (see those files' updated headers). `construct` (per
+    // consequence_results entry) is {damage_category, asset_category, convergence: {min_iterations,
+    // max_iterations}, impact_area_id, consequence_type, risk_type}, exactly
+    // EvalAggregatedConsequencesBinned's construct shape; `realizations` (per entry) is staged via
+    // AddConsequenceRealization then a single PutDataIntoHistogram(), one AggregatedConsequencesBinned
+    // per entry, collected into a StudyAreaConsequencesBinned. `filter_consequence_type` feeds
+    // ConvertToStudyAreaConsequencesByQuantile directly. `method` dispatches SampleMeanDamage on the
+    // resulting StudyAreaConsequencesByQuantile; `args` is [damage_category_or_null,
+    // asset_category_or_null, impact_area_id], matching EvalStudyAreaConsequencesByQuantile's
+    // convention.
+    static AggregatedConsequencesBinned BuildStagedAggregatedConsequencesBinned(JsonElement entry) {
+      var c = entry.GetProperty("construct");
+      var conv = c.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+      var consequenceType = Enum.Parse<ConsequenceType>(c.GetProperty("consequence_type").GetString());
+      var riskType = Enum.Parse<RiskType>(c.GetProperty("risk_type").GetString());
+      var acb = new AggregatedConsequencesBinned(c.GetProperty("damage_category").GetString(), c.GetProperty("asset_category").GetString(), cc, c.GetProperty("impact_area_id").GetInt32(), consequenceType, riskType);
+      foreach (var r in entry.GetProperty("realizations").EnumerateArray()) {
+        acb.AddConsequenceRealization(D(r.GetProperty("damage")), r.GetProperty("iteration").GetInt64(), r.GetProperty("count").GetInt32());
+      }
+      acb.PutDataIntoHistogram();
+      return acb;
+    }
+    static object EvalBinnedToQuantile(JsonElement caseEl, string method, JsonElement argsEl) {
+      var results = caseEl.GetProperty("consequence_results").EnumerateArray().Select(BuildStagedAggregatedConsequencesBinned).ToList();
+      var study = new StudyAreaConsequencesBinned(results);
+      var filterType = Enum.Parse<ConsequenceType>(caseEl.GetProperty("filter_consequence_type").GetString());
+      var quantileStudy = StudyAreaConsequencesBinned.ConvertToStudyAreaConsequencesByQuantile(study, filterType);
+      string damageCategory = OptionalString(argsEl[0]);
+      string assetCategory = OptionalString(argsEl[1]);
+      int impactAreaID = argsEl[2].GetInt32();
+      if (method == "sample_mean_damage") return quantileStudy.SampleMeanDamage(damageCategory, assetCategory, impactAreaID);
+      throw new Exception("unknown binned_to_quantile method: " + method);
+    }
+
     // CategoriedPairedData + CategoriedUncertainPairedData (Phase 5 Task 4) is the per-
     // (damageCategory, assetCategory, ConsequenceType, RiskType) damage/FN-frequency curve
     // accumulator -- built from patched/CategoriedUncertainPairedData.cs (see that file's header
@@ -1763,6 +1801,7 @@ namespace oracle_emitter {
               case "aggregated_consequences_by_quantile": val = EvalAggregatedConsequencesByQuantile(c, method, argsEl); break;
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
               case "study_area_consequences_by_quantile": val = EvalStudyAreaConsequencesByQuantile(c, method, argsEl); break;
+              case "binned_to_quantile": val = EvalBinnedToQuantile(c, method, argsEl); break;
               case "categoried_uncertain_paired_data": val = EvalCategoriedUncertainPairedData(c, method, argsEl); break;
               case "assurance_result_storage": val = EvalAssuranceResultStorage(c, method, argsEl); break;
               case "system_performance_results": val = EvalSystemPerformanceResults(c, method, argsEl); break;

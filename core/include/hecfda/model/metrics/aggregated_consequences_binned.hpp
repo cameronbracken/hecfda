@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "hecfda/model/metrics/aggregated_consequences_by_quantile.hpp"
 #include "hecfda/model/metrics/consequence_type.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/histograms/dynamic_histogram.hpp"
@@ -41,10 +42,6 @@ namespace metrics {
 // DONE_WITH_CONCERNS (scoped out, not ported; documented per repo convention):
 //  - WriteToXML() / ReadFromXML(XElement): XML (de)serialization, no equivalent surface in this
 //    port (matches the repo-wide XML severance elsewhere, e.g. convergence_criteria.hpp).
-//  - ConvertToSingleEmpiricalDistributionOfConsequences(...): couples to
-//    DynamicHistogram::ConvertToEmpiricalDistribution, itself deferred (see
-//    dynamic_histogram.hpp's DONE_WITH_CONCERNS) and to the Empirical/AggregatedConsequencesByQuantile
-//    quantile types this task does not port. Not needed by the histogram-staging surface below.
 //  - The two "null/dummy" ctors -- `AggregatedConsequencesBinned(int impactAreaID,
 //    ConsequenceType, RiskType)` and `AggregatedConsequencesBinned(string, string, int,
 //    ConsequenceType = Damage, RiskType = Fail)` (both set IsNull = true) -- construct
@@ -173,6 +170,23 @@ class AggregatedConsequencesBinned {
     // region, consequence/risk type are NOT compared, matching upstream).
     bool equals(const AggregatedConsequencesBinned& other) const {
         return consequence_histogram_->equals(*other.consequence_histogram_);
+    }
+
+    // ported from: AggregatedConsequencesBinned.cs `public static AggregatedConsequencesByQuantile
+    // ConvertToSingleEmpiricalDistributionOfConsequences(AggregatedConsequencesBinned
+    // consequenceDistributionResult)`. UN-SEVERED Phase 6 Task 4 (deferred at Phase 4 Task 3, see
+    // this class's DONE_WITH_CONCERNS history -- it depended on DynamicHistogram::
+    // convert_to_empirical_distribution, un-severed Phase 6 Task 1, and on
+    // AggregatedConsequencesByQuantile, ported Phase 6 Task 2). The C# version is `static`, taking
+    // the source object as its sole parameter; ported here as a `const` instance method (using
+    // `this` in place of the C# parameter, per this task's brief) -- semantically identical, since
+    // the C# body only ever reads off `consequenceDistributionResult`. Field mapping transcribed in
+    // the exact order the C# ctor call lists them: DamageCategory, AssetCategory, the converted
+    // Empirical, RegionID, ConsequenceType, RiskType.
+    AggregatedConsequencesByQuantile convert_to_single_empirical_distribution_of_consequences() const {
+        statistics::distributions::Empirical empirical = consequence_histogram_->convert_to_empirical_distribution();
+        return AggregatedConsequencesByQuantile(damage_category_, asset_category_, std::move(empirical),
+                                                 region_id_, consequence_type_, risk_type_);
     }
 
    private:

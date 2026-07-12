@@ -7,11 +7,15 @@
 // aggregated_consequences_binned.hpp DONE_WITH_CONCERNS list):
 //  - WriteToXML()/ReadFromXML(XElement): XML (de)serialization, needs System.Xml.Linq and
 //    DynamicHistogram.ToXML/ReadFromXML, no equivalent surface ported.
-//  - ConvertToSingleEmpiricalDistributionOfConsequences(...): returns
-//    AggregatedConsequencesByQuantile, a sibling metrics type not included in this subset-compiled
-//    project (would need its own dependency closure), and calls
-//    DynamicHistogram.ConvertToEmpiricalDistribution, itself not ported to C++.
-// Dropping these also drops the `using System.Xml.Linq;` that only they needed.
+// Dropping this also drops the `using System.Xml.Linq;` it only needed.
+//
+// Phase 6 Task 4 RESTORED: ConvertToSingleEmpiricalDistributionOfConsequences(...) -- was dropped
+// by the original Phase 4 Task 3 patch (AggregatedConsequencesByQuantile wasn't compiled into this
+// project yet, and DynamicHistogram.ConvertToEmpiricalDistribution wasn't ported to C++ yet).
+// Both dependencies now exist (AggregatedConsequencesByQuantile.cs is compiled in unpatched,
+// oracle_emitter.csproj's Task Phase6T2 comment; DynamicHistogram.ConvertToEmpiricalDistribution
+// lives in the real, unpatched HEC.FDA.Statistics.dll referenced via ProjectReference), so this
+// method is restored VERBATIM below.
 using Statistics;
 using Statistics.Distributions;
 using Statistics.Histograms;
@@ -165,6 +169,12 @@ public class AggregatedConsequencesBinned
             return false;
         }
         return true;
+    }
+
+    public static AggregatedConsequencesByQuantile ConvertToSingleEmpiricalDistributionOfConsequences(AggregatedConsequencesBinned consequenceDistributionResult)
+    {
+        Empirical empirical = DynamicHistogram.ConvertToEmpiricalDistribution(consequenceDistributionResult.ConsequenceHistogram);
+        return new AggregatedConsequencesByQuantile(consequenceDistributionResult.DamageCategory, consequenceDistributionResult.AssetCategory, empirical, consequenceDistributionResult.RegionID, consequenceDistributionResult.ConsequenceType, consequenceDistributionResult.RiskType);
     }
     #endregion
 }

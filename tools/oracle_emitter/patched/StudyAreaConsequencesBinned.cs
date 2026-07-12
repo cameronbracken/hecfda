@@ -15,10 +15,6 @@
 //    `AggregatedConsequencesBinned.ReadFromXML(...)`, and patched/AggregatedConsequencesBinned.cs
 //    (Task 3) already dropped both of those methods, so this class's own XML methods would no
 //    longer compile even if kept. Also needs System.Xml.Linq (dropped below, only used here).
-//  - ConvertToStudyAreaConsequencesByQuantile(...): GENUINE COMPILE BLOCKER -- references
-//    AggregatedConsequencesByQuantile/StudyAreaConsequencesByQuantile (not compiled into this
-//    subset project) and AggregatedConsequencesBinned.ConvertToSingleEmpiricalDistributionOfConsequences
-//    (also dropped by the Task 3 patch).
 //  - GetAggregateEmpiricalDistribution(...) / ConsequenceExceededWithProbabilityQ(...) (the
 //    "Aggregation" region, minus GetConsequenceResult which is kept -- it's required by the
 //    compute path): NOT hard compile blockers (Empirical/DynamicHistogram.
@@ -30,6 +26,13 @@
 //    as the two methods above), but is ADDED BACK here by Phase 5 Task 6:
 //    ImpactAreaScenarioResults.MeanExpectedAnnualConsequences needs it (see
 //    patched/ImpactAreaScenarioResults.cs). Kept VERBATIM from the real source.
+//
+// Phase 6 Task 4 RESTORED: ConvertToStudyAreaConsequencesByQuantile(...) -- was a genuine compile
+// blocker for the original Phase 4 Task 4 patch (AggregatedConsequencesByQuantile/
+// StudyAreaConsequencesByQuantile weren't compiled into this project yet, and
+// AggregatedConsequencesBinned.ConvertToSingleEmpiricalDistributionOfConsequences was dropped by
+// the Task 3 patch). All three now exist (Phase 6 Tasks 2/3/4), so this method is restored
+// VERBATIM below.
 using Statistics;
 using Statistics.Distributions;
 using Statistics.Histograms;
@@ -266,6 +269,23 @@ public class StudyAreaConsequencesBinned : ValidationErrorLogger
         return ConsequenceResultList
             .FilterByCategories(damageCategory, assetCategory, impactAreaID, consequenceType, riskType)
             .Sum(result => result.SampleMeanExpectedAnnualConsequences());
+    }
+
+    // Added back by Phase 6 Task 4 -- see the header comment's RESTORED bullet.
+    public static StudyAreaConsequencesByQuantile ConvertToStudyAreaConsequencesByQuantile(StudyAreaConsequencesBinned studyAreaConsequencesBinned, ConsequenceType filterByConsequenceType)
+    {
+        List<AggregatedConsequencesByQuantile> aggregatedConsequencesByQuantiles = [];
+
+        //here we apply the filter.
+        var res = studyAreaConsequencesBinned.ConsequenceResultList.Where((r) => r.ConsequenceType == filterByConsequenceType).ToArray();
+
+        foreach (AggregatedConsequencesBinned aggregatedConsequencesBinned in res)
+        {
+            AggregatedConsequencesByQuantile aggregatedConsequencesByQuantile = AggregatedConsequencesBinned.ConvertToSingleEmpiricalDistributionOfConsequences(aggregatedConsequencesBinned);
+            aggregatedConsequencesByQuantiles.Add(aggregatedConsequencesByQuantile);
+        }
+        StudyAreaConsequencesByQuantile studyAreaConsequencesByQuantile = new(aggregatedConsequencesByQuantiles);
+        return studyAreaConsequencesByQuantile;
     }
     #endregion
 }

@@ -12,9 +12,11 @@
 #include <utility>
 #include <vector>
 #include "hecfda/model/metrics/aggregated_consequences_binned.hpp"
+#include "hecfda/model/metrics/aggregated_consequences_by_quantile.hpp"
 #include "hecfda/model/metrics/consequence_extensions.hpp"
 #include "hecfda/model/metrics/consequence_result.hpp"
 #include "hecfda/model/metrics/consequence_type.hpp"
+#include "hecfda/model/metrics/study_area_consequences_by_quantile.hpp"
 #include "hecfda/model/paired_data/curve_meta_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/statistics/histograms/dynamic_histogram.hpp"
@@ -63,10 +65,6 @@ inline constexpr const char* kVehicleAssetCategory = "Vehicle";
 //    "public for testing" one the task brief calls out).
 //  - `WriteToXML()`/`ReadFromXML(XElement)`: XML (de)serialization, no equivalent surface in this
 //    port (repo-wide XML severance, matching CurveMetaData/ConvergenceCriteria/PairedData).
-//  - `ConvertToStudyAreaConsequencesByQuantile(...)`: needs StudyAreaConsequencesByQuantile +
-//    AggregatedConsequencesByQuantile + AggregatedConsequencesBinned::
-//    ConvertToSingleEmpiricalDistributionOfConsequences, none of which exist in this port (the
-//    quantile-result type family is out of scope -- see aggregated_consequences_binned.hpp).
 //  - `GetAggregateEmpiricalDistribution(...)`: needs DynamicHistogram::
 //    ConvertToEmpiricalDistribution (deferred, see dynamic_histogram.hpp) and
 //    Empirical::StackEmpiricalDistributions (not ported). Also emits the same MVVM Fatal
@@ -98,6 +96,13 @@ inline constexpr const char* kVehicleAssetCategory = "Vehicle";
 // `get_consequence_result` overload it relies on, `sample_mean_damage` (see the removed
 // SEVERANCES bullet above), `get_specific_histogram` made public, and a non-const
 // `consequence_result_list()` overload (see that accessor's own comment).
+//
+// Phase 6 Task 4 UN-SEVERANCE: `convert_to_study_area_consequences_by_quantile` (static, below)
+// was the other half of the `ConvertToStudyAreaConsequencesByQuantile(...)` SEVERANCES bullet
+// removed above -- it needed StudyAreaConsequencesByQuantile (Task 3),
+// AggregatedConsequencesByQuantile (Task 2), and
+// AggregatedConsequencesBinned::convert_to_single_empirical_distribution_of_consequences (this
+// same task, Task 4, in aggregated_consequences_binned.hpp), all now available.
 class StudyAreaConsequencesBinned {
    public:
     using IDistribution = hecfda::statistics::distributions::IDistribution;
@@ -310,6 +315,33 @@ class StudyAreaConsequencesBinned {
             }
         }
         return {std::move(damage_upds), std::move(quantity_upds)};
+    }
+
+    // ported from: StudyAreaConsequencesBinned.cs `public static StudyAreaConsequencesByQuantile
+    // ConvertToStudyAreaConsequencesByQuantile(StudyAreaConsequencesBinned
+    // studyAreaConsequencesBinned, ConsequenceType filterByConsequenceType)`. UN-SEVERED Phase 6
+    // Task 4 (see class comment). Filters ConsequenceResultList down to exactly the results whose
+    // ConsequenceType equals the filter argument (a plain `==` compare, NOT the wildcard-aware
+    // consequence_extensions::filter_by_categories predicate used elsewhere in this file --
+    // transcribed verbatim from the C# `Where((r) => r.ConsequenceType ==
+    // filterByConsequenceType)`), converts each survivor via
+    // AggregatedConsequencesBinned::convert_to_single_empirical_distribution_of_consequences(), and
+    // collects the results into a fresh StudyAreaConsequencesByQuantile via its
+    // `(std::vector<AggregatedConsequencesByQuantile>)` "public for testing" ctor (matching the C#
+    // `new(aggregatedConsequencesByQuantiles)` call).
+    static StudyAreaConsequencesByQuantile convert_to_study_area_consequences_by_quantile(
+        const StudyAreaConsequencesBinned& study_area_consequences_binned,
+        ConsequenceType filter_by_consequence_type) {
+        std::vector<AggregatedConsequencesByQuantile> aggregated_consequences_by_quantiles;
+        for (const AggregatedConsequencesBinned& aggregated_consequences_binned :
+             study_area_consequences_binned.consequence_result_list_) {
+            if (aggregated_consequences_binned.consequence_type() != filter_by_consequence_type) {
+                continue;
+            }
+            aggregated_consequences_by_quantiles.push_back(
+                aggregated_consequences_binned.convert_to_single_empirical_distribution_of_consequences());
+        }
+        return StudyAreaConsequencesByQuantile(std::move(aggregated_consequences_by_quantiles));
     }
 
     // ported from: StudyAreaConsequencesBinned.cs `public double SampleMeanDamage(string

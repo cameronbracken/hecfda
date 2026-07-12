@@ -2476,6 +2476,71 @@ TEST_CASE("study_area_consequences_by_quantile fixture") {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for the binned->quantile converters (Phase 6 Task 4): UN-SEVERED
+// AggregatedConsequencesBinned::convert_to_single_empirical_distribution_of_consequences +
+// StudyAreaConsequencesBinned::convert_to_study_area_consequences_by_quantile. `consequence_results`
+// is a list of {construct, realizations} entries -- exactly the aggregated_consequences_binned.json
+// construct/realizations shape (reusing make_aggregated_consequences_binned/parse_consequence_type/
+// parse_risk_type above) -- staged via add_consequence_realization then put_data_into_histogram,
+// one AggregatedConsequencesBinned per entry, collected into a StudyAreaConsequencesBinned.
+// `filter_consequence_type` is passed to convert_to_study_area_consequences_by_quantile; the
+// resulting StudyAreaConsequencesByQuantile's sample_mean_damage(args[0]-or-null, args[1]-or-null,
+// args[2]) is asserted (args order matches run_study_area_consequences_by_quantile's convention).
+// See fixtures/metrics/binned_to_quantile.json's note for what each case exercises.
+static hecfda::model::metrics::StudyAreaConsequencesBinned make_study_area_consequences_binned_from_results(
+    const json& consequence_results) {
+    using namespace hecfda::model::metrics;
+    std::vector<AggregatedConsequencesBinned> results;
+    for (const auto& entry : consequence_results) {
+        auto acb = make_aggregated_consequences_binned(entry["construct"]);
+        for (const auto& r : entry["realizations"]) {
+            acb.add_consequence_realization(r["damage"].get<double>(), r["iteration"].get<std::int64_t>(),
+                                             r["count"].get<int>());
+        }
+        acb.put_data_into_histogram();
+        results.push_back(std::move(acb));
+    }
+    return StudyAreaConsequencesBinned(std::move(results));
+}
+
+static double run_binned_to_quantile(const json& c, const std::string& method, const json& args) {
+    using namespace hecfda::model::metrics;
+    StudyAreaConsequencesBinned study = make_study_area_consequences_binned_from_results(c["consequence_results"]);
+    ConsequenceType filter_type = parse_consequence_type(c["filter_consequence_type"].get<std::string>());
+    StudyAreaConsequencesByQuantile quantile_study =
+        StudyAreaConsequencesBinned::convert_to_study_area_consequences_by_quantile(study, filter_type);
+    std::optional<std::string> damage_category = optional_string_arg(args[0]);
+    std::optional<std::string> asset_category = optional_string_arg(args[1]);
+    int impact_area_id = args[2].get<int>();
+    if (method == "sample_mean_damage") {
+        return quantile_study.sample_mean_damage(damage_category, asset_category, impact_area_id);
+    }
+    auto msg = std::string("unknown binned_to_quantile method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("binned_to_quantile fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/binned_to_quantile.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "binned_to_quantile");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_binned_to_quantile(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Bespoke dispatch for HydraulicProfiles (Phase 4 Task 5): the hydraulics-as-arrays input
 // boundary + CorrectDryStructureWSEs. `construct` is {probabilities, ground_elevations,
 // wses_by_profile} ([profile][structure] raw WSEs); every assertion builds a fresh

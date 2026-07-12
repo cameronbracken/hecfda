@@ -97,22 +97,27 @@
     <!-- Task Phase4T3: AggregatedConsequencesBinned's real source pulls in System.Xml.Linq
          (WriteToXML/ReadFromXML) and AggregatedConsequencesByQuantile/Empirical
          (ConvertToSingleEmpiricalDistributionOfConsequences), neither reachable/needed by this
-         subset-compiled project. patched/AggregatedConsequencesBinned.cs drops exactly those three
-         members (and the now-unused System.Xml.Linq using); the ctors, PutDataIntoHistogram,
-         AddConsequenceRealization, the three accessor methods, and Equals are kept VERBATIM. Same
-         auto-pickup as patched/Structure.cs/Inventory.cs above, no explicit Compile Include. -->
+         subset-compiled project at the time. patched/AggregatedConsequencesBinned.cs dropped
+         exactly those three members (and the now-unused System.Xml.Linq using); the ctors,
+         PutDataIntoHistogram, AddConsequenceRealization, the three accessor methods, and Equals
+         were kept VERBATIM. Same auto-pickup as patched/Structure.cs/Inventory.cs above, no
+         explicit Compile Include. RESTORED by Phase 6 Task 4 below (both dependencies now exist):
+         see that patched file's updated header. -->
     <!-- Task Phase4T4: patched/ConsequenceExtensions.cs originally kept ONLY the
          AggregatedConsequencesBinned FilterByCategories overload; the sibling
          AggregatedConsequencesByQuantile overload was a genuine compile blocker back then (that
          type wasn't compiled into this project yet). Phase 6 Task 2 below adds
          AggregatedConsequencesByQuantile.cs, so patched/ConsequenceExtensions.cs now keeps BOTH
          overloads verbatim (see that file's updated header). patched/StudyAreaConsequencesBinned.cs
-         drops WriteToXML/ReadFromXML (calls AggregatedConsequencesBinned methods the Task 3 patch
-         already dropped) and ConvertToStudyAreaConsequencesByQuantile (references
-         StudyAreaConsequencesByQuantile, still not compiled into this project, Phase 6 Task 3);
+         dropped WriteToXML/ReadFromXML (calls AggregatedConsequencesBinned methods the Task 3 patch
+         already dropped, still dropped: GENUINE compile blocker, System.Xml.Linq unreachable) and
+         ConvertToStudyAreaConsequencesByQuantile (referenced StudyAreaConsequencesByQuantile, not
+         compiled into this project at the time, Phase 6 Task 3, RESTORED by Phase 6 Task 4 below,
+         see that patched file's updated header);
          GetAggregateEmpiricalDistribution, SampleMeanDamage, and ConsequenceExceededWithProbabilityQ
          are dropped too, matching the C++ port's scope (not hard compile blockers, but out of
-         scope; see that file's header). Everything else (both ctors, AddNewConsequenceResultObject,
+         scope; see that file's header), though SampleMeanDamage was later restored by Phase 5 Task 6.
+         Everything else (both ctors, AddNewConsequenceResultObject,
          AddExistingConsequenceResultObject, both AddConsequenceRealization overloads,
          PutDataIntoHistograms, Equals, GetSpecificHistogram, RemainingIterations,
          ResultsAreConverged, ToUncertainPairedData, GetAssetCategories/GetDamageCategories,
@@ -137,6 +142,14 @@
          needed (unlike patched/StudyAreaConsequencesBinned.cs, which needed real compile-blocker
          trims for WriteToXML/ConvertToStudyAreaConsequencesByQuantile). -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/StudyAreaConsequencesByQuantile.cs" />
+    <!-- Task Phase6T4: both quantile-conversion methods deferred by Phase 4 Tasks 3/4 are restored
+         now that their dependencies (AggregatedConsequencesByQuantile.cs, Task Phase6T2;
+         StudyAreaConsequencesByQuantile.cs, Task Phase6T3, both above) are compiled in.
+         patched/AggregatedConsequencesBinned.cs restores ConvertToSingleEmpiricalDistributionOfConsequences
+         VERBATIM (DynamicHistogram.ConvertToEmpiricalDistribution lives in the real, unpatched
+         HEC.FDA.Statistics.dll referenced via ProjectReference above, so no further patch needed
+         there). patched/StudyAreaConsequencesBinned.cs restores ConvertToStudyAreaConsequencesByQuantile
+         VERBATIM. See both patched files' updated headers. -->
     <!-- Task Phase4T5: patched/HydraulicDataset.cs keeps ONLY the two pure-numeric
          CorrectDryStructureWSEs overloads (VERBATIM) plus a thin CorrectAllProfiles wrapper
          reproducing GetHydraulicDatasetInFloatsWithProbabilities's post-read correction loop
