@@ -11,6 +11,7 @@
 #include "hecfda/model/extensions/graphical_distribution.hpp"
 #include "hecfda/model/metrics/aggregated_consequences_binned.hpp"
 #include "hecfda/model/metrics/aggregated_consequences_by_quantile.hpp"
+#include "hecfda/model/metrics/alternative_results.hpp"
 #include "hecfda/model/metrics/assurance_result_storage.hpp"
 #include "hecfda/model/metrics/categoried_paired_data.hpp"
 #include "hecfda/model/metrics/categoried_uncertain_paired_data.hpp"
@@ -3463,6 +3464,96 @@ TEST_CASE("scenario_results fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_scenario_results(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for AlternativeResults (Phase 6 Task 6): the compute-output container holding
+// the EqAD StudyAreaConsequencesByQuantile results plus the base-year/future-year ScenarioResults
+// they were computed from, and THE identical-vs-eqad delegation pattern (see
+// alternative_results.hpp's class comment). `base_year_impact_areas`/`future_year_impact_areas`
+// are each a list of entries in EXACTLY the impact_area_scenario_results.json construct/
+// consequence_realizations/aep_observations/stage_observations shape (reused via
+// make_impact_area_scenario_results_case, same as run_scenario_results above) -- one
+// ImpactAreaScenarioResults per entry, add_results'd into a fresh ScenarioResults in order, then
+// moved into the AlternativeResults via set_base_year_scenario_results/
+// set_future_year_scenario_results. `eqad_results` is a study_area_consequences_by_quantile.json-
+// shaped {consequence_results: [...]} object, built via make_study_area_consequences_by_quantile's
+// per-entry helper and passed directly to the AlternativeResults 5-arg "public for testing" ctor.
+// `scenarios_are_identical` sets scenarios_are_identical_ directly (set_scenarios_are_identical).
+// `method` dispatches (args always [damage_category_or_null, asset_category_or_null,
+// impact_area_id]): sample_mean_eqad/sample_mean_base_year_ead/sample_mean_future_year_ead
+// (ConsequenceType::Damage/RiskType::Total defaults, matching how both the ScenarioResults
+// realizations and eqad_results entries were built) and get_eqad_distribution_sample_mean (same
+// args, .sample_mean() of the returned Empirical). See fixtures/metrics/alternative_results.json's
+// note for what each case/assertion exercises.
+static double run_alternative_results(const json& c, const std::string& method, const json& args) {
+    using namespace hecfda::model::metrics;
+
+    StudyAreaConsequencesByQuantile eqad_results =
+        make_study_area_consequences_by_quantile(json{{"construct", c["eqad_results"]}});
+
+    AlternativeResults alt(std::move(eqad_results), /*id=*/1, std::vector<int>{2030, 2049}, /*period_of_analysis=*/50,
+                            /*is_null=*/false);
+    alt.set_scenarios_are_identical(c["scenarios_are_identical"].get<bool>());
+
+    ScenarioResults base_year;
+    for (const auto& ia_case : c["base_year_impact_areas"]) {
+        ImpactAreaScenarioResultsFixtureCase built = make_impact_area_scenario_results_case(ia_case);
+        base_year.add_results(std::move(built.results));
+    }
+    alt.set_base_year_scenario_results(std::move(base_year));
+
+    ScenarioResults future_year;
+    for (const auto& ia_case : c["future_year_impact_areas"]) {
+        ImpactAreaScenarioResultsFixtureCase built = make_impact_area_scenario_results_case(ia_case);
+        future_year.add_results(std::move(built.results));
+    }
+    alt.set_future_year_scenario_results(std::move(future_year));
+
+    std::optional<std::string> damage_category = optional_string_arg(args[0]);
+    std::optional<std::string> asset_category = optional_string_arg(args[1]);
+    int impact_area_id = args[2].get<int>();
+
+    if (method == "sample_mean_eqad") {
+        return alt.sample_mean_eqad(impact_area_id, damage_category, asset_category, ConsequenceType::Damage,
+                                     RiskType::Total);
+    }
+    if (method == "sample_mean_base_year_ead") {
+        return alt.sample_mean_base_year_ead(impact_area_id, damage_category, asset_category, ConsequenceType::Damage,
+                                              RiskType::Total);
+    }
+    if (method == "sample_mean_future_year_ead") {
+        return alt.sample_mean_future_year_ead(impact_area_id, damage_category, asset_category,
+                                                ConsequenceType::Damage, RiskType::Total);
+    }
+    if (method == "get_eqad_distribution_sample_mean") {
+        return alt.get_eqad_distribution(impact_area_id, damage_category, asset_category, ConsequenceType::Damage,
+                                          RiskType::Total)
+            .sample_mean();
+    }
+    auto msg = std::string("unknown alternative_results method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("alternative_results fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/alternative_results.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "alternative_results");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_alternative_results(c, a["method"].get<std::string>(), a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();

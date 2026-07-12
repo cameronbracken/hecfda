@@ -1573,6 +1573,67 @@ namespace oracle_emitter {
       throw new Exception("unknown scenario_results method: " + method);
     }
 
+    // AlternativeResults (Phase 6 Task 6): the compute-output container Alternative.
+    // AnnualizationCompute (Task 9, not yet ported) returns -- the EqAD StudyAreaConsequencesByQuantile
+    // results plus the base-year/future-year ScenarioResults they were computed from, and THE
+    // identical-vs-eqad delegation pattern. Built via the internal "public for testing"
+    // (StudyAreaConsequencesByQuantile, id, analysisYears, periodOfAnalysis, isNull) ctor, then
+    // BaseYearScenarioResults/FutureYearScenarioResults/ScenariosAreIdentical are assigned directly
+    // (all `internal set`, accessible since AlternativeResults.cs compiles into this same
+    // assembly). `base_year_impact_areas`/`future_year_impact_areas` are each a list of entries in
+    // EXACTLY the impact_area_scenario_results.json construct/consequence_realizations/
+    // aep_observations/stage_observations shape (reused via BuildImpactAreaScenarioResultsCase,
+    // same as EvalScenarioResults above) -- one ImpactAreaScenarioResults per entry, AddResults'd
+    // into a fresh ScenarioResults in order. `eqad_results` is a
+    // study_area_consequences_by_quantile.json-shaped {consequence_results: [...]} object, built
+    // via BuildAggregatedConsequencesByQuantileEntry per entry and collected into a
+    // StudyAreaConsequencesByQuantile via its (List<AggregatedConsequencesByQuantile>) ctor.
+    // `scenarios_are_identical` sets ScenariosAreIdentical directly. `method` dispatches (args
+    // always [damage_category_or_null, asset_category_or_null, impact_area_id],
+    // ConsequenceType.Damage/RiskType.Total explicit at every level): sample_mean_eqad/
+    // sample_mean_base_year_ead/sample_mean_future_year_ead, and get_eqad_distribution_sample_mean
+    // (GetEqadDistribution(...).SampleMean). See fixtures/metrics/alternative_results.json's note.
+    static object EvalAlternativeResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var eqadEntries = caseEl.GetProperty("eqad_results").GetProperty("consequence_results")
+          .EnumerateArray().Select(BuildAggregatedConsequencesByQuantileEntry).ToList();
+      var eqadResults = new StudyAreaConsequencesByQuantile(eqadEntries);
+
+      var alt = new AlternativeResults(eqadResults, 1, new List<int> { 2030, 2049 }, 50, false);
+      alt.ScenariosAreIdentical = caseEl.GetProperty("scenarios_are_identical").GetBoolean();
+
+      var baseYear = new ScenarioResults();
+      foreach (var iaCase in caseEl.GetProperty("base_year_impact_areas").EnumerateArray()) {
+        var (results, _, _) = BuildImpactAreaScenarioResultsCase(iaCase);
+        baseYear.AddResults(results);
+      }
+      alt.BaseYearScenarioResults = baseYear;
+
+      var futureYear = new ScenarioResults();
+      foreach (var iaCase in caseEl.GetProperty("future_year_impact_areas").EnumerateArray()) {
+        var (results, _, _) = BuildImpactAreaScenarioResultsCase(iaCase);
+        futureYear.AddResults(results);
+      }
+      alt.FutureYearScenarioResults = futureYear;
+
+      string damageCategory = OptionalString(argsEl[0]);
+      string assetCategory = OptionalString(argsEl[1]);
+      int impactAreaID = argsEl[2].GetInt32();
+
+      if (method == "sample_mean_eqad") {
+        return alt.SampleMeanEqad(impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "sample_mean_base_year_ead") {
+        return alt.SampleMeanBaseYearEAD(impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "sample_mean_future_year_ead") {
+        return alt.SampleMeanFutureYearEAD(impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "get_eqad_distribution_sample_mean") {
+        return alt.GetEqadDistribution(impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total).SampleMean;
+      }
+      throw new Exception("unknown alternative_results method: " + method);
+    }
+
     // ImpactAreaScenarioSimulation (Phase 5 Task 7): the skeleton + fluent SimulationBuilder +
     // CanCompute + InitializeConsequenceHistograms surface only -- see
     // patched/ImpactAreaScenarioSimulation.cs's header for what's kept/dropped and why. `construct`
@@ -1859,6 +1920,7 @@ namespace oracle_emitter {
               case "performance_by_thresholds": val = EvalPerformanceByThresholds(c, method, argsEl); break;
               case "impact_area_scenario_results": val = EvalImpactAreaScenarioResults(c, method, argsEl); break;
               case "scenario_results": val = EvalScenarioResults(c, method, argsEl); break;
+              case "alternative_results": val = EvalAlternativeResults(c, method, argsEl); break;
               case "simulation": val = EvalSimulation(c, method, argsEl); break;
               case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;

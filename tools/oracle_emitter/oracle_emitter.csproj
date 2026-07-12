@@ -237,5 +237,17 @@
          AddResults, GetResults (including its own MVVM Fatal-ErrorMessage+dummy-fallback),
          ConvertToStudyAreaConsequencesByQuantile, and Equals are kept VERBATIM. Same auto-pickup
          as the patched/ files above, no explicit Compile Include for the patched file. -->
+    <!-- Task Phase6T6: AlternativeResults.cs (the EqAD-results container Alternative.
+         AnnualizationCompute returns) is a clean POCO relative to this subset-compiled project:
+         its `: ValidationErrorLogger` base + `AddRules()`'s `AddSinglePropertyRule`/`Rule`
+         registrations are already reachable transitively through the HEC.FDA.Statistics
+         ProjectReference (the same MVVM closure Task Phase3T4's OccupancyType.cs recon and
+         patched/ScenarioResults.cs above already established compiles clean, unpatched), and its
+         other dependencies (StudyAreaConsequencesByQuantile, ScenarioResults,
+         AggregatedConsequencesByQuantile, ConsequenceType/RiskType) are already compiled in above.
+         Verified by direct `dotnet build`: compiles clean, unpatched, 0 errors/warnings. No
+         patched/AlternativeResults.cs copy needed (unlike patched/StudyAreaConsequencesBinned.cs,
+         which needed real compile-blocker trims). -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/AlternativeResults.cs" />
   </ItemGroup>
 </Project>
