@@ -1615,10 +1615,23 @@ namespace oracle_emitter {
       }
       alt.FutureYearScenarioResults = futureYear;
 
+      // Optional (Phase 6 Task 6 coverage addition): exercises AlternativeResults.
+      // AddConsequenceResults (AlternativeResults.cs:231-238) against the EqadResults built above --
+      // this method had no fixture coverage before. Its riskType arg to GetConsequenceResult is
+      // omitted, defaulting to RiskType.Total, which FilterByCategories treats as a WILDCARD
+      // matching a candidate of ANY risk type (not an exact-Total match) -- so the dedup key is
+      // really just (damageCategory, assetCategory, RegionID, ConsequenceType).
+      if (caseEl.TryGetProperty("consequence_result_to_add", out var addEl)) {
+        alt.AddConsequenceResults(BuildAggregatedConsequencesByQuantileEntry(addEl));
+      }
+
       string damageCategory = OptionalString(argsEl[0]);
       string assetCategory = OptionalString(argsEl[1]);
       int impactAreaID = argsEl[2].GetInt32();
 
+      if (method == "eqad_consequence_result_list_count") {
+        return (double)alt.EqadResults.ConsequenceResultList.Count;
+      }
       if (method == "sample_mean_eqad") {
         return alt.SampleMeanEqad(impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
       }

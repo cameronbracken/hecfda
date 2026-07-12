@@ -3494,8 +3494,17 @@ TEST_CASE("scenario_results fixture") {
 // impact_area_id]): sample_mean_eqad/sample_mean_base_year_ead/sample_mean_future_year_ead
 // (ConsequenceType::Damage/RiskType::Total defaults, matching how both the ScenarioResults
 // realizations and eqad_results entries were built) and get_eqad_distribution_sample_mean (same
-// args, .sample_mean() of the returned Empirical). See fixtures/metrics/alternative_results.json's
-// note for what each case/assertion exercises.
+// args, .sample_mean() of the returned Empirical). An optional case-level
+// `consequence_result_to_add` field (same per-entry shape as eqad_results' own entries) is applied
+// via alt.add_consequence_results(...) right after the eqad/base/future setup above -- coverage for
+// AddConsequenceResults (AlternativeResults.cs:231-238), which had none before Phase 6 Task 6. Its
+// assertion is `eqad_consequence_result_list_count` (args unused, pass [null, null, -999]) --
+// returns alt.eqad_results().consequence_result_list().size(). Note: RiskType::Total in
+// GetConsequenceResult's default is a WILDCARD (filter_by_categories: `risk_type == Total ||
+// risk_type == candidate.risk_type()`), not an exact-Total match, so AddConsequenceResults dedupes
+// on (damageCategory, assetCategory, RegionID, ConsequenceType) alone, ignoring RiskType -- see
+// fixtures/metrics/alternative_results.json's two add_consequence_results cases for what each
+// exercises.
 static double run_alternative_results(const json& c, const std::string& method, const json& args) {
     using namespace hecfda::model::metrics;
 
@@ -3520,10 +3529,21 @@ static double run_alternative_results(const json& c, const std::string& method, 
     }
     alt.set_future_year_scenario_results(std::move(future_year));
 
+    // Optional (Phase 6 Task 6 faithfulness fix): exercises
+    // AlternativeResults::add_consequence_results (AddConsequenceResults, AlternativeResults.cs:
+    // 231-238) against the eqad_results built above. Applied once per assertion (this whole
+    // function reruns per-assertion), so it's deterministic regardless of assertion order.
+    if (c.contains("consequence_result_to_add")) {
+        alt.add_consequence_results(make_aggregated_consequences_by_quantile_entry(c["consequence_result_to_add"]));
+    }
+
     std::optional<std::string> damage_category = optional_string_arg(args[0]);
     std::optional<std::string> asset_category = optional_string_arg(args[1]);
     int impact_area_id = args[2].get<int>();
 
+    if (method == "eqad_consequence_result_list_count") {
+        return static_cast<double>(alt.eqad_results().consequence_result_list().size());
+    }
     if (method == "sample_mean_eqad") {
         return alt.sample_mean_eqad(impact_area_id, damage_category, asset_category, ConsequenceType::Damage,
                                      RiskType::Total);

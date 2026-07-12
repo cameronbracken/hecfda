@@ -83,6 +83,18 @@ class StudyAreaConsequencesByQuantile {
         }
     }
 
+    // Raw, unconditional append to consequence_result_list_ -- mirrors C#'s direct
+    // `ConsequenceResultList.Add(consequenceResultToAdd)` statement used by
+    // AlternativeResults.AddConsequenceResults (AlternativeResults.cs:236). NOT a ported method
+    // itself (there is no standalone C# method for this -- it's an inline list `.Add()` call); added
+    // here only because `consequence_result_list_` is private and AlternativeResults::
+    // add_consequence_results needs to perform that same unconditional append after its OWN
+    // Total-defaulted `get_consequence_result` dedup check, without going through
+    // `add_existing_consequence_result_object`'s SECOND (differently-keyed) dedup check.
+    void add_consequence_result_object_unchecked(AggregatedConsequencesByQuantile consequence_result_to_add) {
+        consequence_result_list_.push_back(std::move(consequence_result_to_add));
+    }
+
     // ported from: StudyAreaConsequencesByQuantile.cs `public double SampleMeanDamage(string
     // damageCategory = null, string assetCategory = null, int impactAreaID = -999, ConsequenceType
     // consequenceType = ConsequenceType.Damage, RiskType riskType = RiskType.Total)`.

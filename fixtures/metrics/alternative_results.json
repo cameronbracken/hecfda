@@ -209,6 +209,70 @@
         { "method": "sample_mean_future_year_ead", "args": [null, null, -999], "expected": 22.499999999999982, "tol": 1e-9, "mode": "abs" },
         { "method": "get_eqad_distribution_sample_mean", "args": [null, null, -999], "expected": 350.0, "tol": 1e-9, "mode": "abs" }
       ]
+    },
+    {
+      "name": "add_consequence_results_appends_on_true_miss",
+      "note": "Covers AddConsequenceResults (AlternativeResults.cs:231-238), which had ZERO fixture coverage before Phase 6 Task 6's faithfulness pass. eqad_results starts with exactly one entry keyed (Residential, Structure, impact_area 7, Damage, Fail). consequence_result_to_add uses a DIFFERENT impact_area_id (8), so its (damageCategory, assetCategory, RegionID, ConsequenceType) key doesn't match the existing entry under ANY risk type. GetConsequenceResult(...)'s Total-defaulted 4-arg call (consequence_extensions::filter_by_categories' RiskType predicate is `risk_type == Total || risk_type == candidate.risk_type()` -- Total is a WILDCARD matching any candidate risk type, not an exact-Total match, see AggregatedConsequencesByQuantile.cs's FilterByCategories) therefore finds no match regardless of risk type -> check.IsNull is true -> unconditional append -> list count 1 -> 2.",
+      "scenarios_are_identical": false,
+      "base_year_impact_areas": [],
+      "future_year_impact_areas": [],
+      "eqad_results": {
+        "consequence_results": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "impact_area_id": 7,
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "empirical": { "probabilities": [1.0], "values": [100] },
+            "sample_mean": 100.0
+          }
+        ]
+      },
+      "consequence_result_to_add": {
+        "damage_category": "Residential",
+        "asset_category": "Structure",
+        "impact_area_id": 8,
+        "consequence_type": "Damage",
+        "risk_type": "Fail",
+        "empirical": { "probabilities": [1.0], "values": [200] },
+        "sample_mean": 200.0
+      },
+      "assertions": [
+        { "method": "eqad_consequence_result_list_count", "args": [null, null, -999], "expected": 2.0, "tol": 0.0, "mode": "exact" }
+      ]
+    },
+    {
+      "name": "add_consequence_results_skips_when_any_risk_type_already_matches_key",
+      "note": "The Total-wildcard companion to the case above: eqad_results starts with one entry keyed (Residential, Structure, impact_area 7, Damage, Fail). consequence_result_to_add shares that EXACT SAME key but a DIFFERENT specific risk type (Non_Fail), not Fail and not Total. Because GetConsequenceResult's riskType arg is omitted (defaults to RiskType.Total, a wildcard that matches a candidate of ANY risk type -- NOT an exact-Total match), the dedup check matches the existing Fail-risk-type entry regardless of the new item's own Non_Fail risk type -> check.IsNull is false -> append is skipped, list count stays 1. This locks in the (non-obvious) Total-as-wildcard dedup semantics: AddConsequenceResults dedupes on (damageCategory, assetCategory, RegionID, ConsequenceType) ONLY, ignoring RiskType entirely, so at most one entry per that 4-tuple can ever exist regardless of how many distinct RiskTypes are attempted.",
+      "scenarios_are_identical": false,
+      "base_year_impact_areas": [],
+      "future_year_impact_areas": [],
+      "eqad_results": {
+        "consequence_results": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "impact_area_id": 7,
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "empirical": { "probabilities": [1.0], "values": [100] },
+            "sample_mean": 100.0
+          }
+        ]
+      },
+      "consequence_result_to_add": {
+        "damage_category": "Residential",
+        "asset_category": "Structure",
+        "impact_area_id": 7,
+        "consequence_type": "Damage",
+        "risk_type": "Non_Fail",
+        "empirical": { "probabilities": [1.0], "values": [200] },
+        "sample_mean": 200.0
+      },
+      "assertions": [
+        { "method": "eqad_consequence_result_list_count", "args": [null, null, -999], "expected": 1.0, "tol": 0.0, "mode": "exact" }
+      ]
     }
   ]
 }

@@ -332,15 +332,33 @@ class AlternativeResults {
     }
 
     // ported from: AlternativeResults.cs `internal void AddConsequenceResults(
-    // AggregatedConsequencesByQuantile consequenceResultToAdd)`. Dedupes via
-    // eqad_results_.get_consequence_result's dummy-on-miss return contract (same contract
-    // StudyAreaConsequencesByQuantile::add_existing_consequence_result_object itself uses).
+    // AggregatedConsequencesByQuantile consequenceResultToAdd)` (AlternativeResults.cs:231-238).
+    // Dedupes via eqad_results_.get_consequence_result's dummy-on-miss return contract, called with
+    // the (damageCategory, assetCategory, RegionID, ConsequenceType) 4-arg form so riskType defaults
+    // to RiskType::Total -- matching upstream's 4-arg call exactly (upstream does NOT pass
+    // consequenceResultToAdd's own RiskType here). On a miss, upstream appends unconditionally via
+    // `EqadResults.ConsequenceResultList.Add(consequenceResultToAdd)`.
+    //
+    // Calls the raw unconditional-append mutator (add_consequence_result_object_unchecked) rather
+    // than add_existing_consequence_result_object, to mirror upstream's direct list `.Add(...)`
+    // literally. NOTE for future readers: routing through add_existing_consequence_result_object
+    // here would NOT actually change observable behavior -- filter_by_categories' RiskType
+    // predicate is `risk_type == RiskType::Total || risk_type == candidate.risk_type()` (see
+    // consequence_extensions.hpp), i.e. RiskType::Total is a WILDCARD that matches a candidate of
+    // ANY risk type, not an exact-Total match. The Total-defaulted 4-arg check above is therefore
+    // STRICTLY BROADER than add_existing_consequence_result_object's own 5-arg check (which passes
+    // consequence_result_to_add's own, possibly-non-Total, risk_type): whenever the 4-arg check
+    // finds zero matches for (damageCategory, assetCategory, RegionID, ConsequenceType) across ALL
+    // risk types, the narrower 5-arg check (a strict subset of that search) necessarily also finds
+    // zero. So the two forms are provably behaviorally equivalent here -- this form is preferred
+    // purely because it mirrors upstream's actual statement (`ConsequenceResultList.Add(...)`,
+    // not a second dedup call) rather than for any behavior difference.
     void add_consequence_results(AggregatedConsequencesByQuantile consequence_result_to_add) {
         AggregatedConsequencesByQuantile existing = eqad_results_.get_consequence_result(
             consequence_result_to_add.damage_category(), consequence_result_to_add.asset_category(),
             consequence_result_to_add.region_id(), consequence_result_to_add.consequence_type());
         if (existing.is_null()) {
-            eqad_results_.add_existing_consequence_result_object(std::move(consequence_result_to_add));
+            eqad_results_.add_consequence_result_object_unchecked(std::move(consequence_result_to_add));
         }
     }
 
