@@ -30,6 +30,7 @@
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/sampling/dotnet_random.hpp"
+#include "hecfda/model/scenarios/scenario.hpp"
 #include "hecfda/model/stage_damage/hydraulic_profiles.hpp"
 #include "hecfda/model/stage_damage/impact_area_stage_damage.hpp"
 #include "hecfda/model/stage_damage/scenario_stage_damage.hpp"
@@ -4056,6 +4057,68 @@ TEST_CASE("simulation fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ported from: fixtures/scenarios/scenario.json's note (Phase 6 Task 8, the Scenario fan-out
+// oracle). `construct.impact_areas` is a list of entries in the exact build_simulation() shape
+// (reused directly, one ImpactAreaScenarioSimulation per entry), moved into a fresh Scenario and
+// computed once per assertion (matches this file's run_simulation precedent: rebuilt fresh for
+// every assertion rather than shared/cached across a case's assertions).
+static hecfda::model::metrics::ScenarioResults run_scenario_compute(
+    const json& ctor, const hecfda::statistics::ConvergenceCriteria& cc, bool compute_is_deterministic) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::scenarios::Scenario;
+
+    std::vector<ImpactAreaScenarioSimulation> simulations;
+    for (const auto& ia : ctor["impact_areas"]) {
+        simulations.push_back(build_simulation(ia));
+    }
+    Scenario scenario(std::move(simulations));
+    return scenario.compute(cc, compute_is_deterministic);
+}
+
+// `method: 'mean_eac'`, args [min_iterations, max_iterations, compute_is_deterministic (0/1),
+// impact_area_id (or -999 for the DEFAULT_MISSING_VALUE wildcard), damage_category,
+// asset_category, consequence_type_name]. RiskType is never passed -- relies on
+// ScenarioResults::sample_mean_expected_annual_consequences's own RiskType::Fail default (see
+// fixture note).
+static double run_scenario(const json& c, const std::string& method, const json& args) {
+    using hecfda::statistics::ConvergenceCriteria;
+
+    if (method == "mean_eac") {
+        ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
+        bool compute_is_deterministic = args[2].get<double>() != 0.0;
+        int impact_area_id = args[3].get<int>();
+        std::string damage_category = args[4].get<std::string>();
+        std::string asset_category = args[5].get<std::string>();
+        auto consequence_type = parse_consequence_type(args[6].get<std::string>());
+        auto results = run_scenario_compute(c["construct"], cc, compute_is_deterministic);
+        return results.sample_mean_expected_annual_consequences(impact_area_id, damage_category, asset_category,
+                                                                  consequence_type);
+    }
+    auto msg = std::string("unknown scenario method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("scenario fixture") {
+    std::ifstream f(fixtures_dir() + "/scenarios/scenario.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "scenario");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_scenario(c, a["method"].get<std::string>(), a["args"]);
+            double expected = a["expected"].get<double>();
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, {expected}, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());

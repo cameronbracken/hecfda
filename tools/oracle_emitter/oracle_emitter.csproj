@@ -260,5 +260,15 @@
          in above. Verified by direct `dotnet build`: compiles clean, unpatched, 0 errors/warnings.
          No patched/AlternativeComparisonReportResults.cs copy needed. -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/AlternativeComparisonReportResults.cs" />
+    <!-- Task Phase6T8: Scenario.cs (the impact-area fan-out one level above
+         ImpactAreaScenarioSimulation) implements IReportMessage (MVVM messaging: the
+         MessageReport event + ReportMessage(object, MessageEventArgs)), a genuine compile blocker
+         not reachable/needed by this subset-compiled project, plus the 3-arg
+         Compute(ConvergenceCriteria, CancellationToken, bool) overload's System.Threading
+         dependency. patched/Scenario.cs drops exactly those (and the now-unused internal
+         parameterless ctor, no real upstream caller); the public ctor, the 2-arg Compute() loop
+         (construct ScenarioResults, foreach impact area Compute()+AddResults()), and the
+         ComputeDate/SoftwareVersion stamp are kept VERBATIM. Same auto-pickup as the patched/
+         files above, no explicit Compile Include. -->
   </ItemGroup>
 </Project>

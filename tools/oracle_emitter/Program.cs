@@ -19,6 +19,7 @@ using HEC.FDA.Model.structures;
 using HEC.FDA.Model.metrics;
 using HEC.FDA.Model.hydraulics;
 using HEC.FDA.Model.stageDamage;
+using HEC.FDA.Model.scenarios;
 
 namespace oracle_emitter {
   class Program {
@@ -1958,6 +1959,37 @@ namespace oracle_emitter {
       throw new Exception("unknown simulation method: " + method);
     }
 
+    // Scenario (Phase 6 Task 8): the impact-area fan-out built from patched/Scenario.cs (MVVM
+    // messaging + CancellationToken dropped, the Compute() loop + ComputeDate/SoftwareVersion
+    // stamp kept verbatim -- see that file's header). `construct.impact_areas` is a list of
+    // entries in the exact BuildSimulation() shape (reused directly via the shared helper above),
+    // one ImpactAreaScenarioSimulation per entry, moved into a single Scenario. `method` is always
+    // mean_eac, args [min_iterations, max_iterations, compute_is_deterministic (0/1),
+    // impact_area_id (or -999 for the DEFAULT_MISSING_VALUE wildcard), damage_category,
+    // asset_category, consequence_type_name]: Compute(cc, computeIsDeterministic).
+    // SampleMeanExpectedAnnualConsequences(impactAreaID, damageCategory, assetCategory,
+    // consequenceType) -- RiskType is never passed, relying on that method's own RiskType.Fail
+    // default (matches every consequence realization this construct's ComputeEAD path adds via
+    // RiskType.Fail).
+    static object EvalScenario(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var simulations = c.GetProperty("impact_areas").EnumerateArray().Select(BuildSimulation).ToList();
+      IList<ImpactAreaScenarioSimulation> impactAreaSimulations = simulations;
+      var scenario = new Scenario(impactAreaSimulations);
+
+      if (method == "mean_eac") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        bool computeIsDeterministic = argsEl[2].GetDouble() != 0.0;
+        int impactAreaID = argsEl[3].GetInt32();
+        string damageCategory = argsEl[4].GetString();
+        string assetCategory = argsEl[5].GetString();
+        var consequenceType = Enum.Parse<ConsequenceType>(argsEl[6].GetString());
+        ScenarioResults results = scenario.Compute(cc, computeIsDeterministic);
+        return results.SampleMeanExpectedAnnualConsequences(impactAreaID, damageCategory, assetCategory, consequenceType);
+      }
+      throw new Exception("unknown scenario method: " + method);
+    }
+
     // ContinuousDistributionExtensions.BootstrapToPairedData(this ContinuousDistribution, long
     // iterationNumber, double[] ExceedanceProbabilities, bool computeIsDeterministic) (Phase 5
     // Task 5) -- the analytical-frequency realization Task 8's EAD compute uses to turn a fitted
@@ -2048,6 +2080,7 @@ namespace oracle_emitter {
               case "alternative_results": val = EvalAlternativeResults(c, method, argsEl); break;
               case "alternative_comparison_report_results": val = EvalAlternativeComparisonReportResults(c, method, argsEl); break;
               case "simulation": val = EvalSimulation(c, method, argsEl); break;
+              case "scenario": val = EvalScenario(c, method, argsEl); break;
               case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;

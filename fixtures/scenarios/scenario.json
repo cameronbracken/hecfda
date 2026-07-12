@@ -1,0 +1,100 @@
+{
+  "target": "scenario",
+  "kind": "scenario",
+  "source_test": "HEC.FDA.ModelTest/unittests/ScenarioShould.cs (2-impact-area Scenario(IList<ImpactAreaScenarioSimulation>) + Compute(cc, computeIsDeterministic:true) wrapper pattern), reusing the exact ComputeEAD construct from impact_area_scenario_simulation_deterministic.json's `compute_ead` case (Phase 5 Task 10) -- see that fixture's note for why this construct pins to exactly 150000 per impact area. No upstream unit test exercises Scenario's fan-out with an EAD oracle directly (ScenarioShould.ScenarioResultsShouldReadWhatItWrites is an XML-roundtrip test, severed per repo-wide XML convention); this fixture instead confirms the outer fan-out loop by duplicating the SAME tractable ComputeEAD impact area under two different impact_area_id values (1 and 2), matching AlternativeTest.AlternativeResults_Test's own base/future-year 2-scenario compute pattern one level up.",
+  "note": "`construct.impact_areas` is a list of entries in EXACTLY the impact_area_scenario_simulation_deterministic.json `construct` shape (impact_area_id, flow_frequency: {type,params}, flow_stage: {xs, ys:[{type,params}]}, stage_damage: [{damage_category, asset_category, xs, ys:[{type,params}]}], additional_threshold: {threshold_id, type, value}) -- each built into an ImpactAreaScenarioSimulation via the shared Phase-5 SimulationBuilder helper (C++: build_simulation; C# emitter: BuildSimulation), then all of them moved into ONE Scenario. `method: 'mean_eac'`, args [min_iterations, max_iterations, compute_is_deterministic (0/1), impact_area_id (or -999 for the DEFAULT_MISSING_VALUE wildcard, matching ScenarioResults::sample_mean_expected_annual_consequences's own default), damage_category, asset_category, consequence_type_name]: builds the Scenario fresh, calls compute(ConvergenceCriteria(min,max), compute_is_deterministic), then calls the resulting ScenarioResults::sample_mean_expected_annual_consequences(impact_area_id, damage_category, asset_category, consequence_type) -- RiskType is never passed, relying on that method's own RiskType::Fail default (matches every consequence realization this construct ever adds via RiskType::Fail, see impact_area_scenario_simulation_deterministic.json's own `mean_eac` dispatch note). Case 'two_impact_area_fan_out' duplicates the identical ComputeEAD tractable inputs under impact_area_id 1 and 2: per-impact-area sample_mean_expected_annual_consequences reproduces the SAME ~150000 value independently for each ID (confirming Scenario::compute's loop calls each impact area's own ImpactAreaScenarioSimulation::compute() and add_results()'s each result under its own ID, rather than aliasing/overwriting), and the wildcard (impact_area_id=-999) assertion sums both to ~300000 (confirming ScenarioResults::sample_mean_expected_annual_consequences's own cross-impact-area summation loop, Task 5, is fed two DISTINCT ImpactAreaScenarioResults rather than one overwritten entry). All values PIN (gate-captured against the real, patched Scenario.Compute(), never hand-derived); 150000/300000 are cross-checks, not the pinned literals themselves.",
+  "cases": [
+    {
+      "name": "two_impact_area_fan_out",
+      "construct": {
+        "impact_areas": [
+          {
+            "impact_area_id": 1,
+            "flow_frequency": {
+              "type": "Uniform",
+              "params": [0, 100000, 1000]
+            },
+            "flow_stage": {
+              "xs": [0, 100000],
+              "ys": [
+                {"type": "Uniform", "params": [0, 0, 10]},
+                {"type": "Uniform", "params": [0, 30, 10]}
+              ]
+            },
+            "stage_damage": [
+              {
+                "damage_category": "residential",
+                "asset_category": "Structure",
+                "xs": [0, 15, 30],
+                "ys": [
+                  {"type": "Uniform", "params": [0, 0, 10]},
+                  {"type": "Uniform", "params": [0, 600000, 10]},
+                  {"type": "Uniform", "params": [0, 600000, 10]}
+                ]
+              }
+            ],
+            "additional_threshold": {
+              "threshold_id": 1,
+              "type": "DefaultExteriorStage",
+              "value": 150000
+            }
+          },
+          {
+            "impact_area_id": 2,
+            "flow_frequency": {
+              "type": "Uniform",
+              "params": [0, 100000, 1000]
+            },
+            "flow_stage": {
+              "xs": [0, 100000],
+              "ys": [
+                {"type": "Uniform", "params": [0, 0, 10]},
+                {"type": "Uniform", "params": [0, 30, 10]}
+              ]
+            },
+            "stage_damage": [
+              {
+                "damage_category": "residential",
+                "asset_category": "Structure",
+                "xs": [0, 15, 30],
+                "ys": [
+                  {"type": "Uniform", "params": [0, 0, 10]},
+                  {"type": "Uniform", "params": [0, 600000, 10]},
+                  {"type": "Uniform", "params": [0, 600000, 10]}
+                ]
+              }
+            ],
+            "additional_threshold": {
+              "threshold_id": 1,
+              "type": "DefaultExteriorStage",
+              "value": 150000
+            }
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "mean_eac",
+          "args": [1, 1, 1, 1, "residential", "Structure", "Damage"],
+          "expected": 149999.99849999996,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "mean_eac",
+          "args": [1, 1, 1, 2, "residential", "Structure", "Damage"],
+          "expected": 149999.99849999996,
+          "tol": 0.01,
+          "mode": "rel"
+        },
+        {
+          "method": "mean_eac",
+          "args": [1, 1, 1, -999, "residential", "Structure", "Damage"],
+          "expected": 299999.9969999999,
+          "tol": 0.01,
+          "mode": "rel"
+        }
+      ]
+    }
+  ]
+}
