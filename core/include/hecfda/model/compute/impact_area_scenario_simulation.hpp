@@ -46,10 +46,15 @@ struct FrequencyStageCurves {
 // `SimulationBuilder`, `can_compute`/the inherited `validate()` gate, and
 // `initialize_consequence_histograms`. Phase 5 Task 8 adds `populate_random_numbers` (the seeded
 // per-curve RNG setup) and the frequency-stage assembly (`get_frequency_stage_sample`/
-// `get_stage_freq`), plus the `FrequencyStageCurves` struct above. `compute()`'s actual Monte Carlo
-// iteration loop is still a STUB (throws) -- neither of these new methods is wired into it yet;
-// they are exposed directly (same public-access-relaxation rationale as `can_compute`) for Task 9's
-// risk/performance compute and Task 10's compute loop to call. Phase 5 Tasks 9-11 finish the rest.
+// `get_stage_freq`), plus the `FrequencyStageCurves` struct above. Phase 5 Task 9 adds the
+// risk/consequence integration and performance/threshold/assurance compute
+// (`setup_performance_thresholds`, `compute_risk_from_stage_frequency` and friends,
+// `compute_performance`/`compute_levee_performance`, `compute_default_threshold`). Phase 5 Task 10
+// (this task) wires all of it together: `compute()` now runs the full pipeline (`can_compute` ->
+// `initialize_consequence_histograms` -> `setup_performance_thresholds` ->
+// `populate_random_numbers` -> `compute_iterations` -> `parallel_results_are_converged`), and adds
+// `preview_compute()`, the single-deterministic-pass shortcut. Phase 5 Task 11 finishes anything
+// left (see PLAN.md for what remains).
 //
 // Base class: `ValidationErrorLogger : Validation` is a thin WPF-messaging layer over the same
 // `Validation` this port already has (`hecfda::statistics::Validation`, ported Phase 1) -- see
@@ -63,32 +68,30 @@ struct FrequencyStageCurves {
 //
 // SEVERANCES (present in the C# file, deliberately NOT ported):
 //  - `IProgressReport`/`ProgressReport` event/`ReportProgress`: MVVM progress reporting, no UI
-//    layer in this port.
+//    layer in this port. `ComputeIterations`'s `ReportProgress` calls (including the
+//    `IMPACT_AREA_SIM_COMPLETED` sentinel at the very end) and the two `ReportMessage`
+//    begin/end-compute calls in `Compute()` are dropped for the same reason; the
+//    `completedIterations`/`expectedIterations` locals that existed solely to feed the dropped
+//    `ReportProgress` percent-complete calculation are dropped alongside them (see
+//    `compute_iterations()`'s own comment).
 //  - `ReportMessage`/`ErrorMessage`/`MessageEventArgs`/`ComputeCompleteMessage`/
 //    `FrequencyDamageMessage`: MVVM messaging, no analog (repo-wide messaging severance).
 //  - `[StoredProperty("ImpactAreaScenarioSimulation")]`: reflection-driven serialization metadata,
 //    no analog (repo-wide `[StoredProperty]` severance).
 //  - `System.Threading`/`System.Threading.Tasks` (`CancellationToken`, the `Compute(criteria,
-//    cancellationToken, ...)` overload, `TaskCanceledException`): this port's Monte Carlo loop
-//    (Tasks 8-11) is serial, matching the repo-wide "no threading primitives" convention already
-//    established for `ImpactAreaScenarioResults::get_or_create_uncertain_consequence_frequency_curve`
-//    (its own header documents the same choice for the `_uncertainCurveLock` C# field). Only the
-//    2-arg `Compute(ConvergenceCriteria, bool)` overload ("this code path currently only used by
-//    tests" per the C# doc comment) is ported; the 3-arg cancellation-token overload is dropped
-//    entirely.
+//    cancellationToken, ...)` overload, `Parallel.For`, `TaskCanceledException`, the
+//    `AggregateException` catch/rethrow that exists solely to unwrap a `Parallel.For` cancellation):
+//    this port's Monte Carlo loop (`compute_iterations()`, Task 10) is serial, matching the
+//    repo-wide "no threading primitives" convention already established for
+//    `ImpactAreaScenarioResults::get_or_create_uncertain_consequence_frequency_curve` (its own
+//    header documents the same choice for the `_uncertainCurveLock` C# field) and for
+//    `ImpactAreaScenarioResults::parallel_results_are_converged`'s own `Parallel.For`->serial-`for`
+//    port. Only the 2-arg `Compute(ConvergenceCriteria, bool)` overload ("this code path currently
+//    only used by tests" per the C# doc comment) is ported, with the 3-arg overload's body inlined
+//    directly into it; the 3-arg cancellation-token overload itself is dropped entirely.
 //  - `LogSimulationPropertyRuleErrors()`: builds intro-message strings solely for the severed
 //    `ReportMessage` call -- no observable effect once messaging is gone, so dropped rather than
 //    kept as a silent no-op.
-//  - Everything downstream of the `can_compute` gate inside `Compute()` EXCEPT the two methods
-//    Task 8 adds -- `SetupPerformanceThresholds`, `ComputeIterations` (the actual Monte Carlo
-//    loop), `DetermineSystemResponseThreshold`, `EnsureBottomAndTopHaveCorrectProbabilities`,
-//    `CreateHistogramsForAssuranceOfThresholds`, `ComputeRiskFromStageFrequency`,
-//    `ComputeDefaultThreshold` -- remains Phase 5 Tasks 9-11's job. None of them are declared here
-//    (not even as stubs): `compute()`'s success path still throws immediately after
-//    `initialize_consequence_histograms` (see that method's comment) rather than call into
-//    not-yet-existing methods; `populate_random_numbers`/`get_frequency_stage_sample`/
-//    `get_stage_freq` (Task 8, below) are reachable only via direct fixture-dispatch calls for now,
-//    same as `can_compute`/`initialize_consequence_histograms` already were in Task 7.
 //  - Per-property validation-rule registration for every `With*(UncertainPairedData)` /
 //    `With*(GraphicalUncertainPairedData)` builder overload (`WithInflowOutflow`, `WithFlowStage`
 //    -- both its "flow stage" HasErrors rule AND its "stage range" Fatal rule --, `WithFrequencyStage`,
@@ -145,24 +148,45 @@ class ImpactAreaScenarioSimulation : public hecfda::statistics::Validation {
 
     // ported from: ImpactAreaScenarioSimulation.cs `public ImpactAreaScenarioResults
     // Compute(ConvergenceCriteria convergenceCriteria, bool computeIsDeterministic = false)` --
-    // "This code path currently only used by tests" per the C# doc comment; the 3-arg
-    // CancellationToken overload it delegates to in C# is not ported (see class comment).
+    // "This code path currently only used by tests" per the C# doc comment. C# has this 2-arg
+    // overload delegate to a 3-arg `Compute(ConvergenceCriteria, CancellationToken, bool)`
+    // overload that then runs the body below; this port drops the CancellationToken entirely (see
+    // class comment's SEVERANCES note -- the Monte Carlo loop is serial, no cancellation surface
+    // needed) and inlines the 3-arg overload's body directly here.
     ImpactAreaScenarioResults compute(ConvergenceCriteria convergence_criteria,
                                        bool compute_is_deterministic = false) {
-        (void)compute_is_deterministic;  // consumed only by the not-yet-ported Monte Carlo loop
         if (!can_compute(convergence_criteria)) {
             impact_area_scenario_results_ = ImpactAreaScenarioResults(impact_area_id_, /*is_null=*/true);
             return std::move(impact_area_scenario_results_);
         }
         convergence_criteria_ = convergence_criteria;
         initialize_consequence_histograms(convergence_criteria_);
-        // STUB (Phase 5 Task 7 scope boundary): SetupPerformanceThresholds, PopulateRandomNumbers,
-        // and the Monte Carlo ComputeIterations loop are Tasks 8-11's job (see class comment).
-        // Throwing here -- rather than returning a half-initialized ImpactAreaScenarioResults that
-        // looks complete but isn't -- makes the boundary loud.
-        throw std::logic_error(
-            "ImpactAreaScenarioSimulation::compute: SetupPerformanceThresholds and the Monte Carlo "
-            "iteration loop are not implemented until Phase 5 Tasks 8-11");
+        setup_performance_thresholds(convergence_criteria_);
+        // ReportMessage "begin compute"/"end compute" (severed, see class comment) elided.
+        populate_random_numbers(convergence_criteria_);
+        compute_iterations(convergence_criteria_, compute_is_deterministic);
+        impact_area_scenario_results_.parallel_results_are_converged(.95, .05);
+        return std::move(impact_area_scenario_results_);
+    }
+
+    // ported from: ImpactAreaScenarioSimulation.cs `public ImpactAreaScenarioResults
+    // PreviewCompute()` (lines 724-731). A single deterministic pass over ONLY the failure
+    // stage-damage functions (no thresholds, no performance, no life-loss, no levee) -- used by
+    // callers that just want a quick single-iteration damage estimate without the full
+    // SetupPerformanceThresholds/PopulateRandomNumbers/ComputeIterations machinery. `create_ea_
+    // consequence_histograms` and `compute_risk_from_stage_frequency` (the per-consequence-list
+    // overload) are both already-private members reachable directly from here.
+    ImpactAreaScenarioResults preview_compute() {
+        convergence_criteria_ = ConvergenceCriteria(1, 1);
+        create_ea_consequence_histograms(ConvergenceCriteria(1, 1), failure_stage_damage_functions_,
+                                          ConsequenceType::Damage, RiskType::Fail);
+        FrequencyStageCurves curves = get_frequency_stage_sample(/*compute_is_deterministic=*/true, 1);
+        compute_risk_from_stage_frequency(curves.floodplain_stage, /*this_compute_iteration=*/0,
+                                           /*this_chunk_iteration=*/0, /*compute_is_deterministic=*/true,
+                                           failure_stage_damage_functions_, ConsequenceType::Damage,
+                                           /*save_annualized_result=*/true, /*save_freq_curves=*/true);
+        impact_area_scenario_results_.consequence_results().put_data_into_histograms();
+        return std::move(impact_area_scenario_results_);
     }
 
     // ported from: ImpactAreaScenarioSimulation.cs `private bool
@@ -774,6 +798,93 @@ class ImpactAreaScenarioSimulation : public hecfda::statistics::Validation {
     const ImpactAreaScenarioResults& results() const { return impact_area_scenario_results_; }
 
    private:
+    // ============================================================================================
+    // Phase 5 Task 10: the Monte Carlo iteration loop `compute()` drives.
+    // ============================================================================================
+
+    // ported from: ImpactAreaScenarioSimulation.cs `private void
+    // ComputeIterations(ConvergenceCriteria convergenceCriteria, bool computeIsDeterministic,
+    // CancellationToken cancellationToken)` (lines 330-403). The CancellationToken parameter is
+    // dropped (see class comment's SEVERANCES note); `completedIterations`/`expectedIterations`
+    // and the `ReportProgress` calls that consume them are dropped too (severed `IProgressReport`,
+    // no observable effect once progress reporting is gone).
+    //
+    // `Parallel.For(0, iterationsPerComputeChunk, chunkIteration => {...})` becomes a plain serial
+    // `for`: each `chunkIteration` samples strictly by `computeIteration = iterationsStart +
+    // chunkIteration` (an explicit index into every seeded `DotNetRandom` stream via
+    // `sample_paired_data(this_compute_iteration, ...)`), so which chunk-iteration runs first has
+    // no effect on the result -- matches this port's repo-wide "no threading primitives"
+    // convention (see class comment) and the identical `Parallel.For`->serial-`for` port already
+    // established for `ImpactAreaScenarioResults::parallel_results_are_converged`.
+    //
+    // The AggregateException/TaskCanceledException catch block (C# lines 358-372) exists solely to
+    // unwrap a `Parallel.For` cancellation exception -- with no CancellationToken and no
+    // Parallel.For, there is nothing to catch; a real error from inside the loop body propagates
+    // as a normal C++ exception straight out of `compute()`, same observable effect.
+    //
+    // FAITHFUL QUIRK (deliberately reproduced, not "fixed" -- see the class-comment-adjacent
+    // faithful-bug list convention established elsewhere in this port): on a NON-convergent pass,
+    // the outer `for (int i = 0; i < additional_chunks_needed; ++i)` loop restarts from `i = 0` on
+    // every `while` iteration, even though `additional_chunks_needed` was just recomputed from
+    // `remaining_iterations()`. Combined with `iterations_start = i * iterations_per_compute_chunk`,
+    // this means every chunk from the FIRST while-pass gets resampled and re-accumulated into the
+    // histograms again on the second while-pass (not just the newly-needed additional chunks) --
+    // transcribed exactly as upstream wrote it. None of this task's DETERMINISTIC fixtures ever
+    // take a second while-pass (`max_iterations=1` alone forces
+    // `DynamicHistogram::is_histogram_converged`/`SystemPerformanceResults::
+    // assurance_test_for_convergence` to report converged after the very first chunk, regardless
+    // of variance -- see those methods' own `sample_size_ >= max_iterations()` branch), so this
+    // quirk is inert for every oracle this task pins, but is preserved verbatim for future
+    // non-deterministic/multi-chunk callers.
+    void compute_iterations(const ConvergenceCriteria& convergence_criteria, bool compute_is_deterministic) {
+        int iterations_per_compute_chunk = convergence_criteria.iteration_count();
+        int additional_chunks_needed = static_cast<int>(
+            std::ceil(static_cast<double>(convergence_criteria.min_iterations()) / iterations_per_compute_chunk));
+        if (additional_chunks_needed < 1) {
+            additional_chunks_needed = 1;
+        }
+        bool check_consequence_results = has_failure_stage_damage_ || has_failure_stage_life_loss_;
+        bool compute_is_not_converged = true;
+        while (compute_is_not_converged) {
+            for (int i = 0; i < additional_chunks_needed; ++i) {
+                long iterations_start = static_cast<long>(i) * iterations_per_compute_chunk;
+                for (int chunk_iteration = 0; chunk_iteration < iterations_per_compute_chunk; ++chunk_iteration) {
+                    long compute_iteration = iterations_start + chunk_iteration;
+                    // Two curves come back for frequency stage: channel and floodplain. They're
+                    // both the same object's value if there is no interior-exterior relationship.
+                    FrequencyStageCurves curves = get_frequency_stage_sample(compute_is_deterministic, compute_iteration);
+                    // Both curves go into the risk compute to use with a levee (levee should
+                    // always be channel stage, not interior, but damage should use interior).
+                    std::optional<PairedData> system_response_sample = compute_risk_from_stage_frequency(
+                        curves, compute_iteration, chunk_iteration, compute_is_deterministic);
+                    // std::nullopt checks the system response, matching `systemResponse_sample ==
+                    // null`.
+                    compute_performance_from_stage_frequency(curves.channel_stage, system_response_sample,
+                                                              chunk_iteration);
+                }
+                impact_area_scenario_results_.consequence_results().put_data_into_histograms();
+                impact_area_scenario_results_.put_uncertain_frequency_curves_into_histograms();
+                for (Threshold& threshold_entry :
+                     impact_area_scenario_results_.performance_by_thresholds().list_of_thresholds()) {
+                    threshold_entry.system_performance_results().put_data_into_histograms();
+                }
+            }
+            if (!impact_area_scenario_results_.results_are_converged(.95, .05, check_consequence_results)) {
+                // Recalculate compute chunks -- see the FAITHFUL QUIRK note above: this resets
+                // `additional_chunks_needed`, but the outer `for` above still restarts at `i = 0`.
+                std::int64_t additional_iterations = impact_area_scenario_results_.remaining_iterations(
+                    .95, .05, check_consequence_results);
+                additional_chunks_needed = static_cast<int>(additional_iterations / iterations_per_compute_chunk);
+                if (additional_chunks_needed == 0) {
+                    additional_chunks_needed = 1;
+                }
+            } else {
+                compute_is_not_converged = false;
+                break;
+            }
+        }
+    }
+
     // ported from: the `frequencyDischarge` local-variable computation inside
     // GetFrequencyStageSample (lines 410-419), factored into its own method: C++'s PairedData has
     // no default constructor, so the C#'s "declare a reference-typed local, assign it across an
@@ -868,10 +979,8 @@ class ImpactAreaScenarioSimulation : public hecfda::statistics::Validation {
     static constexpr int kStageDamageSeed = 6789;
     static constexpr int kStageLifeLossSeed = 7891;
     // ported from: ImpactAreaScenarioSimulation.cs `private const double
-    // THRESHOLD_DAMAGE_PERCENT = 0.05` / `THRESHOLD_DAMAGE_RECURRENCE_INTERVAL = 0.99`. Unused
-    // until Tasks 8-11 wire SetupPerformanceThresholds/ComputeDefaultThreshold; kept here (rather
-    // than deferred) since they are simple constants, not methods, and cost nothing to declare
-    // now alongside the rest of the field block they belong to.
+    // THRESHOLD_DAMAGE_PERCENT = 0.05` / `THRESHOLD_DAMAGE_RECURRENCE_INTERVAL = 0.99`. Consumed
+    // by `compute_default_threshold()` (Task 9).
     static constexpr double kThresholdDamagePercent = 0.05;
     static constexpr double kThresholdDamageRecurrenceInterval = 0.99;
 

@@ -1418,20 +1418,37 @@ namespace oracle_emitter {
       var flowFrequency = DistFactory(ctor.GetProperty("flow_frequency").GetProperty("type").GetString(),
                                        DA(ctor.GetProperty("flow_frequency").GetProperty("params")));
       var flowStage = MakeSimulationUpd(ctor.GetProperty("flow_stage"));
-      var stageDamage = new List<UncertainPairedData>();
-      foreach (var sd in ctor.GetProperty("stage_damage").EnumerateArray()) {
-        stageDamage.Add(MakeSimulationUpd(sd));
-      }
       var builder = ImpactAreaScenarioSimulation.Builder(impactAreaID)
           .WithFlowFrequency(flowFrequency)
-          .WithFlowStage(flowStage)
-          .WithStageDamages(stageDamage);
+          .WithFlowStage(flowStage);
+      // stage_damage is OPTIONAL as of Phase 5 Task 10 (a levee-only simulation with no stage
+      // damage at all, e.g. PerformanceTest.ComputeLeveeAEP_Test, never calls WithStageDamages).
+      if (ctor.TryGetProperty("stage_damage", out var sdEl)) {
+        var stageDamage = new List<UncertainPairedData>();
+        foreach (var sd in sdEl.EnumerateArray()) {
+          stageDamage.Add(MakeSimulationUpd(sd));
+        }
+        builder = builder.WithStageDamages(stageDamage);
+      }
       if (ctor.TryGetProperty("non_failure_stage_damage", out var nfsd)) {
         var nonFailureStageDamage = new List<UncertainPairedData>();
         foreach (var sd in nfsd.EnumerateArray()) {
           nonFailureStageDamage.Add(MakeSimulationUpd(sd));
         }
         builder = builder.WithNonFailureStageDamage(nonFailureStageDamage);
+      }
+      // stage_life_loss (Phase 5 Task 10: ComputeEALL's WithStageLifeLoss).
+      if (ctor.TryGetProperty("stage_life_loss", out var sllEl)) {
+        var stageLifeLoss = new List<UncertainPairedData>();
+        foreach (var sd in sllEl.EnumerateArray()) {
+          stageLifeLoss.Add(MakeSimulationUpd(sd));
+        }
+        builder = builder.WithStageLifeLoss(stageLifeLoss);
+      }
+      // levee (Phase 5 Task 10: ComputeEAD_withLevee/TotalRiskShould/ComputeLeveeAEP's WithLevee).
+      if (ctor.TryGetProperty("levee", out var leveeEl)) {
+        var levee = MakeSimulationUpd(leveeEl);
+        builder = builder.WithLevee(levee, leveeEl.GetProperty("top_of_levee_elevation").GetDouble());
       }
       // Phase 5 Task 9: optional additional_threshold ({threshold_id, type, value}) -- mirrors
       // DefaultThresholdShould.NotOverrideUserProvidedDefaultThreshold's pre-registered ID-0
@@ -1483,6 +1500,43 @@ namespace oracle_emitter {
         var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
         simulation.SetupPerformanceThresholds(cc);
         return simulation.ImpactAreaScenarioResultsForTest.PerformanceByThresholds.GetThreshold(0).ThresholdValue;
+      }
+      // Phase 5 Task 10: the full Compute()/ComputeIterations Monte Carlo loop's EAD oracle. args =
+      // [min_iterations, max_iterations, compute_is_deterministic (0/1), impact_area_id,
+      // damage_category, asset_category, consequence_type_name]. RiskType is never passed --
+      // MeanExpectedAnnualConsequences's own RiskType.Total default is used (matches every
+      // SimulationShould/TotalRiskShould test's own call).
+      if (method == "mean_eac") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        bool computeIsDeterministic = argsEl[2].GetDouble() != 0.0;
+        int impactAreaID = argsEl[3].GetInt32();
+        string damageCategory = argsEl[4].GetString();
+        string assetCategory = argsEl[5].GetString();
+        var consequenceType = Enum.Parse<ConsequenceType>(argsEl[6].GetString());
+        ImpactAreaScenarioResults results = simulation.Compute(cc, computeIsDeterministic);
+        return results.MeanExpectedAnnualConsequences(impactAreaID, damageCategory, assetCategory, consequenceType);
+      }
+      // Phase 5 Task 10: PreviewCompute()'s single-deterministic-pass EAD oracle. args =
+      // [damage_category, asset_category, impact_area_id]. RiskType is never passed --
+      // SampleMeanDamage's own RiskType.Fail default is used, matching
+      // StudyDataAnalyticalFrequencyResultsTests.ComputeMeanEAD_Test's
+      // `ConsequenceResults.SampleMeanDamage(damCat, assetCat, impactAreaID)` call verbatim.
+      if (method == "preview_mean_damage") {
+        string damageCategory = argsEl[0].GetString();
+        string assetCategory = argsEl[1].GetString();
+        int impactAreaID = argsEl[2].GetInt32();
+        ImpactAreaScenarioResults results = simulation.PreviewCompute();
+        return results.ConsequenceResults.SampleMeanDamage(damageCategory, assetCategory, impactAreaID);
+      }
+      // Phase 5 Task 10: PerformanceTest.ComputeLeveeAEP_Test's levee-only (no stage damage)
+      // MeanAEP oracle. args = [threshold_id, min_iterations, max_iterations,
+      // compute_is_deterministic (0/1)].
+      if (method == "mean_aep") {
+        int thresholdID = argsEl[0].GetInt32();
+        var cc = new ConvergenceCriteria(argsEl[1].GetInt32(), argsEl[2].GetInt32());
+        bool computeIsDeterministic = argsEl[3].GetDouble() != 0.0;
+        ImpactAreaScenarioResults results = simulation.Compute(cc, computeIsDeterministic);
+        return results.MeanAEP(thresholdID);
       }
       throw new Exception("unknown simulation method: " + method);
     }

@@ -3104,26 +3104,44 @@ TEST_CASE("impact_area_scenario_results fixture") {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Bespoke dispatch for ImpactAreaScenarioSimulation (Phase 5 Task 7): the skeleton + fluent
-// SimulationBuilder + CanCompute + InitializeConsequenceHistograms surface only -- the Monte
-// Carlo compute loop is stubbed (throws) until Tasks 8-11. `construct` is {impact_area_id,
-// flow_frequency: {type, params} (ContinuousDistribution via with_flow_frequency), flow_stage:
-// {xs, ys:[{type,params}]} (UncertainPairedData via with_flow_stage, no metadata), stage_damage:
-// [{damage_category, asset_category, xs, ys:[{type,params}]}] (List<UncertainPairedData> via
-// with_stage_damages), non_failure_stage_damage (same per-item shape, OPTIONAL, via
-// with_non_failure_stage_damage)}. `method` dispatches: is_null (args [min_iterations,
-// max_iterations]) -- compute(ConvergenceCriteria(min,max)).is_null(), mirroring
+// Bespoke dispatch for ImpactAreaScenarioSimulation. Phase 5 Task 7 ported the skeleton + fluent
+// SimulationBuilder + CanCompute + InitializeConsequenceHistograms surface; Task 8 added
+// PopulateRandomNumbers/GetFrequencyStageSample; Task 9 added the risk/performance/threshold
+// compute; Task 10 wired the full Monte Carlo compute() loop (ComputeIterations) +
+// PreviewCompute(). `construct` is {impact_area_id, flow_frequency: {type, params}
+// (ContinuousDistribution via with_flow_frequency), flow_stage: {xs, ys:[{type,params}]}
+// (UncertainPairedData via with_flow_stage, no metadata), stage_damage: [{damage_category,
+// asset_category, xs, ys:[{type,params}]}] (List<UncertainPairedData> via with_stage_damages,
+// OPTIONAL as of Task 10 -- see ComputeLeveeAEP-style levee-only-no-damage cases),
+// non_failure_stage_damage (same per-item shape, OPTIONAL, via with_non_failure_stage_damage),
+// stage_life_loss (same per-item shape, OPTIONAL, via with_stage_life_loss -- Task 10's
+// ComputeEALL oracle), levee: {xs, ys:[{type,params}], top_of_levee_elevation} (OPTIONAL, via
+// with_levee -- Task 10's ComputeEAD_withLevee/TotalRiskShould oracles), additional_threshold
+// (OPTIONAL, via with_additional_threshold, ConvergenceCriteria(1,1))}. `method` dispatches:
+// is_null (args [min_iterations, max_iterations]) -- compute(ConvergenceCriteria(min,max)).
+// is_null(), mirroring
 // ImpactAreaScenarioSimulationShould.ResultsShouldNotComputeWhenMaxIterationsAreGreaterThanMinIterations
-// (default MinIterations=50000 > a small MaxIterations short-circuits before the not-yet-ported
-// Monte Carlo loop, since compute() returns the null results immediately once can_compute() is
-// false); can_compute (args [min, max]) -- can_compute(ConvergenceCriteria(min,max)) directly
-// (this port's deliberate public-access relaxation of C#'s private CanCompute, see the header's
-// class comment); consequence_result_count (args []) -- calls
-// initialize_consequence_histograms(ConvergenceCriteria()) directly (same access-relaxation
-// rationale) then reads results().consequence_results().consequence_result_list().size(),
-// exercising the one-AggregatedConsequencesBinned-per-(damage_category,asset_category,
-// consequence_type,risk_type) fan-out for a case with both a failing and a non-failing
-// stage-damage list. All values PIN (gate-captured against the real C#, never hand-derived).
+// (default MinIterations=50000 > a small MaxIterations short-circuits, since compute() returns
+// the null results immediately once can_compute() is false); can_compute (args [min, max]) --
+// can_compute(ConvergenceCriteria(min,max)) directly (this port's deliberate public-access
+// relaxation of C#'s private CanCompute, see the header's class comment); consequence_result_count
+// (args []) -- calls initialize_consequence_histograms(ConvergenceCriteria()) directly (same
+// access-relaxation rationale) then reads
+// results().consequence_results().consequence_result_list().size(), exercising the
+// one-AggregatedConsequencesBinned-per-(damage_category,asset_category,consequence_type,risk_type)
+// fan-out for a case with both a failing and a non-failing stage-damage list. mean_eac (Task 10,
+// args [min_iterations, max_iterations, compute_is_deterministic (0/1), impact_area_id,
+// damage_category, asset_category, consequence_type_name]) -- the full compute(cc,
+// compute_is_deterministic).mean_expected_annual_consequences(...) path (RiskType defaults to
+// Total, matching every SimulationShould/TotalRiskShould test's own call). preview_mean_damage
+// (Task 10, args [damage_category, asset_category, impact_area_id]) --
+// preview_compute().consequence_results().sample_mean_damage(...) (RiskType defaults to Fail,
+// matching StudyDataAnalyticalFrequencyResultsTests.ComputeMeanEAD_Test's own
+// `ConsequenceResults.SampleMeanDamage(damCat, assetCat, impactAreaID)` call, which never passes a
+// RiskType). mean_aep (Task 10, args [threshold_id, min_iterations, max_iterations,
+// compute_is_deterministic (0/1)]) -- compute(cc, deterministic).mean_aep(threshold_id), mirroring
+// PerformanceTest.ComputeLeveeAEP_Test. All values PIN (gate-captured against the real C#, never
+// hand-derived).
 static hecfda::model::paired_data::UncertainPairedData make_simulation_upd(const json& ctor) {
     using namespace hecfda::model::paired_data;
     using namespace hecfda::statistics::distributions;
@@ -3169,26 +3187,43 @@ static hecfda::model::compute::ImpactAreaScenarioSimulation build_simulation(con
 
     int impact_area_id = ctor["impact_area_id"].get<int>();
 
-    std::vector<UncertainPairedData> stage_damage;
-    for (const auto& sd : ctor["stage_damage"]) {
-        stage_damage.push_back(make_simulation_upd(sd));
-    }
-
     auto builder = ImpactAreaScenarioSimulation::builder(impact_area_id)
                        .with_flow_frequency(make_simulation_continuous_distribution(ctor["flow_frequency"]))
-                       .with_flow_stage(make_simulation_upd(ctor["flow_stage"]))
-                       .with_stage_damages(std::move(stage_damage));
+                       .with_flow_stage(make_simulation_upd(ctor["flow_stage"]));
 
     // Each with_* mutates `builder`'s internal simulation in place and returns an (unused, here)
     // rvalue reference to the same object -- called as a plain statement on the `builder` lvalue
     // rather than reassigned, matching the established OccupancyType::builder() precedent (avoids a
     // self-move-assignment).
+    //
+    // `stage_damage` is OPTIONAL as of Task 10 (a levee-only simulation with no stage damage at
+    // all, e.g. PerformanceTest.ComputeLeveeAEP_Test, never calls WithStageDamages).
+    if (ctor.contains("stage_damage")) {
+        std::vector<UncertainPairedData> stage_damage;
+        for (const auto& sd : ctor["stage_damage"]) {
+            stage_damage.push_back(make_simulation_upd(sd));
+        }
+        builder.with_stage_damages(std::move(stage_damage));
+    }
     if (ctor.contains("non_failure_stage_damage")) {
         std::vector<UncertainPairedData> non_failure_stage_damage;
         for (const auto& sd : ctor["non_failure_stage_damage"]) {
             non_failure_stage_damage.push_back(make_simulation_upd(sd));
         }
         builder.with_non_failure_stage_damage(std::move(non_failure_stage_damage));
+    }
+    // stage_life_loss (Task 10: ComputeEALL's WithStageLifeLoss).
+    if (ctor.contains("stage_life_loss")) {
+        std::vector<UncertainPairedData> stage_life_loss;
+        for (const auto& sd : ctor["stage_life_loss"]) {
+            stage_life_loss.push_back(make_simulation_upd(sd));
+        }
+        builder.with_stage_life_loss(std::move(stage_life_loss));
+    }
+    // levee (Task 10: ComputeEAD_withLevee/TotalRiskShould/ComputeLeveeAEP's WithLevee).
+    if (ctor.contains("levee")) {
+        const auto& levee = ctor["levee"];
+        builder.with_levee(make_simulation_upd(levee), levee["top_of_levee_elevation"].get<double>());
     }
     if (ctor.contains("additional_threshold")) {
         const auto& at = ctor["additional_threshold"];
@@ -3242,6 +3277,47 @@ static std::vector<double> run_simulation(const json& c, const std::string& meth
         ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
         simulation.setup_performance_thresholds(cc);
         return {simulation.results().performance_by_thresholds().get_threshold(0).threshold_value()};
+    }
+    // Phase 5 Task 10: the full compute() loop's EAD oracle. args = [min_iterations,
+    // max_iterations, compute_is_deterministic (0/1), impact_area_id, damage_category,
+    // asset_category, consequence_type_name]. RiskType is never passed -- every
+    // SimulationShould/TotalRiskShould oracle this dispatches relies on
+    // mean_expected_annual_consequences's own RiskType::Total default (see that method's own
+    // comment: Total matches Fail-only or Fail+Non_Fail results identically since Total is a
+    // wildcard, not an accumulation-vs-Fail distinction).
+    if (method == "mean_eac") {
+        ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
+        bool compute_is_deterministic = args[2].get<double>() != 0.0;
+        int impact_area_id = args[3].get<int>();
+        std::string damage_category = args[4].get<std::string>();
+        std::string asset_category = args[5].get<std::string>();
+        auto consequence_type = parse_consequence_type(args[6].get<std::string>());
+        auto results = simulation.compute(cc, compute_is_deterministic);
+        return {results.mean_expected_annual_consequences(impact_area_id, damage_category, asset_category,
+                                                            consequence_type)};
+    }
+    // Phase 5 Task 10: preview_compute()'s single-deterministic-pass EAD oracle. args =
+    // [damage_category, asset_category, impact_area_id]. Calls
+    // consequence_results().sample_mean_damage(...) directly (its own RiskType::Fail default),
+    // matching StudyDataAnalyticalFrequencyResultsTests.ComputeMeanEAD_Test's
+    // `ConsequenceResults.SampleMeanDamage(damCat, assetCat, impactAreaID)` call verbatim (no
+    // RiskType argument passed there either).
+    if (method == "preview_mean_damage") {
+        std::string damage_category = args[0].get<std::string>();
+        std::string asset_category = args[1].get<std::string>();
+        int impact_area_id = args[2].get<int>();
+        auto results = simulation.preview_compute();
+        return {results.consequence_results().sample_mean_damage(damage_category, asset_category, impact_area_id)};
+    }
+    // Phase 5 Task 10: PerformanceTest.ComputeLeveeAEP_Test's levee-only (no stage damage) MeanAEP
+    // oracle. args = [threshold_id, min_iterations, max_iterations, compute_is_deterministic
+    // (0/1)].
+    if (method == "mean_aep") {
+        int threshold_id = args[0].get<int>();
+        ConvergenceCriteria cc(args[1].get<int>(), args[2].get<int>());
+        bool compute_is_deterministic = args[3].get<double>() != 0.0;
+        auto results = simulation.compute(cc, compute_is_deterministic);
+        return {results.mean_aep(threshold_id)};
     }
     auto msg = std::string("unknown simulation method: ") + method;
     FAIL(msg.c_str());
@@ -3299,6 +3375,32 @@ TEST_CASE("frequency_stage_sample fixture") {
 // adds). See fixtures/compute/default_threshold.json's `note` for what each case exercises.
 TEST_CASE("default_threshold fixture") {
     std::ifstream f(fixtures_dir() + "/compute/default_threshold.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "simulation");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_simulation(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Phase 5 Task 10: the full compute()/ComputeIterations Monte Carlo loop + preview_compute() --
+// the deterministic EAD oracles (ComputeEAD/ComputeEAD_withLevee/TotalRiskShould/ComputeEALL/
+// ComputeMeanEAD_Test, and PerformanceTest.ComputeLeveeAEP_Test's MeanAEP if present). Reuses
+// build_simulation/run_simulation, same as every other simulation-target fixture. See
+// fixtures/compute/impact_area_scenario_simulation_deterministic.json's `note` for what each case
+// exercises and where its upstream literal comes from.
+TEST_CASE("impact_area_scenario_simulation_deterministic fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/impact_area_scenario_simulation_deterministic.json");
     REQUIRE(f.good());
     json fx; f >> fx;
     CHECK(fx["target"] == "simulation");

@@ -1,41 +1,43 @@
 // PATCHED LOCAL COPY of HEC.FDA.Model/compute/ImpactAreaScenarioSimulation.cs
 // @ f63682a86a30dc306a105689714a92bfd95956c5
-// Phase 5 Task 7 (skeleton) + Task 8 (frequency-stage assembly + seeded PopulateRandomNumbers).
-// This is the heaviest patched copy of the phase: it keeps the skeleton (fields, seed constants,
-// ctor), the fluent Builder/SimulationBuilder (every With* overload, including every
-// AddSinglePropertyRule call VERBATIM -- this emitter runs against the REAL
+// Phase 5 Task 7 (skeleton) + Task 8 (frequency-stage assembly + seeded PopulateRandomNumbers) +
+// Task 9 (risk/consequence integration + performance/threshold/assurance) + Task 10 (the full
+// Compute()/ComputeIterations Monte Carlo loop + PreviewCompute()). This is the heaviest patched
+// copy of the phase: it keeps the skeleton (fields, seed constants, ctor), the fluent
+// Builder/SimulationBuilder (every With* overload, including every AddSinglePropertyRule call
+// VERBATIM -- this emitter runs against the REAL
 // UncertainPairedData/GraphicalUncertainPairedData/ContinuousDistribution, which DO have working
 // Validate()/HasErrors() surfaces, unlike the C++ port's Task-7-scoped severance of those same
 // rules -- see impact_area_scenario_simulation.hpp's class comment for why the port severs them
 // and why that's safe for every case this fixture actually exercises), CanCompute,
-// InitializeConsequenceHistograms/CreateEAConsequenceHistograms, and (Task 8) PopulateRandomNumbers/
-// GetFrequencyStageSample/GetStageFreq VERBATIM, plus the FrequencyStageCurves record struct.
-// FrequencyStageCurves/GetFrequencyStageSample/GetStageFreq are made `public` here (all `internal`/
-// `private` in the real C#) -- same access-relaxation rationale as CanCompute/
-// InitializeConsequenceHistograms below (no InternalsVisibleTo-equivalent in this subset-compiled
-// emitter project).
+// InitializeConsequenceHistograms/CreateEAConsequenceHistograms, (Task 8) PopulateRandomNumbers/
+// GetFrequencyStageSample/GetStageFreq, (Task 9) SetupPerformanceThresholds/
+// DetermineSystemResponseThreshold/ComputeRiskFromStageFrequency/ComputePerformance*/
+// ComputeDefaultThreshold, and (Task 10) Compute/ComputeIterations/PreviewCompute -- ALL VERBATIM
+// from the real C#, plus the FrequencyStageCurves record struct. Every method the real C# marks
+// `private`/`internal` is made `public` here (no InternalsVisibleTo-equivalent in this
+// subset-compiled emitter project) -- same access-relaxation rationale throughout.
 //
 // Dropped (mirrors the C++ port's SEVERANCES list in impact_area_scenario_simulation.hpp):
 //  - `: ValidationErrorLogger, IProgressReport` base -> plain `: Validation` (ValidationErrorLogger
 //    is a thin messaging layer over Validation with nothing this emitter needs; matches
 //    patched/SystemPerformanceResults.cs's identical choice).
-//  - `ProgressReport` event / `ReportProgress`: IProgressReport surface, no analog.
-//  - `ReportMessage`/`ErrorMessage`/`MessageEventArgs` calls in CanCompute: MVVM messaging, no
-//    analog (the dummy-fallback-free CanCompute logic itself is kept verbatim).
+//  - `ProgressReport` event / `ReportProgress`: IProgressReport surface, no analog. `ComputeIterations`'s
+//    ReportProgress calls (including the IMPACT_AREA_SIM_COMPLETED sentinel) are dropped too, along
+//    with the `completedIterations`/`expectedIterations` locals that existed solely to feed them.
+//  - `ReportMessage`/`ErrorMessage`/`MessageEventArgs` calls in CanCompute/Compute: MVVM messaging,
+//    no analog (the dummy-fallback-free CanCompute/ComputeIterations logic itself is kept verbatim).
 //  - `[StoredProperty("ImpactAreaScenarioSimulation")]`: reflection-driven serialization metadata.
-//  - `System.Threading`/`System.Threading.Tasks` (`CancellationToken`, the 3-arg `Compute`
-//    overload it delegates to, `ComputeIterations`, `SetupPerformanceThresholds`,
-//    `DetermineSystemResponseThreshold`, `EnsureBottomAndTopHaveCorrectProbabilities`,
-//    `CreateHistogramsForAssuranceOfThresholds`, `ComputeRiskFromStageFrequency`,
-//    `ComputeDefaultThreshold`, `LogSimulationPropertyRuleErrors`): the rest of the Monte Carlo
-//    compute loop, Phase 5 Tasks 9-11's job, not reachable from any of this task's fixture cases
-//    (every case either short-circuits at the CanCompute gate, or calls CanCompute/
-//    InitializeConsequenceHistograms/PopulateRandomNumbers/GetFrequencyStageSample directly). The
-//    public 2-arg `Compute(ConvergenceCriteria, bool)` overload is kept but truncated to the
-//    CanCompute gate + InitializeConsequenceHistograms, then throws NotImplementedException --
-//    matching the C++ port's `compute()` scope boundary exactly (see that method's header
-//    comment) so the real-C#-vs-port comparison stays apples-to-apples for the is_null fixture
-//    case.
+//  - `System.Threading.CancellationToken` / the 3-arg `Compute(criteria, cancellationToken, bool)`
+//    overload it delegates to / `TaskCanceledException` / the `AggregateException` catch-and-rethrow
+//    that exists solely to unwrap a `Parallel.For` cancellation: dropped. The 2-arg
+//    `Compute(ConvergenceCriteria, bool)` overload is kept, with the 3-arg overload's body inlined
+//    directly into it (matching the C++ port's identical choice). `Parallel.For` itself IS kept in
+//    `ComputeIterations` (unlike the C++ port's serial-for port) -- this emitter's whole purpose is
+//    to BE the real compute engine byte-for-byte, and `Parallel.For`'s index-based sampling
+//    (`computeIteration = iterationsStart + chunkIteration`) makes it order-independent regardless.
+//  - `LogSimulationPropertyRuleErrors()`: builds intro-message strings solely for the severed
+//    `ReportMessage` call -- no observable effect once messaging is gone.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -120,7 +122,9 @@ namespace HEC.FDA.Model.compute
             _ImpactAreaScenarioResults = new ImpactAreaScenarioResults(_ImpactAreaID);
         }
 
-        // Truncated to the CanCompute gate + InitializeConsequenceHistograms -- see file header.
+        // Phase 5 Task 10: full compute, VERBATIM from the real ImpactAreaScenarioSimulation.cs
+        // (lines 97-134's 2-arg overload inlined with the 3-arg overload's body it delegates to --
+        // this emitter drops CancellationToken entirely, same as the C++ port; see file header).
         public ImpactAreaScenarioResults Compute(ConvergenceCriteria convergenceCriteria, bool computeIsDeterministic = false)
         {
             if (!CanCompute(convergenceCriteria))
@@ -130,8 +134,75 @@ namespace HEC.FDA.Model.compute
             }
             _ConvergenceCriteria = convergenceCriteria;
             InitializeConsequenceHistograms(convergenceCriteria);
-            throw new NotImplementedException(
-                "SetupPerformanceThresholds and the Monte Carlo iteration loop are not implemented until Phase 5 Tasks 8-11");
+            SetupPerformanceThresholds(convergenceCriteria);
+            PopulateRandomNumbers(convergenceCriteria);
+            ComputeIterations(convergenceCriteria, computeIsDeterministic);
+            _ImpactAreaScenarioResults.ParallelResultsAreConverged(.95, .05);
+            return _ImpactAreaScenarioResults;
+        }
+
+        // ported from: ImpactAreaScenarioSimulation.cs `private void
+        // ComputeIterations(ConvergenceCriteria convergenceCriteria, bool computeIsDeterministic,
+        // CancellationToken cancellationToken)` (lines 330-403), VERBATIM except the dropped
+        // CancellationToken parameter/AggregateException catch (no Parallel.For here either -- kept
+        // as Parallel.For for byte-for-byte behavioral parity with the real compute engine; this
+        // emitter's whole purpose is to BE the real engine) and the dropped ReportProgress calls
+        // (IProgressReport, no analog -- see file header). Made `public` here -- see file header.
+        public void ComputeIterations(ConvergenceCriteria convergenceCriteria, bool computeIsDeterministic)
+        {
+            int iterationsPerComputeChunk = convergenceCriteria.IterationCount;
+            int additionalChunksNeeded = Convert.ToInt32(Math.Ceiling(Convert.ToDouble(convergenceCriteria.MinIterations) / iterationsPerComputeChunk));
+            if (additionalChunksNeeded < 1)
+            {
+                additionalChunksNeeded = 1;
+            }
+            bool computeIsNotConverged = true;
+            while (computeIsNotConverged)
+            {
+                for (int i = 0; i < additionalChunksNeeded; i++)
+                {
+                    long iterationsStart = i * iterationsPerComputeChunk;
+                    System.Threading.Tasks.Parallel.For(0, iterationsPerComputeChunk, chunkIteration =>
+                    {
+                        long computeIteration = iterationsStart + chunkIteration;
+                        FrequencyStageCurves curves = GetFrequencyStageSample(computeIsDeterministic, computeIteration);
+                        PairedData systemResponse_sample = ComputeRiskFromStageFrequency(curves, computeIteration, chunkIteration, computeIsDeterministic);
+                        ComputePerformanceFromStageFrequency(curves.ChannelStage, systemResponse_sample, chunkIteration);
+                    });
+                    _ImpactAreaScenarioResults.ConsequenceResults.PutDataIntoHistograms();
+                    _ImpactAreaScenarioResults.PutUncertainFrequencyCurvesIntoHistograms();
+                    foreach (var thresholdEntry in _ImpactAreaScenarioResults.PerformanceByThresholds.ListOfThresholds)
+                    {
+                        thresholdEntry.SystemPerformanceResults.PutDataIntoHistograms();
+                    }
+                }
+                if (!_ImpactAreaScenarioResults.ResultsAreConverged(.95, .05, checkConsequenceResults: (_HasFailureStageDamage || _HasFailureStageLifeLoss)))
+                {
+                    long additionalIterations = _ImpactAreaScenarioResults.RemainingIterations(.95, .05, (_HasFailureStageDamage || _HasFailureStageLifeLoss));
+                    additionalChunksNeeded = Convert.ToInt32(additionalIterations / convergenceCriteria.IterationCount);
+                    if (additionalChunksNeeded == 0)
+                    {
+                        additionalChunksNeeded = 1;
+                    }
+                }
+                else
+                {
+                    computeIsNotConverged = false;
+                    break;
+                }
+            }
+        }
+
+        // ported from: ImpactAreaScenarioSimulation.cs `public ImpactAreaScenarioResults
+        // PreviewCompute()` (lines 724-731), VERBATIM.
+        public ImpactAreaScenarioResults PreviewCompute()
+        {
+            _ConvergenceCriteria = new(1, 1);
+            CreateEAConsequenceHistograms(new(1, 1), _FailureStageDamageFunctions, ConsequenceType.Damage, RiskType.Fail);
+            FrequencyStageCurves curves = GetFrequencyStageSample(computeIsDeterministic: true, 1);
+            ComputeRiskFromStageFrequency(curves.FloodplainStage, 0, 0, computeIsDeterministic: true, _FailureStageDamageFunctions, ConsequenceType.Damage, true, true);
+            _ImpactAreaScenarioResults.ConsequenceResults.PutDataIntoHistograms();
+            return _ImpactAreaScenarioResults;
         }
 
         // Public here (private in the real C#) for the same reason CanCompute is public below and
@@ -296,11 +367,7 @@ namespace HEC.FDA.Model.compute
         // from the real ImpactAreaScenarioSimulation.cs (lines 136-774), made `public` where the real
         // C# has them `private`/`internal` -- same access-relaxation rationale as CanCompute/
         // InitializeConsequenceHistograms/PopulateRandomNumbers/GetFrequencyStageSample above (this
-        // subset-compiled emitter has no [InternalsVisibleTo] test-assembly equivalent). Dropped only
-        // what the file header already documents as out of scope: ComputeIterations (the Monte Carlo
-        // loop itself, Task 10) is not needed here -- SetupPerformanceThresholds runs its own
-        // self-contained deterministic iteration-1 pass to derive the default threshold, independent
-        // of ComputeIterations.
+        // subset-compiled emitter has no [InternalsVisibleTo] test-assembly equivalent).
         // ============================================================================================
 
         public void SetupPerformanceThresholds(ConvergenceCriteria convergenceCriteria)
