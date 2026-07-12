@@ -18,6 +18,7 @@
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/model/stage_damage/hydraulic_profiles.hpp"
 #include "hecfda/model/stage_damage/impact_area_stage_damage.hpp"
+#include "hecfda/model/stage_damage/scenario_stage_damage.hpp"
 #include "hecfda/model/structures/deterministic_occupancy_type.hpp"
 #include "hecfda/model/structures/first_floor_elevation_uncertainty.hpp"
 #include "hecfda/model/structures/inventory.hpp"
@@ -2378,6 +2379,134 @@ TEST_CASE("impact_area_stage_damage fixture") {
             if (!hecfda_test::compare_by_mode({got}, {expected}, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " stage: " + std::to_string(stage);
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ported from: fixtures/stage_damage/scenario_stage_damage.json's note (Phase 4 Task 8, the
+// ScenarioStageDamage outer-loop oracle). Builds ONE ImpactAreaStageDamage per
+// `construct.impact_areas[i]` entry, exactly like the impact_area_stage_damage fixture above
+// (same tractable Residential/Commercial inventories, mock hydraulics, and graphical
+// stage-frequency construction), but returns it BY VALUE from a small helper function rather than
+// keeping the local GraphicalUncertainPairedData/UncertainPairedData frequency objects alive in an
+// enclosing scope -- safe because ImpactAreaStageDamage's ctor only DEREFERENCES those pointers
+// during establish_aggregation_stages() (never re-reads them from compute()), per
+// impact_area_stage_damage.hpp's OWNERSHIP class-comment note, and ImpactAreaStageDamage is itself
+// copyable/movable (Task 6), so returning it by value out of this helper is safe once its own
+// local frequency objects go out of scope.
+static hecfda::model::stage_damage::ImpactAreaStageDamage build_impact_area_stage_damage_for_scenario(
+    const json& ctor) {
+    using hecfda::model::paired_data::CurveMetaData;
+    using hecfda::model::paired_data::GraphicalUncertainPairedData;
+    using hecfda::model::paired_data::UncertainPairedData;
+    using hecfda::model::stage_damage::HydraulicProfiles;
+    using hecfda::model::stage_damage::ImpactAreaStageDamage;
+    using hecfda::statistics::distributions::Deterministic;
+    using hecfda::statistics::distributions::IDistribution;
+
+    const std::vector<double> probabilities = {.5, .2, .1, .04, .02, .01, .004, .002};
+
+    int impact_area_id = ctor["impact_area_id"].get<int>();
+    std::string damage_category = ctor["damage_category"].get<std::string>();
+    float stage1 = ctor["hydraulic_stage1"].get<float>();
+    float stage2 = ctor["hydraulic_stage2"].get<float>();
+    bool use_reg_unreg = ctor["use_reg_unreg"].get<bool>();
+
+    hecfda::model::structures::Inventory inventory =
+        damage_category == "Residential" ? make_tractable_residential_inventory(impact_area_id)
+                                          : make_tractable_commercial_inventory(impact_area_id);
+    auto wses_by_profile = make_mock_wses_by_profile(stage1, stage2, probabilities.size());
+    HydraulicProfiles hydraulics(probabilities, wses_by_profile);
+
+    std::vector<double> graphical_stages = {12, 13, 14, 15, 16, 17, 18, 19};
+    CurveMetaData stage_frequency_md("probability", "stages", "graphical stage frequency");
+    GraphicalUncertainPairedData stage_frequency(probabilities, graphical_stages, /*erl=*/50, stage_frequency_md,
+                                                  /*using_stages_not_flows=*/true);
+
+    std::vector<double> inflows = {1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900};
+    CurveMetaData flow_frequency_md("probability", "discharge", "graphical flow frequency");
+    GraphicalUncertainPairedData flow_frequency(probabilities, inflows, /*erl=*/50, flow_frequency_md,
+                                                 /*using_stages_not_flows=*/false);
+
+    std::vector<double> outflow_vals = {120, 130, 140, 150, 160, 170, 180, 190};
+    std::vector<std::unique_ptr<IDistribution>> outflow_ys;
+    for (double v : outflow_vals) outflow_ys.push_back(std::make_unique<Deterministic>(v));
+    UncertainPairedData unreg_reg(inflows, std::move(outflow_ys));
+
+    std::vector<double> flows = {120, 130, 140, 150, 160, 170, 180, 190};
+    std::vector<double> stage_vals = {12, 13, 14, 15, 16, 17, 18, 19};
+    std::vector<std::unique_ptr<IDistribution>> stage_ys;
+    for (double v : stage_vals) stage_ys.push_back(std::make_unique<Deterministic>(v));
+    UncertainPairedData discharge_stage(flows, std::move(stage_ys));
+
+    return ImpactAreaStageDamage(impact_area_id, std::move(inventory), std::move(hydraulics),
+                                  /*analysis_year=*/9999, /*analytical_flow_frequency=*/nullptr,
+                                  use_reg_unreg ? &flow_frequency : &stage_frequency,
+                                  use_reg_unreg ? &discharge_stage : nullptr,
+                                  use_reg_unreg ? &unreg_reg : nullptr, /*using_mock_data=*/true);
+}
+
+TEST_CASE("scenario_stage_damage fixture") {
+    using hecfda::model::paired_data::UncertainPairedData;
+    using hecfda::model::stage_damage::ImpactAreaStageDamage;
+    using hecfda::model::stage_damage::ScenarioStageDamage;
+
+    std::ifstream f(fixtures_dir() + "/stage_damage/scenario_stage_damage.json");
+    REQUIRE(f.good());
+    json fx;
+    f >> fx;
+    CHECK(fx["target"] == "scenario_stage_damage");
+
+    for (const auto& c : fx["cases"]) {
+        std::vector<ImpactAreaStageDamage> impact_area_stage_damages;
+        for (const auto& ia : c["construct"]["impact_areas"]) {
+            impact_area_stage_damages.push_back(build_impact_area_stage_damage_for_scenario(ia));
+        }
+        ScenarioStageDamage scenario(std::move(impact_area_stage_damages));
+        // Built and computed ONCE per case, shared across all of that case's assertions (matches
+        // this file's other multi-assertion-per-object fixtures, e.g. aggregated_consequences_binned).
+        auto compute_result = scenario.compute(/*compute_is_deterministic=*/true);
+
+        json case_select = c.value("select", json::object());
+
+        for (const auto& a : c["assertions"]) {
+            std::string method = a["method"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            std::string mode = a["mode"].get<std::string>();
+            double expected = a["expected"].get<double>();
+
+            double got;
+            if (method == "result_count") {
+                got = static_cast<double>(compute_result.first.size());
+            } else if (method == "f") {
+                const json& sel = a.contains("select") ? a["select"] : case_select;
+                int sel_impact_area_id = sel["impact_area_id"].get<int>();
+                std::string sel_damage_category = sel["damage_category"].get<std::string>();
+                std::string sel_asset_category = sel["asset_category"].get<std::string>();
+
+                const UncertainPairedData* target = nullptr;
+                for (const auto& upd : compute_result.first) {
+                    if (upd.metadata().impact_area_id() == sel_impact_area_id &&
+                        upd.metadata().damage_category() == sel_damage_category &&
+                        upd.metadata().asset_category() == sel_asset_category) {
+                        target = &upd;
+                        break;
+                    }
+                }
+                REQUIRE(target != nullptr);
+                double stage = a["args"][0].get<double>();
+                auto sampled = target->sample_paired_data(1, true);
+                got = sampled.f(stage);
+            } else {
+                FAIL((std::string("unknown scenario_stage_damage method: ") + method).c_str());
+                continue;
+            }
+
+            if (!hecfda_test::compare_by_mode({got}, {expected}, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + method;
                 FAIL(msg.c_str());
             }
         }

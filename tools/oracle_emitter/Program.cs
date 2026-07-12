@@ -878,14 +878,18 @@ namespace oracle_emitter {
       return new Inventory(occTypes, structures);
     }
 
-    static object EvalImpactAreaStageDamage(JsonElement caseEl, string method, JsonElement argsEl) {
-      var c = caseEl.GetProperty("construct");
-      int impactAreaID = c.GetProperty("impact_area_id").GetInt32();
-      string damageCategory = c.GetProperty("damage_category").GetString();
-      string assetCategory = c.GetProperty("asset_category").GetString();
-      float stage1 = (float)c.GetProperty("hydraulic_stage1").GetDouble();
-      float stage2 = (float)c.GetProperty("hydraulic_stage2").GetDouble();
-      bool useRegUnreg = c.GetProperty("use_reg_unreg").GetBoolean();
+    // Shared tractable-ImpactAreaStageDamage construction helper (Phase 4 Task 7 originally,
+    // factored out in Task 8 so EvalScenarioStageDamage's `construct.impact_areas` list can build
+    // each entry the identical way EvalImpactAreaStageDamage does). `iaEl` is one
+    // {impact_area_id, damage_category, hydraulic_stage1, hydraulic_stage2, use_reg_unreg} object
+    // (asset_category is a selection key, not a construction input, so it is read by the caller,
+    // not here).
+    static ImpactAreaStageDamage BuildImpactAreaStageDamageFromJson(JsonElement iaEl) {
+      int impactAreaID = iaEl.GetProperty("impact_area_id").GetInt32();
+      string damageCategory = iaEl.GetProperty("damage_category").GetString();
+      float stage1 = (float)iaEl.GetProperty("hydraulic_stage1").GetDouble();
+      float stage2 = (float)iaEl.GetProperty("hydraulic_stage2").GetDouble();
+      bool useRegUnreg = iaEl.GetProperty("use_reg_unreg").GetBoolean();
 
       double[] probabilities = { .5, .2, .1, .04, .02, .01, .004, .002 };
       var inventory = damageCategory == "Residential" ? MakeTractableResidentialInventory(impactAreaID) : MakeTractableCommercialInventory(impactAreaID);
@@ -908,12 +912,19 @@ namespace oracle_emitter {
       var dischargeStageMd = new CurveMetaData("discharge", "stage", "stage discharge function");
       var dischargeStage = new UncertainPairedData(flows, stages, dischargeStageMd);
 
-      var impactAreaStageDamage = new ImpactAreaStageDamage(impactAreaID, inventory, probabilities.ToList(), wsesByProfile, analysisYear: 9999,
+      return new ImpactAreaStageDamage(impactAreaID, inventory, probabilities.ToList(), wsesByProfile, analysisYear: 9999,
         analyticalFlowFrequency: null,
         graphicalFrequency: useRegUnreg ? flowFrequency : stageFrequency,
         dischargeStage: useRegUnreg ? dischargeStage : null,
         unregulatedRegulated: useRegUnreg ? unregReg : null,
         usingMockData: true);
+    }
+
+    static object EvalImpactAreaStageDamage(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      string damageCategory = c.GetProperty("damage_category").GetString();
+      string assetCategory = c.GetProperty("asset_category").GetString();
+      var impactAreaStageDamage = BuildImpactAreaStageDamageFromJson(c);
 
       var (damageUpds, _) = impactAreaStageDamage.Compute(computeIsDeterministic: true);
       UncertainPairedData target = damageUpds.FirstOrDefault(u => u.CurveMetaData.DamageCategory == damageCategory && u.CurveMetaData.AssetCategory == assetCategory);
@@ -922,6 +933,41 @@ namespace oracle_emitter {
 
       if (method == "f") return sampled.f(D(argsEl[0]));
       throw new Exception("unknown impact_area_stage_damage method: " + method);
+    }
+
+    // ScenarioStageDamage.Compute() (Phase 4 Task 8) -- the thin outer loop wrapping Task 7's
+    // ImpactAreaStageDamage.Compute() across every impact area, built from
+    // patched/ScenarioStageDamage.cs (CSV/ProgressReporter/Stopwatch dropped, the Compute() loop
+    // itself verbatim -- see that file's header). `construct.impact_areas` is a list of the same
+    // shape EvalImpactAreaStageDamage's `construct` uses, one entry per impact area, each built via
+    // the shared BuildImpactAreaStageDamageFromJson helper above. `select` (case-level default,
+    // overridable per assertion via the assertion's own `select`) is
+    // {impact_area_id, damage_category, asset_category}, identifying which UncertainPairedData in
+    // the concatenated Item1 (damage) result list `method: 'f'` (args [stage]) samples and
+    // evaluates. `method: 'result_count'` (args []) returns the total Item1 list length, confirming
+    // the AddRange-equivalent concatenation across impact areas.
+    static object EvalScenarioStageDamage(JsonElement caseEl, JsonElement assertionEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var impactAreaStageDamages = c.GetProperty("impact_areas").EnumerateArray()
+          .Select(BuildImpactAreaStageDamageFromJson).ToList();
+      var scenario = new ScenarioStageDamage(impactAreaStageDamages);
+      var (damageUpds, _) = scenario.Compute(computeIsDeterministic: true);
+
+      if (method == "result_count") return (double)damageUpds.Count;
+      if (method == "f") {
+        JsonElement sel = assertionEl.TryGetProperty("select", out var selEl) ? selEl : caseEl.GetProperty("select");
+        int impactAreaID = sel.GetProperty("impact_area_id").GetInt32();
+        string damageCategory = sel.GetProperty("damage_category").GetString();
+        string assetCategory = sel.GetProperty("asset_category").GetString();
+        UncertainPairedData target = damageUpds.FirstOrDefault(u =>
+            u.CurveMetaData.ImpactAreaID == impactAreaID &&
+            u.CurveMetaData.DamageCategory == damageCategory &&
+            u.CurveMetaData.AssetCategory == assetCategory);
+        if (target == null) throw new Exception($"scenario_stage_damage: no UncertainPairedData for impact_area_id={impactAreaID}, damage_category={damageCategory}, asset_category={assetCategory}");
+        IPairedData sampled = target.SamplePairedData(iterationNumber: 1, retrieveDeterministicRepresentation: true);
+        return sampled.f(D(argsEl[0]));
+      }
+      throw new Exception("unknown scenario_stage_damage method: " + method);
     }
 
     // ported from: TractableStageDamageTests.cs's ComputeStagesAtStructures(stage1, stage2):
@@ -1074,6 +1120,7 @@ namespace oracle_emitter {
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;
               case "impact_area_stage_damage": val = EvalImpactAreaStageDamage(c, method, argsEl); break;
+              case "scenario_stage_damage": val = EvalScenarioStageDamage(c, a, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{
