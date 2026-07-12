@@ -1280,6 +1280,32 @@ namespace oracle_emitter {
       throw new Exception("unknown performance_by_thresholds method: " + method);
     }
 
+    // ContinuousDistributionExtensions.BootstrapToPairedData(this ContinuousDistribution, long
+    // iterationNumber, double[] ExceedanceProbabilities, bool computeIsDeterministic) (Phase 5
+    // Task 5) -- the analytical-frequency realization Task 8's EAD compute uses to turn a fitted
+    // flow-frequency distribution into a PairedData flow-frequency curve, either deterministically
+    // (the distribution's own fit) or via a seeded parametric bootstrap resample
+    // (ContinuousDistribution.Sample(iterationNumber)). `construct` is {mean, standard_deviation,
+    // skew, sample_size} for LogPearson3(mean, standardDeviation, skew, sampleSize). `seed` +
+    // `quantity_of_samples`, if present on the case, call GenerateRandomSamplesofNumbers(seed,
+    // quantityOfSamples) before BootstrapToPairedData (the seeded case; omitted for the
+    // deterministic case, matching the C# path that never touches RandomSamplesofNumbers).
+    // `iteration_number` + `compute_is_deterministic` are passed straight through, along with
+    // DoubleGlobalStatics.RequiredExceedanceProbabilities (the fixed 173-point grid). `method` is
+    // always bootstrap_to_paired_data_yvals (args []): the resulting PairedData's Yvals.
+    static object EvalBootstrapToPairedData(JsonElement caseEl, string method) {
+      var c = caseEl.GetProperty("construct");
+      var lp3 = new LogPearson3(D(c.GetProperty("mean")), D(c.GetProperty("standard_deviation")), D(c.GetProperty("skew")), c.GetProperty("sample_size").GetInt32());
+      if (caseEl.TryGetProperty("seed", out var seedEl)) {
+        lp3.GenerateRandomSamplesofNumbers(seedEl.GetInt32(), caseEl.GetProperty("quantity_of_samples").GetInt32());
+      }
+      long iterationNumber = caseEl.GetProperty("iteration_number").GetInt64();
+      bool computeIsDeterministic = caseEl.GetProperty("compute_is_deterministic").GetBoolean();
+      PairedData pd = lp3.BootstrapToPairedData(iterationNumber, DoubleGlobalStatics.RequiredExceedanceProbabilities, computeIsDeterministic);
+      if (method == "bootstrap_to_paired_data_yvals") return pd.Yvals;
+      throw new Exception("unknown bootstrap_to_paired_data method: " + method);
+    }
+
     static void Main() {
       string fixturesDir = Environment.GetEnvironmentVariable("HECFDA_FIXTURES");
       if (string.IsNullOrEmpty(fixturesDir)) {
@@ -1335,6 +1361,7 @@ namespace oracle_emitter {
               case "assurance_result_storage": val = EvalAssuranceResultStorage(c, method, argsEl); break;
               case "system_performance_results": val = EvalSystemPerformanceResults(c, method, argsEl); break;
               case "performance_by_thresholds": val = EvalPerformanceByThresholds(c, method, argsEl); break;
+              case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;
               case "impact_area_stage_damage": val = EvalImpactAreaStageDamage(c, method, argsEl); break;

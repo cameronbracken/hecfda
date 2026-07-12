@@ -177,5 +177,16 @@
          compiles unpatched. Same auto-pickup as the patched/ files above, no explicit Compile
          Include for the patched file. -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/CategoriedPairedData.cs" />
+    <!-- Task Phase5T5: ContinuousDistributionExtensions (BootstrapToPairedData /
+         BootstrapToUncertainPairedData) depends only on types already compiled into this project
+         (ContinuousDistribution/IDistribution/IProvideRandomNumbers via the HEC.FDA.Statistics
+         ProjectReference + IProvideRandomNumbers.cs above; PairedData/UncertainPairedData/
+         CurveMetaData via the paireddata Compile Includes above; DynamicHistogram/
+         ConvergenceCriteria via the HEC.FDA.Statistics ProjectReference). No MVVM/XML/threading
+         surface to strip, compiles unpatched, verbatim, both extension methods kept (only the
+         iterationNumber overload is exercised by the fixture; the IProvideRandomNumbers overload
+         and BootstrapToUncertainPairedData are out of this task's scope but cost nothing to keep
+         compiled in). -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/extensions/ContinuousDistributionExtensions.cs" />
   </ItemGroup>
 </Project>

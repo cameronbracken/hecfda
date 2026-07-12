@@ -36,9 +36,11 @@
 #include "hecfda/model/utilities/graphical_frequency_uncertainty_calculators.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/histograms/dynamic_histogram.hpp"
+#include "hecfda/statistics/distributions/continuous_distribution_extensions.hpp"
 #include "hecfda/statistics/distributions/deterministic.hpp"
 #include "hecfda/statistics/distributions/empirical.hpp"
 #include "hecfda/statistics/distributions/i_distribution_factory.hpp"
+#include "hecfda/statistics/distributions/logpearson3.hpp"
 #include "hecfda/statistics/distributions/lognormal.hpp"
 #include "hecfda/statistics/distributions/normal.hpp"
 #include "hecfda/statistics/distributions/pearson3.hpp"
@@ -2856,6 +2858,55 @@ TEST_CASE("categoried_uncertain_paired_data fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             auto got = run_categoried_uncertain_paired_data(c, a["method"].get<std::string>());
+            std::vector<double> exp = a["expected"].get<std::vector<double>>();
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for ContinuousDistribution::sample(iteration) + bootstrap_to_paired_data
+// (Phase 5 Task 5) -- the analytical-frequency realization Task 8's EAD compute uses to turn a
+// fitted flow-frequency distribution (e.g. LogPearson3) into a PairedData flow-frequency curve,
+// either deterministically (the distribution's own fit) or via a seeded parametric bootstrap
+// resample. `construct` is {mean, standard_deviation, skew, sample_size} for
+// LogPearson3(mean, standard_deviation, skew, sample_size); `seed` + `quantity_of_samples`, if
+// present, call generate_random_samples_of_numbers(seed, quantity_of_samples) before
+// bootstrap_to_paired_data (the seeded case). `iteration_number` + `compute_is_deterministic` are
+// passed straight through to bootstrap_to_paired_data, along with
+// hecfda::statistics::distributions::required_exceedance_probabilities() (the fixed 173-point
+// grid -- see fixtures/compute/bootstrap_to_paired_data.json's note for why it's never restated
+// per-case). `method` is always bootstrap_to_paired_data_yvals (args []): the resulting
+// PairedData's Yvals.
+static std::vector<double> run_bootstrap_to_paired_data(const json& c) {
+    using namespace hecfda::statistics::distributions;
+    const auto& ctor = c["construct"];
+    LogPearson3 lp3(ctor["mean"].get<double>(), ctor["standard_deviation"].get<double>(),
+                     ctor["skew"].get<double>(), ctor["sample_size"].get<long>());
+    if (c.contains("seed")) {
+        lp3.generate_random_samples_of_numbers(c["seed"].get<int>(), c["quantity_of_samples"].get<int>());
+    }
+    hecfda::model::paired_data::PairedData pd = bootstrap_to_paired_data(
+        lp3, c["iteration_number"].get<long>(), required_exceedance_probabilities(),
+        c["compute_is_deterministic"].get<bool>());
+    return pd.yvals();
+}
+
+TEST_CASE("bootstrap_to_paired_data fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/bootstrap_to_paired_data.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "bootstrap_to_paired_data");
+    for (const auto& c : fx["cases"]) {
+        auto got = run_bootstrap_to_paired_data(c);
+        for (const auto& a : c["assertions"]) {
+            CHECK(a["method"].get<std::string>() == "bootstrap_to_paired_data_yvals");
             std::vector<double> exp = a["expected"].get<std::vector<double>>();
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
