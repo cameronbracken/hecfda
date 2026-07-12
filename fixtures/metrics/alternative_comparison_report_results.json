@@ -1,0 +1,950 @@
+{
+  "target": "alternative_comparison_report_results",
+  "kind": "alternative_comparison_report_results",
+  "source_test": "HEC.FDA.Model/metrics/AlternativeComparisonReportResults.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real AlternativeComparisonReportResults/AlternativeResults/ScenarioResults/StudyAreaConsequencesByQuantile directly)",
+  "note": "Phase 6 Task 7. Single case constructs an AlternativeComparisonReportResults directly via the internal (withProjectAlternativeResults, withoutProjectAlternativeResults, eqadResults, baseYearEADResults, futureYearEADResults) ctor. `with_project` is a list of two AlternativeResults entries (alternative_id 1 and 2), each built the same way alternative_results.json's cases are: the (StudyAreaConsequencesByQuantile, id, analysisYears, periodOfAnalysis, isNull) 'public for testing' ctor for the AlternativeResults-level `eqad_results` field, then BaseYearScenarioResults/FutureYearScenarioResults assigned from `base_year_impact_areas`/`future_year_impact_areas` (each in the exact impact_area_scenario_results.json construct/consequence_realizations/aep_observations/stage_observations shape, one ImpactAreaScenarioResults per entry, AddResults'd into a fresh ScenarioResults in order -- identical helper reuse to alternative_results.json), and ScenariosAreIdentical=false. `without_project` is one more AlternativeResults built the same way (its own alternative_id is irrelevant -- never read by any delegator under test). `eqad_reduced_results_list`/`base_year_ead_reduced_results_list`/`future_year_ead_reduced_results_list` are each a list of {alternative_id, consequence_results} objects: for each, a StudyAreaConsequencesByQuantile is built via the (int alternativeID) ctor (the ONLY ctor that sets a real, non-zero AlternativeID) then AddExistingConsequenceResultObject-ed with the per-entry AggregatedConsequencesByQuantile results (study_area_consequences_by_quantile.json-shaped, Empirical.SampleMean force-set to each entry's own `sample_mean` field, same convention as alternative_results.json/study_area_consequences_by_quantile.json) -- this is the ONLY construction path in the real C# that produces a StudyAreaConsequencesByQuantile with both a populated ConsequenceResultList AND a meaningful AlternativeID, matching how AlternativeComparisonReport (Task 10, not yet ported) is expected to build these lists incrementally. `method` dispatches (args documented per-assertion below; ConsequenceType.Damage/RiskType.Total implicit at every level, matching how every ScenarioResults realization and reduced-results entry was built): alternative_id-taking methods (`sample_mean_eqad_reduced`/`sample_mean_base_year_ead_reduced`/`sample_mean_future_year_ead_reduced`/`sample_mean_with_project_base_year_ead`/`sample_mean_with_project_future_year_ead`/histogram-sample-mean siblings) take args=[alternative_id, damage_category_or_null, asset_category_or_null, impact_area_id]; the without-project delegators (`sample_mean_without_project_base_year_ead`/`sample_mean_without_project_future_year_ead`) take args=[damage_category_or_null, asset_category_or_null, impact_area_id] (no alternative_id -- they read `_WithoutProjectAlternativeResults` directly, proving the with/without delegation split independent of `get_consequences_reduced_results_for_given_alternative`'s list-selection logic). Exercises both with-project alternatives (1 and 2) against all three reduced-results lists, proving `get_consequences_reduced_results_for_given_alternative`'s per-alternative linear search across each of the three independently-populated lists. All values PIN, gate-captured, never hand-derived (every assertion routes through real ScenarioResults consequence-histogram binning or Empirical stacking, not a simple average of raw inputs).",
+  "cases": [
+    {
+      "name": "two_with_project_alternatives",
+      "with_project": [
+        {
+          "alternative_id": 1,
+          "eqad_results": {
+            "consequence_results": [
+              {
+                "damage_category": "Residential",
+                "asset_category": "Structure",
+                "impact_area_id": 1,
+                "consequence_type": "Damage",
+                "risk_type": "Total",
+                "empirical": {
+                  "probabilities": [
+                    0.5,
+                    1.0
+                  ],
+                  "values": [
+                    300,
+                    600
+                  ]
+                },
+                "sample_mean": 450.0
+              }
+            ]
+          },
+          "base_year_impact_areas": [
+            {
+              "construct": {
+                "impact_area_id": 1,
+                "damage_category": "Residential",
+                "asset_category": "Structure",
+                "consequence_convergence": {
+                  "min_iterations": 5,
+                  "max_iterations": 1000
+                },
+                "threshold": {
+                  "id": 2,
+                  "type": "DefaultExteriorStage",
+                  "value": 11.0,
+                  "convergence": {
+                    "min_iterations": 5,
+                    "max_iterations": 1000
+                  }
+                }
+              },
+              "consequence_realizations": [
+                {
+                  "iteration": 0,
+                  "damage": 800.0
+                },
+                {
+                  "iteration": 1,
+                  "damage": 1300.0
+                },
+                {
+                  "iteration": 2,
+                  "damage": 1000.0
+                },
+                {
+                  "iteration": 3,
+                  "damage": 1600.0
+                },
+                {
+                  "iteration": 4,
+                  "damage": 700.0
+                }
+              ],
+              "aep_observations": [
+                {
+                  "iteration": 0,
+                  "result": 0.04
+                },
+                {
+                  "iteration": 1,
+                  "result": 0.06
+                },
+                {
+                  "iteration": 2,
+                  "result": 0.02
+                },
+                {
+                  "iteration": 3,
+                  "result": 0.08
+                },
+                {
+                  "iteration": 4,
+                  "result": 0.05
+                }
+              ],
+              "stage_observations": [
+                {
+                  "iteration": 0,
+                  "result": 9.8
+                },
+                {
+                  "iteration": 1,
+                  "result": 10.0
+                },
+                {
+                  "iteration": 2,
+                  "result": 9.6
+                },
+                {
+                  "iteration": 3,
+                  "result": 10.2
+                },
+                {
+                  "iteration": 4,
+                  "result": 9.7
+                }
+              ]
+            }
+          ],
+          "future_year_impact_areas": [
+            {
+              "construct": {
+                "impact_area_id": 1,
+                "damage_category": "Residential",
+                "asset_category": "Structure",
+                "consequence_convergence": {
+                  "min_iterations": 5,
+                  "max_iterations": 1000
+                },
+                "threshold": {
+                  "id": 2,
+                  "type": "DefaultExteriorStage",
+                  "value": 11.0,
+                  "convergence": {
+                    "min_iterations": 5,
+                    "max_iterations": 1000
+                  }
+                }
+              },
+              "consequence_realizations": [
+                {
+                  "iteration": 0,
+                  "damage": 900.0
+                },
+                {
+                  "iteration": 1,
+                  "damage": 1400.0
+                },
+                {
+                  "iteration": 2,
+                  "damage": 1100.0
+                },
+                {
+                  "iteration": 3,
+                  "damage": 1700.0
+                },
+                {
+                  "iteration": 4,
+                  "damage": 800.0
+                }
+              ],
+              "aep_observations": [
+                {
+                  "iteration": 0,
+                  "result": 0.03
+                },
+                {
+                  "iteration": 1,
+                  "result": 0.05
+                },
+                {
+                  "iteration": 2,
+                  "result": 0.015
+                },
+                {
+                  "iteration": 3,
+                  "result": 0.07
+                },
+                {
+                  "iteration": 4,
+                  "result": 0.04
+                }
+              ],
+              "stage_observations": [
+                {
+                  "iteration": 0,
+                  "result": 9.9
+                },
+                {
+                  "iteration": 1,
+                  "result": 10.1
+                },
+                {
+                  "iteration": 2,
+                  "result": 9.7
+                },
+                {
+                  "iteration": 3,
+                  "result": 10.3
+                },
+                {
+                  "iteration": 4,
+                  "result": 9.8
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "alternative_id": 2,
+          "eqad_results": {
+            "consequence_results": [
+              {
+                "damage_category": "Commercial",
+                "asset_category": "Content",
+                "impact_area_id": 2,
+                "consequence_type": "Damage",
+                "risk_type": "Total",
+                "empirical": {
+                  "probabilities": [
+                    0.5,
+                    1.0
+                  ],
+                  "values": [
+                    100,
+                    300
+                  ]
+                },
+                "sample_mean": 200.0
+              }
+            ]
+          },
+          "base_year_impact_areas": [
+            {
+              "construct": {
+                "impact_area_id": 2,
+                "damage_category": "Commercial",
+                "asset_category": "Content",
+                "consequence_convergence": {
+                  "min_iterations": 3,
+                  "max_iterations": 200
+                },
+                "threshold": {
+                  "id": 3,
+                  "type": "AdditionalExteriorStage",
+                  "value": 8.25,
+                  "convergence": {
+                    "min_iterations": 3,
+                    "max_iterations": 200
+                  }
+                }
+              },
+              "consequence_realizations": [
+                {
+                  "iteration": 0,
+                  "damage": 500.0
+                },
+                {
+                  "iteration": 1,
+                  "damage": 650.0
+                },
+                {
+                  "iteration": 2,
+                  "damage": 300.0
+                },
+                {
+                  "iteration": 3,
+                  "damage": 800.0
+                }
+              ],
+              "aep_observations": [
+                {
+                  "iteration": 0,
+                  "result": 0.12
+                },
+                {
+                  "iteration": 1,
+                  "result": 0.09
+                },
+                {
+                  "iteration": 2,
+                  "result": 0.15
+                },
+                {
+                  "iteration": 3,
+                  "result": 0.07
+                }
+              ],
+              "stage_observations": [
+                {
+                  "iteration": 0,
+                  "result": 6.5
+                },
+                {
+                  "iteration": 1,
+                  "result": 6.8
+                },
+                {
+                  "iteration": 2,
+                  "result": 6.2
+                },
+                {
+                  "iteration": 3,
+                  "result": 7.0
+                }
+              ]
+            }
+          ],
+          "future_year_impact_areas": [
+            {
+              "construct": {
+                "impact_area_id": 2,
+                "damage_category": "Commercial",
+                "asset_category": "Content",
+                "consequence_convergence": {
+                  "min_iterations": 3,
+                  "max_iterations": 200
+                },
+                "threshold": {
+                  "id": 3,
+                  "type": "AdditionalExteriorStage",
+                  "value": 8.25,
+                  "convergence": {
+                    "min_iterations": 3,
+                    "max_iterations": 200
+                  }
+                }
+              },
+              "consequence_realizations": [
+                {
+                  "iteration": 0,
+                  "damage": 400.0
+                },
+                {
+                  "iteration": 1,
+                  "damage": 550.0
+                },
+                {
+                  "iteration": 2,
+                  "damage": 250.0
+                },
+                {
+                  "iteration": 3,
+                  "damage": 700.0
+                }
+              ],
+              "aep_observations": [
+                {
+                  "iteration": 0,
+                  "result": 0.11
+                },
+                {
+                  "iteration": 1,
+                  "result": 0.08
+                },
+                {
+                  "iteration": 2,
+                  "result": 0.14
+                },
+                {
+                  "iteration": 3,
+                  "result": 0.06
+                }
+              ],
+              "stage_observations": [
+                {
+                  "iteration": 0,
+                  "result": 6.4
+                },
+                {
+                  "iteration": 1,
+                  "result": 6.7
+                },
+                {
+                  "iteration": 2,
+                  "result": 6.1
+                },
+                {
+                  "iteration": 3,
+                  "result": 6.9
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "without_project": {
+        "alternative_id": 0,
+        "eqad_results": {
+          "consequence_results": [
+            {
+              "damage_category": "Residential",
+              "asset_category": "Structure",
+              "impact_area_id": 1,
+              "consequence_type": "Damage",
+              "risk_type": "Total",
+              "empirical": {
+                "probabilities": [
+                  0.5,
+                  1.0
+                ],
+                "values": [
+                  500,
+                  1000
+                ]
+              },
+              "sample_mean": 750.0
+            }
+          ]
+        },
+        "base_year_impact_areas": [
+          {
+            "construct": {
+              "impact_area_id": 1,
+              "damage_category": "Residential",
+              "asset_category": "Structure",
+              "consequence_convergence": {
+                "min_iterations": 5,
+                "max_iterations": 1000
+              },
+              "threshold": {
+                "id": 1,
+                "type": "DefaultExteriorStage",
+                "value": 12.5,
+                "convergence": {
+                  "min_iterations": 5,
+                  "max_iterations": 1000
+                }
+              }
+            },
+            "consequence_realizations": [
+              {
+                "iteration": 0,
+                "damage": 1000.0
+              },
+              {
+                "iteration": 1,
+                "damage": 1500.0
+              },
+              {
+                "iteration": 2,
+                "damage": 1200.0
+              },
+              {
+                "iteration": 3,
+                "damage": 1800.0
+              },
+              {
+                "iteration": 4,
+                "damage": 900.0
+              }
+            ],
+            "aep_observations": [
+              {
+                "iteration": 0,
+                "result": 0.05
+              },
+              {
+                "iteration": 1,
+                "result": 0.08
+              },
+              {
+                "iteration": 2,
+                "result": 0.03
+              },
+              {
+                "iteration": 3,
+                "result": 0.1
+              },
+              {
+                "iteration": 4,
+                "result": 0.06
+              }
+            ],
+            "stage_observations": [
+              {
+                "iteration": 0,
+                "result": 10.1
+              },
+              {
+                "iteration": 1,
+                "result": 10.3
+              },
+              {
+                "iteration": 2,
+                "result": 9.9
+              },
+              {
+                "iteration": 3,
+                "result": 10.5
+              },
+              {
+                "iteration": 4,
+                "result": 10.0
+              }
+            ]
+          }
+        ],
+        "future_year_impact_areas": [
+          {
+            "construct": {
+              "impact_area_id": 1,
+              "damage_category": "Residential",
+              "asset_category": "Structure",
+              "consequence_convergence": {
+                "min_iterations": 5,
+                "max_iterations": 1000
+              },
+              "threshold": {
+                "id": 1,
+                "type": "DefaultExteriorStage",
+                "value": 12.5,
+                "convergence": {
+                  "min_iterations": 5,
+                  "max_iterations": 1000
+                }
+              }
+            },
+            "consequence_realizations": [
+              {
+                "iteration": 0,
+                "damage": 1200.0
+              },
+              {
+                "iteration": 1,
+                "damage": 1700.0
+              },
+              {
+                "iteration": 2,
+                "damage": 1400.0
+              },
+              {
+                "iteration": 3,
+                "damage": 2000.0
+              },
+              {
+                "iteration": 4,
+                "damage": 1100.0
+              }
+            ],
+            "aep_observations": [
+              {
+                "iteration": 0,
+                "result": 0.04
+              },
+              {
+                "iteration": 1,
+                "result": 0.07
+              },
+              {
+                "iteration": 2,
+                "result": 0.02
+              },
+              {
+                "iteration": 3,
+                "result": 0.09
+              },
+              {
+                "iteration": 4,
+                "result": 0.05
+              }
+            ],
+            "stage_observations": [
+              {
+                "iteration": 0,
+                "result": 10.3
+              },
+              {
+                "iteration": 1,
+                "result": 10.5
+              },
+              {
+                "iteration": 2,
+                "result": 10.1
+              },
+              {
+                "iteration": 3,
+                "result": 10.7
+              },
+              {
+                "iteration": 4,
+                "result": 10.2
+              }
+            ]
+          }
+        ]
+      },
+      "eqad_reduced_results_list": [
+        {
+          "alternative_id": 1,
+          "consequence_results": [
+            {
+              "damage_category": "Residential",
+              "asset_category": "Structure",
+              "impact_area_id": 1,
+              "consequence_type": "Damage",
+              "risk_type": "Total",
+              "empirical": {
+                "probabilities": [
+                  0.25,
+                  0.5,
+                  0.75,
+                  1.0
+                ],
+                "values": [
+                  50,
+                  100,
+                  150,
+                  200
+                ]
+              },
+              "sample_mean": 125.0
+            }
+          ]
+        },
+        {
+          "alternative_id": 2,
+          "consequence_results": [
+            {
+              "damage_category": "Commercial",
+              "asset_category": "Content",
+              "impact_area_id": 2,
+              "consequence_type": "Damage",
+              "risk_type": "Total",
+              "empirical": {
+                "probabilities": [
+                  0.5,
+                  1.0
+                ],
+                "values": [
+                  20,
+                  60
+                ]
+              },
+              "sample_mean": 40.0
+            }
+          ]
+        }
+      ],
+      "base_year_ead_reduced_results_list": [
+        {
+          "alternative_id": 1,
+          "consequence_results": [
+            {
+              "damage_category": "Residential",
+              "asset_category": "Structure",
+              "impact_area_id": 1,
+              "consequence_type": "Damage",
+              "risk_type": "Total",
+              "empirical": {
+                "probabilities": [
+                  0.25,
+                  0.5,
+                  0.75,
+                  1.0
+                ],
+                "values": [
+                  100,
+                  200,
+                  300,
+                  400
+                ]
+              },
+              "sample_mean": 250.0
+            }
+          ]
+        },
+        {
+          "alternative_id": 2,
+          "consequence_results": [
+            {
+              "damage_category": "Commercial",
+              "asset_category": "Content",
+              "impact_area_id": 2,
+              "consequence_type": "Damage",
+              "risk_type": "Total",
+              "empirical": {
+                "probabilities": [
+                  0.5,
+                  1.0
+                ],
+                "values": [
+                  50,
+                  150
+                ]
+              },
+              "sample_mean": 100.0
+            }
+          ]
+        }
+      ],
+      "future_year_ead_reduced_results_list": [
+        {
+          "alternative_id": 1,
+          "consequence_results": [
+            {
+              "damage_category": "Residential",
+              "asset_category": "Structure",
+              "impact_area_id": 1,
+              "consequence_type": "Damage",
+              "risk_type": "Total",
+              "empirical": {
+                "probabilities": [
+                  0.2,
+                  0.6,
+                  1.0
+                ],
+                "values": [
+                  80,
+                  160,
+                  240
+                ]
+              },
+              "sample_mean": 160.0
+            }
+          ]
+        },
+        {
+          "alternative_id": 2,
+          "consequence_results": [
+            {
+              "damage_category": "Commercial",
+              "asset_category": "Content",
+              "impact_area_id": 2,
+              "consequence_type": "Damage",
+              "risk_type": "Total",
+              "empirical": {
+                "probabilities": [
+                  0.5,
+                  1.0
+                ],
+                "values": [
+                  30,
+                  90
+                ]
+              },
+              "sample_mean": 60.0
+            }
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "method": "sample_mean_eqad_reduced",
+          "args": [
+            1,
+            null,
+            null,
+            -999
+          ],
+          "expected": 125,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "sample_mean_eqad_reduced",
+          "args": [
+            2,
+            null,
+            null,
+            -999
+          ],
+          "expected": 40,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "sample_mean_base_year_ead_reduced",
+          "args": [
+            1,
+            null,
+            null,
+            -999
+          ],
+          "expected": 250,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "sample_mean_base_year_ead_reduced",
+          "args": [
+            2,
+            null,
+            null,
+            -999
+          ],
+          "expected": 100,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "sample_mean_future_year_ead_reduced",
+          "args": [
+            1,
+            null,
+            null,
+            -999
+          ],
+          "expected": 160,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "sample_mean_future_year_ead_reduced",
+          "args": [
+            2,
+            null,
+            null,
+            -999
+          ],
+          "expected": 60,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "sample_mean_without_project_base_year_ead",
+          "args": [
+            null,
+            null,
+            -999
+          ],
+          "expected": 63.99999999999998,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "sample_mean_without_project_future_year_ead",
+          "args": [
+            null,
+            null,
+            -999
+          ],
+          "expected": 74.00000000000001,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "sample_mean_with_project_base_year_ead",
+          "args": [
+            1,
+            null,
+            null,
+            -999
+          ],
+          "expected": 54.000000000000014,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "sample_mean_with_project_base_year_ead",
+          "args": [
+            2,
+            null,
+            null,
+            -999
+          ],
+          "expected": 22.499999999999982,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "sample_mean_with_project_future_year_ead",
+          "args": [
+            1,
+            null,
+            null,
+            -999
+          ],
+          "expected": 59.000000000000014,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "sample_mean_with_project_future_year_ead",
+          "args": [
+            2,
+            null,
+            null,
+            -999
+          ],
+          "expected": 19.000000000000007,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "get_eqad_reduced_results_histogram_sample_mean",
+          "args": [
+            1,
+            null,
+            null,
+            -999
+          ],
+          "expected": 125,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "get_base_year_ead_reduced_results_histogram_sample_mean",
+          "args": [
+            1,
+            null,
+            null,
+            -999
+          ],
+          "expected": 250,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "get_base_year_ead_reduced_results_histogram_sample_mean",
+          "args": [
+            2,
+            null,
+            null,
+            -999
+          ],
+          "expected": 100,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "get_future_year_ead_reduced_results_histogram_sample_mean",
+          "args": [
+            1,
+            null,
+            null,
+            -999
+          ],
+          "expected": 160,
+          "mode": "abs",
+          "tol": 1e-09
+        },
+        {
+          "method": "get_future_year_ead_reduced_results_histogram_sample_mean",
+          "args": [
+            2,
+            null,
+            null,
+            -999
+          ],
+          "expected": 60,
+          "mode": "abs",
+          "tol": 1e-09
+        }
+      ]
+    }
+  ]
+}

@@ -1647,6 +1647,108 @@ namespace oracle_emitter {
       throw new Exception("unknown alternative_results method: " + method);
     }
 
+    // AlternativeComparisonReportResults (Phase 6 Task 7): the container
+    // AlternativeComparisonReport.ComputeAlternativeComparisonReport (Task 10, not yet ported)
+    // returns -- the with/without-project AlternativeResults plus three lists of REDUCED (benefit)
+    // StudyAreaConsequencesByQuantile results (EqAD-reduced, base-year-EAD-reduced,
+    // future-year-EAD-reduced). `with_project`/`without_project` are each
+    // {alternative_id, eqad_results, base_year_impact_areas, future_year_impact_areas} objects,
+    // built the same way EvalAlternativeResults above builds its `alt` (the (StudyAreaConsequences
+    // ByQuantile, id, analysisYears, periodOfAnalysis, isNull) ctor for the AlternativeResults-level
+    // EqadResults field, then BaseYearScenarioResults/FutureYearScenarioResults assigned via
+    // BuildImpactAreaScenarioResultsCase + AddResults). Each of the three `*_reduced_results_list`
+    // fields is a list of {alternative_id, consequence_results} objects: a
+    // StudyAreaConsequencesByQuantile built via the (int alternativeID) ctor (the only ctor that
+    // sets a real, non-zero AlternativeID) then AddExistingConsequenceResultObject-ed with its
+    // consequence_results entries. `method` dispatch: alternative_id-taking methods read
+    // args=[alternative_id, damage_category_or_null, asset_category_or_null, impact_area_id]; the
+    // without-project delegators read args=[damage_category_or_null, asset_category_or_null,
+    // impact_area_id]. See fixtures/metrics/alternative_comparison_report_results.json's note.
+    static AlternativeResults BuildAlternativeComparisonAlternativeResults(JsonElement alt) {
+      var eqadEntries = alt.GetProperty("eqad_results").GetProperty("consequence_results")
+          .EnumerateArray().Select(BuildAggregatedConsequencesByQuantileEntry).ToList();
+      var eqadResults = new StudyAreaConsequencesByQuantile(eqadEntries);
+
+      var results = new AlternativeResults(eqadResults, alt.GetProperty("alternative_id").GetInt32(), new List<int> { 2030, 2049 }, 50, false);
+
+      var baseYear = new ScenarioResults();
+      foreach (var iaCase in alt.GetProperty("base_year_impact_areas").EnumerateArray()) {
+        var (iaResults, _, _) = BuildImpactAreaScenarioResultsCase(iaCase);
+        baseYear.AddResults(iaResults);
+      }
+      results.BaseYearScenarioResults = baseYear;
+
+      var futureYear = new ScenarioResults();
+      foreach (var iaCase in alt.GetProperty("future_year_impact_areas").EnumerateArray()) {
+        var (iaResults, _, _) = BuildImpactAreaScenarioResultsCase(iaCase);
+        futureYear.AddResults(iaResults);
+      }
+      results.FutureYearScenarioResults = futureYear;
+
+      return results;
+    }
+    static StudyAreaConsequencesByQuantile BuildAlternativeComparisonReducedResultsEntry(JsonElement entry) {
+      var study = new StudyAreaConsequencesByQuantile(entry.GetProperty("alternative_id").GetInt32());
+      foreach (var cr in entry.GetProperty("consequence_results").EnumerateArray()) {
+        study.AddExistingConsequenceResultObject(BuildAggregatedConsequencesByQuantileEntry(cr));
+      }
+      return study;
+    }
+    static List<StudyAreaConsequencesByQuantile> BuildAlternativeComparisonReducedResultsList(JsonElement listEl) {
+      return listEl.EnumerateArray().Select(BuildAlternativeComparisonReducedResultsEntry).ToList();
+    }
+    static object EvalAlternativeComparisonReportResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var withProject = caseEl.GetProperty("with_project").EnumerateArray().Select(BuildAlternativeComparisonAlternativeResults).ToList();
+      var withoutProject = BuildAlternativeComparisonAlternativeResults(caseEl.GetProperty("without_project"));
+
+      var report = new AlternativeComparisonReportResults(
+          withProject, withoutProject,
+          BuildAlternativeComparisonReducedResultsList(caseEl.GetProperty("eqad_reduced_results_list")),
+          BuildAlternativeComparisonReducedResultsList(caseEl.GetProperty("base_year_ead_reduced_results_list")),
+          BuildAlternativeComparisonReducedResultsList(caseEl.GetProperty("future_year_ead_reduced_results_list")));
+
+      if (method == "sample_mean_without_project_base_year_ead" || method == "sample_mean_without_project_future_year_ead") {
+        string dc0 = OptionalString(argsEl[0]);
+        string ac0 = OptionalString(argsEl[1]);
+        int ia0 = argsEl[2].GetInt32();
+        if (method == "sample_mean_without_project_base_year_ead") {
+          return report.SampleMeanWithoutProjectBaseYearEAD(ia0, dc0, ac0, ConsequenceType.Damage);
+        }
+        return report.SampleMeanWithoutProjectFutureYearEAD(ia0, dc0, ac0, ConsequenceType.Damage);
+      }
+
+      int alternativeID = argsEl[0].GetInt32();
+      string damageCategory = OptionalString(argsEl[1]);
+      string assetCategory = OptionalString(argsEl[2]);
+      int impactAreaID = argsEl[3].GetInt32();
+
+      if (method == "sample_mean_eqad_reduced") {
+        return report.SampleMeanEqadReduced(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "sample_mean_base_year_ead_reduced") {
+        return report.SampleMeanBaseYearEADReduced(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "sample_mean_future_year_ead_reduced") {
+        return report.SampleMeanFutureYearEADReduced(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "sample_mean_with_project_base_year_ead") {
+        return report.SampleMeanWithProjectBaseYearEAD(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage);
+      }
+      if (method == "sample_mean_with_project_future_year_ead") {
+        return report.SampleMeanWithProjectFutureYearEAD(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage);
+      }
+      if (method == "get_eqad_reduced_results_histogram_sample_mean") {
+        return report.GetEqadReducedResultsHistogram(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage).SampleMean;
+      }
+      if (method == "get_base_year_ead_reduced_results_histogram_sample_mean") {
+        return report.GetBaseYearEADReducedResultsHistogram(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total).SampleMean;
+      }
+      if (method == "get_future_year_ead_reduced_results_histogram_sample_mean") {
+        return report.GetFutureYearEADReducedResultsHistogram(alternativeID, impactAreaID, damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total).SampleMean;
+      }
+      throw new Exception("unknown alternative_comparison_report_results method: " + method);
+    }
+
     // ImpactAreaScenarioSimulation (Phase 5 Task 7): the skeleton + fluent SimulationBuilder +
     // CanCompute + InitializeConsequenceHistograms surface only -- see
     // patched/ImpactAreaScenarioSimulation.cs's header for what's kept/dropped and why. `construct`
@@ -1934,6 +2036,7 @@ namespace oracle_emitter {
               case "impact_area_scenario_results": val = EvalImpactAreaScenarioResults(c, method, argsEl); break;
               case "scenario_results": val = EvalScenarioResults(c, method, argsEl); break;
               case "alternative_results": val = EvalAlternativeResults(c, method, argsEl); break;
+              case "alternative_comparison_report_results": val = EvalAlternativeComparisonReportResults(c, method, argsEl); break;
               case "simulation": val = EvalSimulation(c, method, argsEl); break;
               case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;

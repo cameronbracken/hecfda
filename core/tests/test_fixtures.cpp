@@ -11,6 +11,7 @@
 #include "hecfda/model/extensions/graphical_distribution.hpp"
 #include "hecfda/model/metrics/aggregated_consequences_binned.hpp"
 #include "hecfda/model/metrics/aggregated_consequences_by_quantile.hpp"
+#include "hecfda/model/metrics/alternative_comparison_report_results.hpp"
 #include "hecfda/model/metrics/alternative_results.hpp"
 #include "hecfda/model/metrics/assurance_result_storage.hpp"
 #include "hecfda/model/metrics/categoried_paired_data.hpp"
@@ -3574,6 +3575,170 @@ TEST_CASE("alternative_results fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_alternative_results(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for AlternativeComparisonReportResults (Phase 6 Task 7): the container
+// AlternativeComparisonReport::compute_alternative_comparison_report (Task 10, not yet ported)
+// returns -- the with/without-project AlternativeResults plus three lists of REDUCED (benefit)
+// StudyAreaConsequencesByQuantile results (EqAD-reduced, base-year-EAD-reduced,
+// future-year-EAD-reduced). `with_project` is a list of {alternative_id, eqad_results,
+// base_year_impact_areas, future_year_impact_areas} objects, each built into one AlternativeResults
+// via make_alternative_comparison_alternative_results below (same ScenarioResults-building reuse as
+// run_alternative_results above); `without_project` is one more, same shape. Each of the three
+// `*_reduced_results_list` fields is a list of {alternative_id, consequence_results} objects, each
+// built via make_alternative_comparison_reduced_results_entry into a StudyAreaConsequencesByQuantile
+// constructed via the (int alternativeID) ctor (the only ctor that sets a real AlternativeID) then
+// add_existing_consequence_result_object-ed with its consequence_results entries -- matching how
+// AlternativeComparisonReport (Task 10) is expected to build these lists incrementally, unlike
+// run_alternative_results'/run_study_area_consequences_by_quantile's own reuse of the
+// (vector<AggregatedConsequencesByQuantile>) "public for testing" ctor (AlternativeID stays 0
+// there, which would break the alternative_id-keyed search this class performs). `method` dispatch:
+// alternative_id-taking methods take args=[alternative_id, damage_category_or_null,
+// asset_category_or_null, impact_area_id]; the without-project delegators take
+// args=[damage_category_or_null, asset_category_or_null, impact_area_id]. See
+// fixtures/metrics/alternative_comparison_report_results.json's note for full construction detail.
+static hecfda::model::metrics::StudyAreaConsequencesByQuantile make_alternative_comparison_reduced_results_entry(
+    const json& entry) {
+    using namespace hecfda::model::metrics;
+    StudyAreaConsequencesByQuantile study(entry["alternative_id"].get<int>());
+    for (const auto& cr : entry["consequence_results"]) {
+        study.add_existing_consequence_result_object(make_aggregated_consequences_by_quantile_entry(cr));
+    }
+    return study;
+}
+
+static std::vector<hecfda::model::metrics::StudyAreaConsequencesByQuantile>
+make_alternative_comparison_reduced_results_list(const json& list_json) {
+    std::vector<hecfda::model::metrics::StudyAreaConsequencesByQuantile> result;
+    for (const auto& entry : list_json) {
+        result.push_back(make_alternative_comparison_reduced_results_entry(entry));
+    }
+    return result;
+}
+
+static hecfda::model::metrics::AlternativeResults make_alternative_comparison_alternative_results(const json& alt) {
+    using namespace hecfda::model::metrics;
+
+    StudyAreaConsequencesByQuantile eqad_results =
+        make_study_area_consequences_by_quantile(json{{"construct", alt["eqad_results"]}});
+    AlternativeResults results(std::move(eqad_results), alt["alternative_id"].get<int>(),
+                                std::vector<int>{2030, 2049}, /*period_of_analysis=*/50, /*is_null=*/false);
+    // scenarios_are_identical_ is left at its false default -- no assertion in this fixture routes
+    // through AlternativeResults::sample_mean_eqad/eqad_exceeded_with_probability_q/
+    // get_eqad_distribution (the only methods that branch on it), only the never-branching
+    // base/future-year EAD delegators and the reduced-results paths (which don't touch
+    // AlternativeResults's own eqad path at all).
+
+    ScenarioResults base_year;
+    for (const auto& ia_case : alt["base_year_impact_areas"]) {
+        ImpactAreaScenarioResultsFixtureCase built = make_impact_area_scenario_results_case(ia_case);
+        base_year.add_results(std::move(built.results));
+    }
+    results.set_base_year_scenario_results(std::move(base_year));
+
+    ScenarioResults future_year;
+    for (const auto& ia_case : alt["future_year_impact_areas"]) {
+        ImpactAreaScenarioResultsFixtureCase built = make_impact_area_scenario_results_case(ia_case);
+        future_year.add_results(std::move(built.results));
+    }
+    results.set_future_year_scenario_results(std::move(future_year));
+
+    return results;
+}
+
+static double run_alternative_comparison_report_results(const json& c, const std::string& method, const json& args) {
+    using namespace hecfda::model::metrics;
+
+    std::vector<AlternativeResults> with_project;
+    for (const auto& alt : c["with_project"]) {
+        with_project.push_back(make_alternative_comparison_alternative_results(alt));
+    }
+    AlternativeResults without_project = make_alternative_comparison_alternative_results(c["without_project"]);
+
+    AlternativeComparisonReportResults report(
+        std::move(with_project), std::move(without_project),
+        make_alternative_comparison_reduced_results_list(c["eqad_reduced_results_list"]),
+        make_alternative_comparison_reduced_results_list(c["base_year_ead_reduced_results_list"]),
+        make_alternative_comparison_reduced_results_list(c["future_year_ead_reduced_results_list"]));
+
+    if (method == "sample_mean_without_project_base_year_ead" || method == "sample_mean_without_project_future_year_ead") {
+        std::optional<std::string> damage_category = optional_string_arg(args[0]);
+        std::optional<std::string> asset_category = optional_string_arg(args[1]);
+        int impact_area_id = args[2].get<int>();
+        if (method == "sample_mean_without_project_base_year_ead") {
+            return report.sample_mean_without_project_base_year_ead(impact_area_id, damage_category, asset_category,
+                                                                      ConsequenceType::Damage);
+        }
+        return report.sample_mean_without_project_future_year_ead(impact_area_id, damage_category, asset_category,
+                                                                    ConsequenceType::Damage);
+    }
+
+    int alternative_id = args[0].get<int>();
+    std::optional<std::string> damage_category = optional_string_arg(args[1]);
+    std::optional<std::string> asset_category = optional_string_arg(args[2]);
+    int impact_area_id = args[3].get<int>();
+
+    if (method == "sample_mean_eqad_reduced") {
+        return report.sample_mean_eqad_reduced(alternative_id, impact_area_id, damage_category, asset_category,
+                                                ConsequenceType::Damage, RiskType::Total);
+    }
+    if (method == "sample_mean_base_year_ead_reduced") {
+        return report.sample_mean_base_year_ead_reduced(alternative_id, impact_area_id, damage_category,
+                                                          asset_category, ConsequenceType::Damage, RiskType::Total);
+    }
+    if (method == "sample_mean_future_year_ead_reduced") {
+        return report.sample_mean_future_year_ead_reduced(alternative_id, impact_area_id, damage_category,
+                                                            asset_category, ConsequenceType::Damage, RiskType::Total);
+    }
+    if (method == "sample_mean_with_project_base_year_ead") {
+        return report.sample_mean_with_project_base_year_ead(alternative_id, impact_area_id, damage_category,
+                                                               asset_category, ConsequenceType::Damage);
+    }
+    if (method == "sample_mean_with_project_future_year_ead") {
+        return report.sample_mean_with_project_future_year_ead(alternative_id, impact_area_id, damage_category,
+                                                                 asset_category, ConsequenceType::Damage);
+    }
+    if (method == "get_eqad_reduced_results_histogram_sample_mean") {
+        return report.get_eqad_reduced_results_histogram(alternative_id, impact_area_id, damage_category,
+                                                           asset_category, ConsequenceType::Damage)
+            .sample_mean();
+    }
+    if (method == "get_base_year_ead_reduced_results_histogram_sample_mean") {
+        return report
+            .get_base_year_ead_reduced_results_histogram(alternative_id, impact_area_id, damage_category,
+                                                           asset_category, ConsequenceType::Damage, RiskType::Total)
+            .sample_mean();
+    }
+    if (method == "get_future_year_ead_reduced_results_histogram_sample_mean") {
+        return report
+            .get_future_year_ead_reduced_results_histogram(alternative_id, impact_area_id, damage_category,
+                                                             asset_category, ConsequenceType::Damage, RiskType::Total)
+            .sample_mean();
+    }
+    auto msg = std::string("unknown alternative_comparison_report_results method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("alternative_comparison_report_results fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/alternative_comparison_report_results.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "alternative_comparison_report_results");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_alternative_comparison_report_results(c, a["method"].get<std::string>(), a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();

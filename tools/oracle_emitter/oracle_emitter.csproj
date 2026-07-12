@@ -249,5 +249,16 @@
          patched/AlternativeResults.cs copy needed (unlike patched/StudyAreaConsequencesBinned.cs,
          which needed real compile-blocker trims). -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/AlternativeResults.cs" />
+    <!-- Task Phase6T7: AlternativeComparisonReportResults.cs (the with/without-project
+         damage-reduction report container AlternativeComparisonReport.ComputeAlternativeComparisonReport,
+         Task 10, not yet ported, returns) is a clean POCO relative to this subset-compiled project
+         for the exact same reason Task Phase6T6's AlternativeResults.cs above is: its
+         `: ValidationErrorLogger` base + `ReportMessage(...)` calls are already reachable
+         transitively through the HEC.FDA.Statistics ProjectReference (the same MVVM closure), and
+         its other dependencies (AlternativeResults, StudyAreaConsequencesByQuantile,
+         AggregatedConsequencesByQuantile, ConsequenceType/RiskType, Empirical) are already compiled
+         in above. Verified by direct `dotnet build`: compiles clean, unpatched, 0 errors/warnings.
+         No patched/AlternativeComparisonReportResults.cs copy needed. -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/AlternativeComparisonReportResults.cs" />
   </ItemGroup>
 </Project>
