@@ -1,0 +1,92 @@
+{
+  "target": "impact_area_stage_damage",
+  "kind": "impact_area_stage_damage",
+  "source_test": "TractableStageDamageTests.TrackStageDamageTest (all 4 [InlineData] rows).",
+  "note": "The headline Phase 4 Task 7 oracle -- ImpactAreaStageDamage.Compute(computeIsDeterministic: true) end to end. `construct` is {impact_area_id, damage_category, asset_category, hydraulic_stage1, hydraulic_stage2, use_reg_unreg}. Each case builds ONE damage-category-scoped Inventory (Residential: structures fid 1/2, FFE 14/15, val 100/200, ground 12, occ type Residential CSVR 50, structure depth-percent {0,10,...,100} content {0,5,15,...,95} over depths 0..10; Commercial: structures fid 3/4, FFE 17/18, val 300/400, occ type Commercial CSVR 120, structure depth-percent {0,5,15,...,95} content {0,0,10,20,...,90} over depths 0..10 -- reusing the residential-content curve for the commercial STRUCTURE curve, matching TractableStageDamageTests' `residentialContentAndCommercialStructureDamage` array reuse verbatim), all impactAreaID=34. This is a deliberate simplification from upstream's single shared `occupancyTypes` dictionary (which carries BOTH Residential and Commercial entries into BOTH inventories, since C# Dictionary is a reference type shared by both `residentialStructureInventory`/`commercialStructureInventory`): Inventory::sample_occupancy_types/generate_random_numbers iterate every entry in occ_types_ independently of what any structure actually references (verified against occupancy_type.hpp -- no cross-occ-type or global-counter state), so an occ_types map holding only the ONE occupancy type a given case's structures actually use is numerically identical to upstream's larger shared dictionary; the extra never-referenced entries in the real dictionary have no observable effect on this fixture's target curve. Mock hydraulics: profile 0 = {hydraulic_stage1, hydraulic_stage2} (2 structures), each subsequent profile's per-structure WSE = previous + 1, one profile per probabilities entry (8) -- same ComputeStagesAtStructures shape as stage_damage_geometry.json's tractable_geometry case. use_reg_unreg=false: graphical_frequency is a graphical STAGE frequency (probabilities {.5,.2,.1,.04,.02,.01,.004,.002}, graphical_stages {12..19}, ERL 50, UsingStagesNotFlows=true), discharge_stage/unregulated_regulated both null. use_reg_unreg=true: graphical_frequency is a graphical FLOW frequency (same probabilities, inflows {1200..1900}, ERL 50, UsingStagesNotFlows=false); discharge_stage is UncertainPairedData(xs=flows {120..190}, ys=Deterministic(stages {12..19})); unregulated_regulated is UncertainPairedData(xs=inflows {1200..1900}, ys=Deterministic(outflows {120..190})) -- both compose chains reduce to essentially the identical stage-frequency curve as the false case (a few ULP of compose()-chain FP noise survive into the pinned values below -- see e.g. 30.000000000000107 vs. 30 -- which is why this fixture uses rel/abs tolerance rather than exact). `compute(compute_is_deterministic=true).first` (the damage UPDs, not quantity), select the UncertainPairedData whose metadata (damage_category, asset_category) matches construct, `sample_paired_data(1, true)`, then `method: 'f'` with `args: [stage]` evaluates that PairedData at the given stage -- one assertion per stage in {12..19}, matching TractableStageDamageTests' per-stage loop and its per-value tolerance switch (upstream literal 0 -> mode abs tol 3; nonzero upstream literal -> mode rel tol 0.05, replicating `if (expected[i]==0) abs<3 else rel<0.05` since check.hpp's abs/rel modes are scalar and can't express a mixed per-vector rule directly). Rows 1/3 (Residential x Structure, hydraulic_stage1=13/stage2=14) reproduce the upstream literals {0,0,30,60,90,120,150,180}; rows 2/4 (Commercial x Content, hydraulic_stage1=15/stage2=16) reproduce {0,0,0,0,84,168,252,336} -- these upstream literals are the acceptance cross-check (Compute's convergence loop is a no-op for the deterministic path: every realization within a chunk is bit-identical since compute_is_deterministic=true bypasses sampling, so the histogram's confidence half-width is exactly 0 and ResultsAreConverged succeeds after the very first compute chunk, 1000 iterations). All `expected` values gate-captured from the real, patched Compute() (never hand-derived) -- the upstream literals are the cross-check tolerance target, not the pinned value's source.",
+  "cases": [
+    {
+      "name": "residential_structure_no_reg_unreg",
+      "construct": {
+        "impact_area_id": 34,
+        "damage_category": "Residential",
+        "asset_category": "Structure",
+        "hydraulic_stage1": 13,
+        "hydraulic_stage2": 14,
+        "use_reg_unreg": false
+      },
+      "assertions": [
+        { "method": "f", "args": [12], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [13], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [14], "expected": 30, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [15], "expected": 60, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [16], "expected": 90, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [17], "expected": 120, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [18], "expected": 150, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [19], "expected": 180, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "commercial_content_no_reg_unreg",
+      "construct": {
+        "impact_area_id": 34,
+        "damage_category": "Commercial",
+        "asset_category": "Content",
+        "hydraulic_stage1": 15,
+        "hydraulic_stage2": 16,
+        "use_reg_unreg": false
+      },
+      "assertions": [
+        { "method": "f", "args": [12], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [13], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [14], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [15], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [16], "expected": 84, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [17], "expected": 168, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [18], "expected": 252, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [19], "expected": 336, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "residential_structure_reg_unreg",
+      "construct": {
+        "impact_area_id": 34,
+        "damage_category": "Residential",
+        "asset_category": "Structure",
+        "hydraulic_stage1": 13,
+        "hydraulic_stage2": 14,
+        "use_reg_unreg": true
+      },
+      "assertions": [
+        { "method": "f", "args": [12], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [13], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [14], "expected": 30.000000000000107, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [15], "expected": 60, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [16], "expected": 90.00000000000011, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [17], "expected": 120.00000000000021, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [18], "expected": 149.99999999999977, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [19], "expected": 180, "tol": 0.05, "mode": "rel" }
+      ]
+    },
+    {
+      "name": "commercial_content_reg_unreg",
+      "construct": {
+        "impact_area_id": 34,
+        "damage_category": "Commercial",
+        "asset_category": "Content",
+        "hydraulic_stage1": 15,
+        "hydraulic_stage2": 16,
+        "use_reg_unreg": true
+      },
+      "assertions": [
+        { "method": "f", "args": [12], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [13], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [14], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [15], "expected": 0, "tol": 3, "mode": "abs" },
+        { "method": "f", "args": [16], "expected": 84.0000000000003, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [17], "expected": 168.0000000000006, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [18], "expected": 251.9999999999994, "tol": 0.05, "mode": "rel" },
+        { "method": "f", "args": [19], "expected": 336, "tol": 0.05, "mode": "rel" }
+      ]
+    }
+  ]
+}

@@ -2231,3 +2231,155 @@ TEST_CASE("stage_damage_geometry fixture") {
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// ImpactAreaStageDamage.Compute() -- Phase 4 Task 7, the headline compute-loop oracle
+// (TractableStageDamageTests.TrackStageDamageTest). Reuses make_tractable_residential_inventory
+// (Task 6, above -- structures fid 1/2, FFE 14/15, val 100/200, ground 12, Residential occ type
+// with CSVR 50) verbatim for the Residential cases; adds a Commercial counterpart below (fid 3/4,
+// FFE 17/18, val 300/400, Commercial occ type with CSVR 120, reusing the residential CONTENT curve
+// {0,5,15,...,95} as the commercial STRUCTURE curve, matching TractableStageDamageTests'
+// `residentialContentAndCommercialStructureDamage` array reuse). See
+// fixtures/stage_damage/impact_area_stage_damage.json's note for why building each case's Inventory
+// with only the ONE occupancy type its structures reference (rather than upstream's single shared
+// dictionary carrying both Residential and Commercial into every Inventory) is numerically
+// equivalent.
+static hecfda::model::structures::Inventory make_tractable_commercial_inventory(int impact_area_id) {
+    using namespace hecfda::model::structures;
+    using hecfda::model::paired_data::UncertainPairedData;
+    using hecfda::statistics::distributions::Deterministic;
+    using hecfda::statistics::distributions::IDistribution;
+
+    std::vector<double> depths = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    // ported from: TractableStageDamageTests.cs's residentialContentAndCommercialStructureDamage
+    // (reused verbatim as the COMMERCIAL STRUCTURE curve, matching upstream's array reuse).
+    std::vector<double> struct_damage_vals = {0, 5, 15, 25, 35, 45, 55, 65, 75, 85, 95};
+    std::vector<double> content_damage_vals = {0, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90};
+
+    auto make_deterministic_upd = [](const std::vector<double>& xs, const std::vector<double>& vals) {
+        std::vector<std::unique_ptr<IDistribution>> ys;
+        ys.reserve(vals.size());
+        for (double v : vals) ys.push_back(std::make_unique<Deterministic>(v));
+        return UncertainPairedData(xs, std::move(ys));
+    };
+
+    OccupancyType commercial =
+        OccupancyType::builder()
+            .with_name("Commercial")
+            .with_damage_category("Commercial")
+            .with_structure_depth_percent_damage(make_deterministic_upd(depths, struct_damage_vals))
+            .with_content_depth_percent_damage(make_deterministic_upd(depths, content_damage_vals))
+            .with_content_to_structure_value_ratio(ValueRatioWithUncertainty(120))
+            .build();
+
+    std::map<std::string, OccupancyType> occ_types;
+    occ_types.emplace("Commercial", std::move(commercial));
+
+    std::vector<Structure> structures;
+    structures.push_back(Structure("3", /*first_floor_elevation=*/17, /*val_struct=*/300, "Commercial",
+                                    "Commercial", impact_area_id, /*val_cont=*/0, /*val_vehic=*/0,
+                                    /*val_other=*/0, "unassigned", Structure::kDefaultMissingValue,
+                                    /*ground_elevation=*/12));
+    structures.push_back(Structure("4", /*first_floor_elevation=*/18, /*val_struct=*/400, "Commercial",
+                                    "Commercial", impact_area_id, /*val_cont=*/0, /*val_vehic=*/0,
+                                    /*val_other=*/0, "unassigned", Structure::kDefaultMissingValue,
+                                    /*ground_elevation=*/12));
+
+    return Inventory(std::move(occ_types), std::move(structures));
+}
+
+TEST_CASE("impact_area_stage_damage fixture") {
+    using hecfda::model::paired_data::CurveMetaData;
+    using hecfda::model::paired_data::GraphicalUncertainPairedData;
+    using hecfda::model::paired_data::UncertainPairedData;
+    using hecfda::model::stage_damage::HydraulicProfiles;
+    using hecfda::statistics::distributions::Deterministic;
+    using hecfda::statistics::distributions::IDistribution;
+
+    std::ifstream f(fixtures_dir() + "/stage_damage/impact_area_stage_damage.json");
+    REQUIRE(f.good());
+    json fx;
+    f >> fx;
+    CHECK(fx["target"] == "impact_area_stage_damage");
+
+    const std::vector<double> probabilities = {.5, .2, .1, .04, .02, .01, .004, .002};
+
+    for (const auto& c : fx["cases"]) {
+        const auto& ctor = c["construct"];
+        int impact_area_id = ctor["impact_area_id"].get<int>();
+        std::string damage_category = ctor["damage_category"].get<std::string>();
+        std::string asset_category = ctor["asset_category"].get<std::string>();
+        float stage1 = ctor["hydraulic_stage1"].get<float>();
+        float stage2 = ctor["hydraulic_stage2"].get<float>();
+        bool use_reg_unreg = ctor["use_reg_unreg"].get<bool>();
+
+        for (const auto& a : c["assertions"]) {
+            std::string method = a["method"].get<std::string>();
+            REQUIRE(method == "f");
+            double stage = a["args"][0].get<double>();
+
+            // Fresh construction per assertion, matching this file's established convention.
+            hecfda::model::structures::Inventory inventory =
+                damage_category == "Residential" ? make_tractable_residential_inventory(impact_area_id)
+                                                  : make_tractable_commercial_inventory(impact_area_id);
+            auto wses_by_profile = make_mock_wses_by_profile(stage1, stage2, probabilities.size());
+            HydraulicProfiles hydraulics(probabilities, wses_by_profile);
+
+            // use_reg_unreg=false: a graphical STAGE frequency directly. use_reg_unreg=true: a
+            // graphical FLOW frequency + dischargeStage + unregulatedRegulated, which compose to
+            // the identical central stage-frequency curve (see the fixture's note).
+            std::vector<double> graphical_stages = {12, 13, 14, 15, 16, 17, 18, 19};
+            CurveMetaData stage_frequency_md("probability", "stages", "graphical stage frequency");
+            GraphicalUncertainPairedData stage_frequency(probabilities, graphical_stages, /*erl=*/50,
+                                                          stage_frequency_md,
+                                                          /*using_stages_not_flows=*/true);
+
+            std::vector<double> inflows = {1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900};
+            CurveMetaData flow_frequency_md("probability", "discharge", "graphical flow frequency");
+            GraphicalUncertainPairedData flow_frequency(probabilities, inflows, /*erl=*/50, flow_frequency_md,
+                                                         /*using_stages_not_flows=*/false);
+
+            std::vector<double> outflow_vals = {120, 130, 140, 150, 160, 170, 180, 190};
+            std::vector<std::unique_ptr<IDistribution>> outflow_ys;
+            for (double v : outflow_vals) outflow_ys.push_back(std::make_unique<Deterministic>(v));
+            UncertainPairedData unreg_reg(inflows, std::move(outflow_ys));
+
+            std::vector<double> flows = {120, 130, 140, 150, 160, 170, 180, 190};
+            std::vector<double> stage_vals = {12, 13, 14, 15, 16, 17, 18, 19};
+            std::vector<std::unique_ptr<IDistribution>> stage_ys;
+            for (double v : stage_vals) stage_ys.push_back(std::make_unique<Deterministic>(v));
+            UncertainPairedData discharge_stage(flows, std::move(stage_ys));
+
+            using ImpactAreaStageDamage = hecfda::model::stage_damage::ImpactAreaStageDamage;
+            ImpactAreaStageDamage impact_area_stage_damage(
+                impact_area_id, std::move(inventory), std::move(hydraulics), /*analysis_year=*/9999,
+                /*analytical_flow_frequency=*/nullptr,
+                use_reg_unreg ? &flow_frequency : &stage_frequency,
+                use_reg_unreg ? &discharge_stage : nullptr, use_reg_unreg ? &unreg_reg : nullptr,
+                /*using_mock_data=*/true);
+
+            auto compute_result = impact_area_stage_damage.compute(/*compute_is_deterministic=*/true);
+
+            const UncertainPairedData* target = nullptr;
+            for (const auto& upd : compute_result.first) {
+                if (upd.metadata().damage_category() == damage_category &&
+                    upd.metadata().asset_category() == asset_category) {
+                    target = &upd;
+                    break;
+                }
+            }
+            REQUIRE(target != nullptr);
+            auto sampled = target->sample_paired_data(1, true);
+            double got = sampled.f(stage);
+
+            double expected = a["expected"].get<double>();
+            double tol = a["tol"].get<double>();
+            std::string mode = a["mode"].get<std::string>();
+            if (!hecfda_test::compare_by_mode({got}, {expected}, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " stage: " + std::to_string(stage);
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}

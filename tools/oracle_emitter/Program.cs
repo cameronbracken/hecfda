@@ -837,7 +837,7 @@ namespace oracle_emitter {
       _ = stage1;
       _ = stage2;
 
-      var impactAreaStageDamage = new ImpactAreaStageDamage(impactAreaID, inventory, probabilities.ToList(), analysisYear: 9999,
+      var impactAreaStageDamage = new ImpactAreaStageDamage(impactAreaID, inventory, probabilities.ToList(), new List<float[]>(), analysisYear: 9999,
         analyticalFlowFrequency: null, graphicalFrequency: stageFrequency, dischargeStage: null, unregulatedRegulated: null, usingMockData: true);
 
       if (method == "compute_stages_at_index_location") return impactAreaStageDamage.ComputeStagesAtIndexLocation(probabilities.ToList());
@@ -847,6 +847,93 @@ namespace oracle_emitter {
       if (method == "min_stage_for_area") return impactAreaStageDamage.MinStageForArea;
       if (method == "max_stage_for_area") return impactAreaStageDamage.MaxStageForArea;
       throw new Exception("unknown stage_damage_geometry method: " + method);
+    }
+
+    // ImpactAreaStageDamage.Compute() (Phase 4 Task 7, the headline oracle) -- reproduces
+    // TractableStageDamageTests.TrackStageDamageTest. MakeTractableCommercialInventory mirrors
+    // MakeTractableResidentialInventory above (fid 3/4, FFE 17/18, val 300/400, Commercial occ type
+    // CSVR 120, reusing residentialContentAndCommercialStructureDamage {0,5,15,...,95} as the
+    // COMMERCIAL STRUCTURE curve, matching TractableStageDamageTests' array reuse verbatim).
+    static Inventory MakeTractableCommercialInventory(int impactAreaID) {
+      double[] depths = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+      IDistribution[] structDamages = { new Deterministic(0), new Deterministic(5), new Deterministic(15), new Deterministic(25), new Deterministic(35), new Deterministic(45), new Deterministic(55), new Deterministic(65), new Deterministic(75), new Deterministic(85), new Deterministic(95) };
+      IDistribution[] contentDamages = { new Deterministic(0), new Deterministic(0), new Deterministic(10), new Deterministic(20), new Deterministic(30), new Deterministic(40), new Deterministic(50), new Deterministic(60), new Deterministic(70), new Deterministic(80), new Deterministic(90) };
+      var md = new CurveMetaData("x", "y", "oracle");
+      var structUpd = new UncertainPairedData(depths, structDamages, md);
+      var contentUpd = new UncertainPairedData(depths, contentDamages, md);
+
+      var commercial = OccupancyType.Builder()
+        .WithName("Commercial")
+        .WithDamageCategory("Commercial")
+        .WithStructureDepthPercentDamage(structUpd)
+        .WithContentDepthPercentDamage(contentUpd)
+        .WithContentToStructureValueRatio(new ValueRatioWithUncertainty(120))
+        .Build();
+
+      var occTypes = new Dictionary<string, OccupancyType> { { "Commercial", commercial } };
+      var structures = new List<Structure> {
+        new Structure("3", firstFloorElevation: 17, val_struct: 300, st_damcat: "Commercial", occtype: "Commercial", impactAreaID: impactAreaID, groundElevation: 12),
+        new Structure("4", firstFloorElevation: 18, val_struct: 400, st_damcat: "Commercial", occtype: "Commercial", impactAreaID: impactAreaID, groundElevation: 12),
+      };
+      return new Inventory(occTypes, structures);
+    }
+
+    static object EvalImpactAreaStageDamage(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      int impactAreaID = c.GetProperty("impact_area_id").GetInt32();
+      string damageCategory = c.GetProperty("damage_category").GetString();
+      string assetCategory = c.GetProperty("asset_category").GetString();
+      float stage1 = (float)c.GetProperty("hydraulic_stage1").GetDouble();
+      float stage2 = (float)c.GetProperty("hydraulic_stage2").GetDouble();
+      bool useRegUnreg = c.GetProperty("use_reg_unreg").GetBoolean();
+
+      double[] probabilities = { .5, .2, .1, .04, .02, .01, .004, .002 };
+      var inventory = damageCategory == "Residential" ? MakeTractableResidentialInventory(impactAreaID) : MakeTractableCommercialInventory(impactAreaID);
+      var wsesByProfile = ComputeStagesAtStructures(stage1, stage2, probabilities);
+
+      double[] graphicalStages = { 12, 13, 14, 15, 16, 17, 18, 19 };
+      var stageFrequencyMd = new CurveMetaData("probability", "stages", "graphical stage frequency");
+      var stageFrequency = new GraphicalUncertainPairedData(probabilities, graphicalStages, 50, stageFrequencyMd, usingStagesNotFlows: true);
+
+      double[] inflows = { 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900 };
+      var flowFrequencyMd = new CurveMetaData("probability", "discharge", "graphical flow frequency");
+      var flowFrequency = new GraphicalUncertainPairedData(probabilities, inflows, 50, flowFrequencyMd, usingStagesNotFlows: false);
+
+      IDistribution[] outflows = { new Deterministic(120), new Deterministic(130), new Deterministic(140), new Deterministic(150), new Deterministic(160), new Deterministic(170), new Deterministic(180), new Deterministic(190) };
+      var unregRegMd = new CurveMetaData("unregulated", "regulated", "reg unreg function");
+      var unregReg = new UncertainPairedData(inflows, outflows, unregRegMd);
+
+      double[] flows = { 120, 130, 140, 150, 160, 170, 180, 190 };
+      IDistribution[] stages = { new Deterministic(12), new Deterministic(13), new Deterministic(14), new Deterministic(15), new Deterministic(16), new Deterministic(17), new Deterministic(18), new Deterministic(19) };
+      var dischargeStageMd = new CurveMetaData("discharge", "stage", "stage discharge function");
+      var dischargeStage = new UncertainPairedData(flows, stages, dischargeStageMd);
+
+      var impactAreaStageDamage = new ImpactAreaStageDamage(impactAreaID, inventory, probabilities.ToList(), wsesByProfile, analysisYear: 9999,
+        analyticalFlowFrequency: null,
+        graphicalFrequency: useRegUnreg ? flowFrequency : stageFrequency,
+        dischargeStage: useRegUnreg ? dischargeStage : null,
+        unregulatedRegulated: useRegUnreg ? unregReg : null,
+        usingMockData: true);
+
+      var (damageUpds, _) = impactAreaStageDamage.Compute(computeIsDeterministic: true);
+      UncertainPairedData target = damageUpds.FirstOrDefault(u => u.CurveMetaData.DamageCategory == damageCategory && u.CurveMetaData.AssetCategory == assetCategory);
+      if (target == null) throw new Exception($"impact_area_stage_damage: no UncertainPairedData for damage_category={damageCategory}, asset_category={assetCategory}");
+      IPairedData sampled = target.SamplePairedData(iterationNumber: 1, retrieveDeterministicRepresentation: true);
+
+      if (method == "f") return sampled.f(D(argsEl[0]));
+      throw new Exception("unknown impact_area_stage_damage method: " + method);
+    }
+
+    // ported from: TractableStageDamageTests.cs's ComputeStagesAtStructures(stage1, stage2):
+    // profile 0 = {stage1, stage2}; each subsequent profile's per-structure WSE = previous + 1.
+    // One profile per `probabilities` entry.
+    static List<float[]> ComputeStagesAtStructures(float stage1, float stage2, double[] probabilities) {
+      List<float[]> stages = new() { new float[] { stage1, stage2 } };
+      for (int i = 0; i < probabilities.Length - 1; i++) {
+        float[] previous = stages[i];
+        stages.Add(new float[] { previous[0] + 1, previous[1] + 1 });
+      }
+      return stages;
     }
 
     // AggregatedConsequencesBinned (Phase 4 Task 3) is the histogram-staging Monte Carlo
@@ -986,6 +1073,7 @@ namespace oracle_emitter {
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;
+              case "impact_area_stage_damage": val = EvalImpactAreaStageDamage(c, method, argsEl); break;
               default: continue;
             }
             results.Add(new Dictionary<string,object>{

@@ -7,28 +7,38 @@
 #include <cstddef>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
+#include "hecfda/model/metrics/aggregated_consequences_binned.hpp"
+#include "hecfda/model/metrics/consequence_result.hpp"
+#include "hecfda/model/metrics/consequence_type.hpp"
+#include "hecfda/model/metrics/study_area_consequences_binned.hpp"
 #include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
 #include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/model/stage_damage/hydraulic_profiles.hpp"
+#include "hecfda/model/structures/deterministic_occupancy_type.hpp"
 #include "hecfda/model/structures/inventory.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/distributions/continuous_distribution.hpp"
+#include "hecfda/statistics/histograms/dynamic_histogram.hpp"
+#include "hecfda/statistics/validation.hpp"
 namespace hecfda {
 namespace model {
 namespace stage_damage {
 
-// ported from: ImpactAreaStageDamage.cs. Phase 4 Task 6 ports the GEOMETRY portion only: the
+// ported from: ImpactAreaStageDamage.cs. Phase 4 Task 6 ported the GEOMETRY portion: the
 // constructor + EstablishAggregationStages (IdentifyCentralStageFrequencyAtIndexLocation,
 // IdentifyMinAndMaxStageWithUncertainty, SetCoordinateQuantity, ComputeStagesAtIndexLocation) and
-// the pure static/instance stage-interval helpers those Task-7 compute methods will need
+// the pure static/instance stage-interval helpers Task 7's compute methods need
 // (ExtrapolateFromAboveAtIndexLocation, ExtrapolateFromBelowStagesAtIndexLocation,
-// CalculateIntervals, CalculateIncrementOfStages, CalculateLowerIncrementOfStages). Compute() /
-// ComputeDamageWithUncertaintyAllCoordinates / ComputeLower·Middle·UpperStageDamage /
-// ProduceZeroDamageFunctions / ProduceImpactAreaStructureDetails and the *ToStrings CSV helpers are
-// Task 7 (or later) -- deliberately NOT declared here (see class comment's SEVERANCES section).
+// CalculateIntervals, CalculateIncrementOfStages, CalculateLowerIncrementOfStages). Phase 4 Task 7
+// (this task) adds Compute() / ComputeDamageWithUncertaintyAllCoordinates /
+// ComputeLower·Middle·UpperStageDamage / ProduceZeroDamageFunctions / Validate() -- see the
+// "TASK 7 ADDITIONS" comment further down for the details. ProduceImpactAreaStructureDetails and
+// the *ToStrings CSV helpers remain out of scope (see class comment's SEVERANCES section) --
+// CSV/text-report generation is severed repo-wide per CLAUDE.md.
 //
 // OWNERSHIP / MOVE-vs-COPY DECISION (Task 6): unlike GraphicalUncertainPairedData/
 // UncertainPairedData (move-only -- they hold vector<unique_ptr<IDistribution>>), this class holds
@@ -76,10 +86,9 @@ namespace stage_damage {
 //   - Compute() and everything it calls (ComputeDamageWithUncertaintyAllCoordinates,
 //     ComputeLowerStageDamage, ComputeMiddleStageDamage/InterpolateBetweenProfiles,
 //     ComputeUpperStageDamage, ProduceZeroDamageFunctions, CreateConsequenceDistributionResults,
-//     DumpDataIntoDistributions, IsTheFunctionNotConverged): Task 7. Not stubbed here (no
-//     NotImplementedException placeholder) -- nothing in this task's fixture or Task 7's stated scope
-//     needs a compilable-but-throwing Compute() yet, and adding one now would just be dead code to
-//     delete/rewrite next task.
+//     DumpDataIntoDistributions, IsTheFunctionNotConverged): PORTED in Task 7 (see compute() and
+//     its private helpers below) -- this bullet described the Task 6 state and is kept for
+//     provenance; see the new "Task 7: Compute()" section further down for what changed.
 //   - ProduceImpactAreaStructureDetails / DamagesToStrings / DepthsToStrings / StagesToStrings: CSV
 //     text-report generation -- severed per CLAUDE.md (text/CSV formatting is out of scope
 //     throughout this port).
@@ -94,6 +103,77 @@ namespace stage_damage {
 //     IdentifyMinAndMaxStageWithUncertainty, which does NOT need ToCoordinates) is fully ported. No
 //     fixture case reaches the unported branch -- Task 6's oracle exercises the graphical
 //     UsingStagesNotFlows=true path (TractableStageDamageTests' shape), matching the brief.
+// TASK 7 ADDITIONS (Compute() and everything it drives) -- read alongside the class comment above.
+//
+// validate()/has_errors()/error_level(): C#'s Validate() calls `ValidateProperty(x)` (x.Validate();
+// if x.HasErrors, raise this.ErrorLevel to x.ErrorLevel) on all four non-null frequency-input
+// pointers, because in C# every one of ContinuousDistribution/GraphicalUncertainPairedData/
+// UncertainPairedData derives (transitively, via ValidationErrorLogger) from the MVVM `Validation`
+// base. In THIS port only ContinuousDistribution derives hecfda::statistics::Validation (see
+// continuous_distribution.hpp) -- GraphicalUncertainPairedData and UncertainPairedData do not (the
+// MVVM rule-registration/AddRules() machinery was severed from both when they were ported, see
+// their own class comments), so they expose no validate()/has_errors()/error_level() surface here.
+// validate() below therefore only calls through to analytical_flow_frequency_ (when non-null); the
+// graphical_frequency_/discharge_stage_/unregulated_regulated_ ValidateProperty(...) calls are a
+// documented no-op severance. This does not weaken the one behaviorally load-bearing part of
+// Validate() -- the Fatal "no frequency function at all" check (`graphical_frequency_ == nullptr
+// && analytical_flow_frequency_ == nullptr`) and the Inventory::validate() aggregation are both
+// fully ported -- and every fixture case here constructs valid graphical/discharge-stage/
+// unregulated-regulated instances, so the severed branches are unreached in practice (same
+// "should never happen" shape as several other severances already documented in this port).
+//
+// compute()'s convergence loop (ComputeDamageWithUncertaintyAllCoordinates): transcribed verbatim,
+// INCLUDING the "TODO: hard-wire in an additional 10000 iterations" quirk -- when a compute chunk
+// pass finishes and IsTheFunctionNotConverged still returns true, computeChunkQuantity is
+// unconditionally reset to the LITERAL value 100 (not `computeChunkQuantity + 100`, not a
+// remaining-iterations estimate), so a non-converged run's SECOND-and-later passes always run
+// 100 chunks x IterationCount iterations before re-checking, regardless of how close it was to
+// converging. `compute_is_deterministic=true` (the only path this task's fixture exercises) makes
+// every realization within an iteration numerically IDENTICAL across iterations (deterministic
+// sampling bypasses the RNG entirely, see OccupancyType::sample()'s computeIsDeterministic
+// branch), so the resulting histogram has zero variance and its confidence half-width is exactly
+// 0 -- ResultsAreConverged succeeds after the FIRST compute-chunk pass (min_iterations=1000 /
+// IterationCount=100 = 10 chunks), so the hard-wire-100 branch is never actually taken by this
+// task's fixture, but is transcribed anyway since a future non-deterministic caller will exercise
+// it.
+//
+// ComputeLower/Middle/UpperStageDamage index arithmetic (transcribed EXACTLY, verified
+// self-consistent against create_consequence_distribution_results()'s
+// bottom+top+(numProfiles-1)*central sizing): lower writes indices [0, bottom] (bottom+1 entries,
+// stage_index 0..bottom_extrapolation_points_ inclusive); middle's own running stage_index starts
+// at bottom+1 and, for each of the (numProfiles-1) profile pairs, InterpolateBetweenProfiles
+// writes central_interpolation_points_ entries at [stage_index, stage_index+central) then
+// stage_index += central -- so middle's LAST written index is bottom + central*(numProfiles-1);
+// upper computes its OWN stage_index = bottom + central*(numProfiles-1) (the exact index middle
+// last wrote) and then writes at stage_index+i for i=1..top_extrapolation_points_-1 (i starting at
+// 1, NOT 0) -- so upper's first write is exactly ONE PAST middle's last write (no gap, no
+// overlap), and its last write (i = top-1) lands at bottom+central*(numProfiles-1)+top-1, the
+// final valid index. The `i` starting at 1 in ComputeUpperStageDamage (vs. 0 in
+// ComputeLowerStageDamage) is not a typo -- it is what makes the boundary arithmetic work out.
+//
+// reset_structure_water_index_tracking(): called on inventory_and_water_coupled.first (the
+// damage-category-trimmed Inventory) once per chunk iteration, immediately after
+// Lower/Middle/Upper -- see inventory.hpp's reset_structure_water_index_tracking() for why this is
+// numerically load-bearing (Structure's sequential-search cursor), not a no-op formality.
+//
+// produce_zero_damage_functions()'s DynamicHistogram reconstruction: C# builds each "zero-valued"
+// histogram via `new DynamicHistogram()`, the parameterless "ARBITRARY histogram" placeholder ctor
+// (DEFAULT_BIN_WIDTH + a fresh default ConvergenceCriteria(), then ten AddObservationToHistogram(0)
+// calls) -- NOT ported to this port's DynamicHistogram (see dynamic_histogram.hpp's
+// DONE_WITH_CONCERNS: "a serialization/placeholder helper, not a data-collection surface"). Since
+// this task's produced interface needs it, it is reconstructed here from the ctor's own documented
+// body via the still-available `(bin_width, ConvergenceCriteria)` ctor +
+// add_observations_to_histogram(vector<double>(10, 0.0)), which is behaviorally identical (same
+// bin width, same default ConvergenceCriteria, same ten zero-observations) without adding the
+// placeholder ctor itself. C# also ALIASES the same four-element `deterministics` IHistogram[]
+// array across all four asset-category UncertainPairedData results AND across BOTH Item1/Item2 of
+// the returned tuple (`zeroResults.Item1 = zeros; zeroResults.Item2 = zeros;` -- literally the same
+// List<UncertainPairedData> object reference); this port's UncertainPairedData owns its histograms
+// via unique_ptr (move-only, no aliasing), so each of the eight UncertainPairedData instances here
+// (4 asset categories x {damage, quantity}) gets its own independently-constructed-but-
+// numerically-identical set of zero histograms instead. No fixture exercises this path (no
+// TractableStageDamageTests row has an empty inventory), so it's un-pinned by any oracle value;
+// implemented straight from the C# source for interface completeness per the task brief.
 class ImpactAreaStageDamage {
    public:
     using PairedData = hecfda::model::paired_data::PairedData;
@@ -101,6 +181,12 @@ class ImpactAreaStageDamage {
     using GraphicalUncertainPairedData = hecfda::model::paired_data::GraphicalUncertainPairedData;
     using UncertainPairedData = hecfda::model::paired_data::UncertainPairedData;
     using ContinuousDistribution = hecfda::statistics::distributions::ContinuousDistribution;
+    using CurveMetaData = hecfda::model::paired_data::CurveMetaData;
+    using DeterministicOccupancyType = hecfda::model::structures::DeterministicOccupancyType;
+    using ErrorLevel = hecfda::statistics::ErrorLevel;
+    using StudyAreaConsequencesBinned = hecfda::model::metrics::StudyAreaConsequencesBinned;
+    using AggregatedConsequencesBinned = hecfda::model::metrics::AggregatedConsequencesBinned;
+    using ConsequenceType = hecfda::model::metrics::ConsequenceType;
 
     // Hard-coded compute settings (transcribed verbatim -- see class comment / task brief).
     static constexpr double kMinProbability = 0.0001;
@@ -134,6 +220,92 @@ class ImpactAreaStageDamage {
                                      : inventory.get_inventory_trimmed_to_impact_area(impact_area_id)),
           hydraulics_(std::move(hydraulics)) {
         establish_aggregation_stages();
+    }
+
+    bool has_errors() const { return has_errors_; }
+    ErrorLevel error_level() const { return error_level_; }
+
+    // ported from: ImpactAreaStageDamage.cs public void Validate(). See the "TASK 7 ADDITIONS"
+    // class-comment note above for why only analytical_flow_frequency_'s ValidateProperty(...) is
+    // ported (the only one of the four frequency-input pointer types that has a validate()/
+    // has_errors()/error_level() surface in this port) -- the Fatal "no frequency function at all"
+    // check and the Inventory::validate() aggregation are both fully ported.
+    void validate() {
+        has_errors_ = false;
+        error_level_ = ErrorLevel::Unassigned;
+        if (analytical_flow_frequency_ != nullptr) {
+            analytical_flow_frequency_->validate();
+            if (analytical_flow_frequency_->has_errors()) {
+                has_errors_ = true;
+                if (error_level_ < analytical_flow_frequency_->error_level()) {
+                    error_level_ = analytical_flow_frequency_->error_level();
+                }
+            }
+        }
+        if (graphical_frequency_ == nullptr) {
+            if (analytical_flow_frequency_ == nullptr) {
+                has_errors_ = true;
+                error_level_ = ErrorLevel::Fatal;
+            }
+        }
+        inventory_.validate();
+        if (inventory_.error_level() > error_level_) {
+            has_errors_ = true;
+            error_level_ = inventory_.error_level();
+        }
+    }
+
+    // ported from: ImpactAreaStageDamage.cs public (List<UncertainPairedData>,
+    // List<UncertainPairedData>) Compute(bool computeIsDeterministic, ProgressReporter, Stopwatch).
+    // ProgressReporter/Stopwatch parameters SEVERED (MVVM/UI progress plumbing, matching every
+    // other Monte-Carlo-loop task in this port). Returns (damage UPDs, quantity-damaged UPDs).
+    std::pair<std::vector<UncertainPairedData>, std::vector<UncertainPairedData>> compute(
+        bool compute_is_deterministic = false) {
+        validate();
+        std::pair<std::vector<UncertainPairedData>, std::vector<UncertainPairedData>> results;
+        if (error_level_ >= ErrorLevel::Major) {
+            // C#: builds an ErrorMessage/ReportMessage(this, ...) here (SEVERED, matching this
+            // class's blanket MVVM severance) then returns the still-empty `results` tuple.
+            return results;
+        }
+        inventory_.generate_random_numbers(convergence_criteria_);
+        std::vector<std::string> damage_categories = inventory_.get_damage_categories();
+        if (inventory_.structures().empty()) {
+            return produce_zero_damage_functions();
+        }
+
+        std::vector<float> ground_elevations = inventory_.get_ground_elevations();
+        std::vector<std::vector<float>> wses_at_each_structure_by_profile =
+            hydraulics_.get_corrected_wses(ground_elevations);
+        std::vector<double> profile_probabilities = hydraulics_.profile_probabilities();
+        stages_at_index_location_ = compute_stages_at_index_location(profile_probabilities);
+
+        // Run the compute by dam cat to simplify data collection (matches C# comment verbatim).
+        for (const std::string& damage_category : damage_categories) {
+            std::pair<Inventory, std::vector<std::vector<float>>> inventory_and_water_tupled =
+                inventory_.get_inventory_and_water_trimmed_to_damage_category(
+                    damage_category, wses_at_each_structure_by_profile);
+
+            // There will be one StudyAreaConsequencesBinned for each stage in the stage-damage
+            // function; each holds an AggregatedConsequencesBinned for each asset cat.
+            std::vector<StudyAreaConsequencesBinned> consequence_distribution_results =
+                compute_damage_with_uncertainty_all_coordinates(damage_category, inventory_and_water_tupled,
+                                                                  profile_probabilities, compute_is_deterministic);
+
+            // There should be four UncertainPairedData objects -- one for each asset cat of the
+            // given dam cat level compute.
+            std::pair<std::vector<UncertainPairedData>, std::vector<UncertainPairedData>> temp_results_list =
+                StudyAreaConsequencesBinned::to_uncertain_paired_data(stages_at_index_location_,
+                                                                        consequence_distribution_results,
+                                                                        impact_area_id_);
+            for (auto& upd : temp_results_list.first) {
+                results.first.push_back(std::move(upd));
+            }
+            for (auto& upd : temp_results_list.second) {
+                results.second.push_back(std::move(upd));
+            }
+        }
+        return results;
     }
 
     int impact_area_id() const { return impact_area_id_; }
@@ -463,6 +635,271 @@ class ImpactAreaStageDamage {
             "function. Stage-damage compute aborted");
     }
 
+    // ---- TASK 7: Compute() and its private helpers ---------------------------------------------
+
+    // ported from: ImpactAreaStageDamage.cs private (List<UncertainPairedData>,
+    // List<UncertainPairedData>) ProduceZeroDamageFunctions(). See the class comment's "TASK 7
+    // ADDITIONS" note for the DynamicHistogram-reconstruction and no-aliasing rationale.
+    std::pair<std::vector<UncertainPairedData>, std::vector<UncertainPairedData>>
+    produce_zero_damage_functions() const {
+        using DynamicHistogram = hecfda::statistics::histograms::DynamicHistogram;
+        using IDistribution = hecfda::statistics::distributions::IDistribution;
+        const std::vector<double>& stage_frequency_yvals = stage_frequency_.value().yvals();
+        std::size_t n = stage_frequency_yvals.size();
+
+        auto make_zero_histogram = []() {
+            // C#: `new DynamicHistogram()` -- see class comment for why this is reconstructed from
+            // the documented ctor body rather than porting the placeholder ctor itself.
+            DynamicHistogram histogram(DynamicHistogram::DEFAULT_BIN_WIDTH,
+                                        hecfda::statistics::ConvergenceCriteria());
+            histogram.add_observations_to_histogram(std::vector<double>(10, 0.0));
+            return histogram;
+        };
+
+        const std::string damcat = "NO STRUCTURES";
+        auto build_one_set = [&]() {
+            CurveMetaData structure_metadata("stage-damage function", "stages", "no structures", damcat,
+                                              impact_area_id_, hecfda::model::metrics::kStructureAssetCategory);
+            CurveMetaData content_metadata("stage-damage function", "stages", "no structures", damcat,
+                                            impact_area_id_, hecfda::model::metrics::kContentAssetCategory);
+            CurveMetaData other_metadata("stage-damage function", "stages", "no structures", damcat,
+                                          impact_area_id_, hecfda::model::metrics::kOtherAssetCategory);
+            CurveMetaData vehicle_metadata("stage-damage function", "stages", "no structures", damcat,
+                                            impact_area_id_, hecfda::model::metrics::kVehicleAssetCategory);
+            auto make_upd = [&](CurveMetaData metadata) {
+                std::vector<std::unique_ptr<IDistribution>> histograms;
+                histograms.reserve(n);
+                for (std::size_t i = 0; i < n; ++i) {
+                    histograms.push_back(std::make_unique<DynamicHistogram>(make_zero_histogram()));
+                }
+                return UncertainPairedData(stage_frequency_yvals, std::move(histograms), std::move(metadata));
+            };
+            std::vector<UncertainPairedData> zeros;
+            zeros.push_back(make_upd(structure_metadata));
+            zeros.push_back(make_upd(content_metadata));
+            zeros.push_back(make_upd(other_metadata));
+            zeros.push_back(make_upd(vehicle_metadata));
+            return zeros;
+        };
+
+        std::pair<std::vector<UncertainPairedData>, std::vector<UncertainPairedData>> zero_results;
+        // C#: `zeroResults.Item1 = zeros; zeroResults.Item2 = zeros;` -- the SAME List reference.
+        // This port cannot alias (UncertainPairedData is move-only); Item2 gets an independently
+        // built but numerically identical set instead (see class comment).
+        zero_results.first = build_one_set();
+        zero_results.second = build_one_set();
+        return zero_results;
+    }
+
+    // ported from: ImpactAreaStageDamage.cs private List<StudyAreaConsequencesBinned>
+    // CreateConsequenceDistributionResults(string damageCategory). One StudyAreaConsequencesBinned
+    // per stage coordinate, each holding the four asset-category AggregatedConsequencesBinned.
+    std::vector<StudyAreaConsequencesBinned> create_consequence_distribution_results(
+        const std::string& damage_category) const {
+        std::vector<StudyAreaConsequencesBinned> consequence_distribution_results_list;
+        consequence_distribution_results_list.reserve(stages_at_index_location_.size());
+        for (std::size_t i = 0; i < stages_at_index_location_.size(); ++i) {
+            std::vector<AggregatedConsequencesBinned> consequence_distribution_result_list;
+            consequence_distribution_result_list.reserve(4);
+            consequence_distribution_result_list.emplace_back(
+                damage_category, hecfda::model::metrics::kStructureAssetCategory, convergence_criteria_,
+                impact_area_id_, ConsequenceType::Damage);
+            consequence_distribution_result_list.emplace_back(
+                damage_category, hecfda::model::metrics::kContentAssetCategory, convergence_criteria_,
+                impact_area_id_, ConsequenceType::Damage);
+            consequence_distribution_result_list.emplace_back(
+                damage_category, hecfda::model::metrics::kOtherAssetCategory, convergence_criteria_,
+                impact_area_id_, ConsequenceType::Damage);
+            consequence_distribution_result_list.emplace_back(
+                damage_category, hecfda::model::metrics::kVehicleAssetCategory, convergence_criteria_,
+                impact_area_id_, ConsequenceType::Damage);
+            consequence_distribution_results_list.emplace_back(std::move(consequence_distribution_result_list));
+        }
+        return consequence_distribution_results_list;
+    }
+
+    // ported from: ImpactAreaStageDamage.cs private static void DumpDataIntoDistributions(ref
+    // List<StudyAreaConsequencesBinned>).
+    static void dump_data_into_distributions(
+        std::vector<StudyAreaConsequencesBinned>& consequence_distribution_results_list) {
+        for (StudyAreaConsequencesBinned& result : consequence_distribution_results_list) {
+            result.put_data_into_histograms();
+        }
+    }
+
+    // ported from: ImpactAreaStageDamage.cs private static bool IsTheFunctionNotConverged(...).
+    static bool is_the_function_not_converged(
+        std::vector<StudyAreaConsequencesBinned>& consequence_distribution_results) {
+        constexpr double kLowerProb = 0.025;
+        constexpr double kUpperProb = 0.975;
+        for (StudyAreaConsequencesBinned& consequences : consequence_distribution_results) {
+            bool is_converged = consequences.results_are_converged(kUpperProb, kLowerProb);
+            if (!is_converged) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ported from: ImpactAreaStageDamage.cs private void ComputeLowerStageDamage(...). Writes
+    // consequence realizations into stage indices [0, bottom_extrapolation_points_] (inclusive).
+    void compute_lower_stage_damage(std::vector<StudyAreaConsequencesBinned>& consequence_distribution_results,
+                                     const std::string& damage_category,
+                                     const std::vector<DeterministicOccupancyType>& deterministic_occ_types,
+                                     std::pair<Inventory, std::vector<std::vector<float>>>& inventory_and_water_coupled,
+                                     const std::vector<double>& profile_probabilities, int this_chunk_iteration) {
+        float interval = calculate_lower_increment_of_stages(profile_probabilities);
+        std::vector<std::vector<float>> stages_at_all_structures_all_events;
+        stages_at_all_structures_all_events.reserve(static_cast<std::size_t>(bottom_extrapolation_points_) + 1);
+        for (int stage_index = 0; stage_index < bottom_extrapolation_points_ + 1; ++stage_index) {
+            std::vector<float> wses_parallel_to_index_location = extrapolate_from_below_stages_at_index_location(
+                inventory_and_water_coupled.second[0], interval, stage_index, bottom_extrapolation_points_);
+            stages_at_all_structures_all_events.push_back(std::move(wses_parallel_to_index_location));
+        }
+        std::vector<hecfda::model::metrics::ConsequenceResult> consequence_results =
+            inventory_and_water_coupled.first.compute_damages(stages_at_all_structures_all_events, analysis_year_,
+                                                                 damage_category, deterministic_occ_types);
+        int i = 0;
+        for (const auto& consequence_result : consequence_results) {
+            consequence_distribution_results[static_cast<std::size_t>(i)].add_consequence_realization(
+                consequence_result, damage_category, impact_area_id_, this_chunk_iteration);
+            ++i;
+        }
+    }
+
+    // ported from: ImpactAreaStageDamage.cs private void InterpolateBetweenProfiles(...). Writes
+    // central_interpolation_points_ realizations starting at stage_index.
+    void interpolate_between_profiles(std::vector<StudyAreaConsequencesBinned>& consequence_distribution_results,
+                                       const std::vector<DeterministicOccupancyType>& occ_types,
+                                       const std::vector<float>& previous_hydraulic_profile,
+                                       const std::vector<float>& current_hydraulic_profile,
+                                       const std::string& damage_category, Inventory& inventory, int stage_index,
+                                       int this_chunk_iteration) {
+        std::vector<float> intervals_at_structures =
+            calculate_intervals(previous_hydraulic_profile, current_hydraulic_profile);
+        std::vector<std::vector<float>> stages_all_structures_all_stages;
+        stages_all_structures_all_stages.reserve(static_cast<std::size_t>(central_interpolation_points_));
+        for (int interpolator_index = 0; interpolator_index < central_interpolation_points_; ++interpolator_index) {
+            std::vector<float> stages =
+                calculate_increment_of_stages(previous_hydraulic_profile, intervals_at_structures, interpolator_index + 1);
+            stages_all_structures_all_stages.push_back(std::move(stages));
+        }
+        std::vector<hecfda::model::metrics::ConsequenceResult> consequence_results = inventory.compute_damages(
+            stages_all_structures_all_stages, analysis_year_, damage_category, occ_types);
+        int i = 0;
+        for (const auto& consequence_result : consequence_results) {
+            consequence_distribution_results[static_cast<std::size_t>(stage_index + i)].add_consequence_realization(
+                consequence_result, damage_category, impact_area_id_, this_chunk_iteration);
+            ++i;
+        }
+    }
+
+    // ported from: ImpactAreaStageDamage.cs private void ComputeMiddleStageDamage(...).
+    void compute_middle_stage_damage(std::vector<StudyAreaConsequencesBinned>& consequence_distribution_results,
+                                      const std::string& damage_category,
+                                      const std::vector<DeterministicOccupancyType>& deterministic_occ_types,
+                                      std::pair<Inventory, std::vector<std::vector<float>>>& inventory_and_water_coupled,
+                                      const std::vector<double>& profile_probabilities, int this_chunk_iteration) {
+        std::size_t num_profiles = profile_probabilities.size();
+        int stage_index = bottom_extrapolation_points_ + 1;
+        for (std::size_t profile_index = 1; profile_index < num_profiles; ++profile_index) {
+            interpolate_between_profiles(consequence_distribution_results, deterministic_occ_types,
+                                          inventory_and_water_coupled.second[profile_index - 1],
+                                          inventory_and_water_coupled.second[profile_index], damage_category,
+                                          inventory_and_water_coupled.first, stage_index, this_chunk_iteration);
+            stage_index += central_interpolation_points_;
+        }
+    }
+
+    // ported from: ImpactAreaStageDamage.cs private void ComputeUpperStageDamage(...). `i` starts
+    // at 1 (not 0) -- see class comment's index-arithmetic note for why.
+    void compute_upper_stage_damage(std::vector<StudyAreaConsequencesBinned>& consequence_distribution_results,
+                                     const std::string& damage_category,
+                                     const std::vector<DeterministicOccupancyType>& deterministic_occ_types,
+                                     std::pair<Inventory, std::vector<std::vector<float>>>& inventory_and_water_coupled,
+                                     const std::vector<double>& profile_probabilities, int this_chunk_iteration) {
+        const PairedData& stage_frequency = stage_frequency_.value();
+        int stage_index = bottom_extrapolation_points_ +
+                           central_interpolation_points_ * (static_cast<int>(profile_probabilities.size()) - 1);
+        double min_probability = *std::min_element(profile_probabilities.begin(), profile_probabilities.end());
+        double stage_at_probability_of_highest_profile = stage_frequency.f(1.0 - min_probability);
+        float index_station_upper_stage_delta =
+            static_cast<float>(max_stage_for_area_ - stage_at_probability_of_highest_profile);
+        float upper_interval = index_station_upper_stage_delta / static_cast<float>(top_extrapolation_points_);
+
+        std::vector<std::vector<float>> stages_all_structures_all_events;
+        stages_all_structures_all_events.reserve(static_cast<std::size_t>(top_extrapolation_points_) - 1);
+        for (int extrapolator_index = 1; extrapolator_index < top_extrapolation_points_; ++extrapolator_index) {
+            std::vector<float> wses_parallel_to_index_location = extrapolate_from_above_at_index_location(
+                inventory_and_water_coupled.second.back(), upper_interval, extrapolator_index);
+            stages_all_structures_all_events.push_back(std::move(wses_parallel_to_index_location));
+        }
+        std::vector<hecfda::model::metrics::ConsequenceResult> consequence_results =
+            inventory_and_water_coupled.first.compute_damages(stages_all_structures_all_events, analysis_year_,
+                                                                 damage_category, deterministic_occ_types);
+        int i = 1;
+        for (const auto& consequence_result : consequence_results) {
+            consequence_distribution_results[static_cast<std::size_t>(stage_index + i)].add_consequence_realization(
+                consequence_result, damage_category, impact_area_id_, this_chunk_iteration);
+            ++i;
+        }
+    }
+
+    // ported from: ImpactAreaStageDamage.cs private List<StudyAreaConsequencesBinned>
+    // ComputeDamageWithUncertaintyAllCoordinates(...). See class comment's "TASK 7 ADDITIONS" note
+    // for the hard-wire-100 quirk and why the deterministic path converges after one chunk pass.
+    std::vector<StudyAreaConsequencesBinned> compute_damage_with_uncertainty_all_coordinates(
+        const std::string& damage_category,
+        std::pair<Inventory, std::vector<std::vector<float>>>& inventory_and_water_tupled,
+        const std::vector<double>& profile_probabilities, bool compute_is_deterministic) {
+        std::vector<StudyAreaConsequencesBinned> consequence_distribution_results =
+            create_consequence_distribution_results(damage_category);
+        int iterations_per_compute_chunk = convergence_criteria_.iteration_count();
+        int compute_chunk_quantity = convergence_criteria_.min_iterations() / iterations_per_compute_chunk;
+        bool stage_damage_functions_are_not_converged = true;
+
+        while (stage_damage_functions_are_not_converged) {
+            for (int compute_chunk = 0; compute_chunk < compute_chunk_quantity; ++compute_chunk) {
+                for (int this_chunk_iteration = 0; this_chunk_iteration < iterations_per_compute_chunk;
+                     ++this_chunk_iteration) {
+                    // The only sampling in the aggregated stage-damage compute with uncertainty:
+                    // sampling by the overall compute iteration number, so the same random numbers
+                    // are retrieved for each iteration. NOTE: sampled off `inventory_` (this
+                    // class's own, untrimmed-by-damcat Inventory), matching C#'s
+                    // `Inventory.SampleOccupancyTypes(...)` -- NOT the damcat-trimmed
+                    // `inventoryAndWaterTupled.Item1` (both share the same occ_types_ map via
+                    // Inventory's shared_ptr aliasing, see inventory.hpp, so this makes no
+                    // observable difference either way).
+                    int this_compute_iteration = compute_chunk * iterations_per_compute_chunk + this_chunk_iteration;
+                    std::vector<DeterministicOccupancyType> deterministic_occ_types =
+                        inventory_.sample_occupancy_types(this_compute_iteration, compute_is_deterministic);
+
+                    // Iteration counts in the following calls are only used for saving results in
+                    // temp results arrays.
+                    compute_lower_stage_damage(consequence_distribution_results, damage_category,
+                                                deterministic_occ_types, inventory_and_water_tupled,
+                                                profile_probabilities, this_chunk_iteration);
+                    compute_middle_stage_damage(consequence_distribution_results, damage_category,
+                                                 deterministic_occ_types, inventory_and_water_tupled,
+                                                 profile_probabilities, this_chunk_iteration);
+                    compute_upper_stage_damage(consequence_distribution_results, damage_category,
+                                                deterministic_occ_types, inventory_and_water_tupled,
+                                                profile_probabilities, this_chunk_iteration);
+                    inventory_and_water_tupled.first.reset_structure_water_index_tracking();
+                }
+                dump_data_into_distributions(consequence_distribution_results);
+            }
+            stage_damage_functions_are_not_converged = is_the_function_not_converged(consequence_distribution_results);
+            if (stage_damage_functions_are_not_converged) {
+                // TODO (transcribed from upstream verbatim): hard-wire in an additional 10000
+                // iterations for now -- see class comment's "TASK 7 ADDITIONS" note. Literal
+                // reassignment to 100, not `+= 100` and not an iterations-remaining estimate.
+                compute_chunk_quantity = 100;
+            }
+        }
+        return consequence_distribution_results;
+    }
+
     // Non-owning: see class comment's OWNERSHIP note. Nullable, mirroring the C#'s nullable
     // reference fields.
     ContinuousDistribution* analytical_flow_frequency_;
@@ -476,10 +913,9 @@ class ImpactAreaStageDamage {
     HydraulicProfiles hydraulics_;
 
     // ported from: ImpactAreaStageDamage.cs's `_ConvergenceCriteria` field initializer
-    // (minIterations: 1000, maxIterations: 5000). Not read by any geometry method in this task --
-    // Task 7's Compute() is the first consumer (Inventory::generate_random_numbers /
-    // CreateConsequenceDistributionResults). Declared here now so the ctor's shape doesn't change
-    // again in Task 7.
+    // (minIterations: 1000, maxIterations: 5000). Task 7's compute() is the first consumer
+    // (Inventory::generate_random_numbers / create_consequence_distribution_results /
+    // compute_damage_with_uncertainty_all_coordinates).
     hecfda::statistics::ConvergenceCriteria convergence_criteria_{1000, 5000};
 
     std::optional<PairedData> stage_frequency_;
@@ -488,6 +924,15 @@ class ImpactAreaStageDamage {
     int bottom_extrapolation_points_ = 0;
     int central_interpolation_points_ = 0;
     int top_extrapolation_points_ = 0;
+
+    // ported from: ImpactAreaStageDamage.cs `private double[] _StagesAtIndexLocation` (Task 7:
+    // written once per compute() call, read by create_consequence_distribution_results and the
+    // final StudyAreaConsequencesBinned::to_uncertain_paired_data call).
+    std::vector<double> stages_at_index_location_;
+
+    // ported from: PropertyValidationHelper.HasErrors/.ErrorLevel (Task 7: see validate() above).
+    bool has_errors_ = false;
+    ErrorLevel error_level_ = ErrorLevel::Unassigned;
 };
 
 }  // namespace stage_damage

@@ -33,11 +33,13 @@ namespace structures {
 //  - `GetPointMs()` (needs `PointMs`/`structure.Point`, spatial).
 //  - `StructureDetails`/`ProduceDetails` (CSV, needs `Structure.ProduceDetailsHeader` -- already
 //    severed in structure.hpp).
-//  - `GetErrorsFromProperties()` (both overloads) and `ResetStructureWaterIndexTracking()`: string-
-//    message plumbing / a thin wrapper around `Structure::reset_index_tracking()` with no numeric
-//    effect of its own; omitted the same way OccupancyType::get_errors_from_properties() is kept
-//    but Inventory's two overloads (near-duplicates, differing only by an unused-here impact-area-
-//    id message) are not, since nothing in this port's numeric surface consumes them.
+//  - `GetErrorsFromProperties()` (both overloads): string-message plumbing; omitted the same way
+//    OccupancyType::get_errors_from_properties() is kept but Inventory's two overloads
+//    (near-duplicates, differing only by an unused-here impact-area-id message) are not, since
+//    nothing in this port's numeric surface consumes them.
+//    (`ResetStructureWaterIndexTracking()` was ALSO listed here through Task 6, when it was still
+//    a genuine no-op for this port's surface -- Task 7 un-severs it; see
+//    reset_structure_water_index_tracking() below for why it turned out to matter.)
 //  - `MessageReport`/`ReportMessage` (MVVM messaging, blanket severance).
 //
 // STORAGE / MOVE-SEMANTICS DECISIONS (Task 6):
@@ -303,6 +305,22 @@ class Inventory {
 
         return aggregate_results(wses, damage_category, struc_collection, content_collection, other_collection,
                                   vehicle_collection);
+    }
+
+    // ported from: Inventory.cs internal void ResetStructureWaterIndexTracking(). Task 6's class
+    // comment called this a "no numeric effect" severance -- true THEN (nothing in that task's
+    // geometry-only surface called compute_damage), but Task 7's compute loop calls
+    // Structure::compute_damage repeatedly per Monte Carlo iteration via the sequential-search
+    // cursor overload PairedData::f(x, ref index) (see structure.hpp's class comment): that cursor
+    // only walks forward and is only correct when queried in ascending depth-above-first-floor
+    // order within one pass (lower -> middle -> upper stages, which IS ascending WSE order).
+    // Between chunk iterations the pass restarts from the lowest stage, so the cursor MUST be
+    // reset back to 1 or it stays stuck high from the previous iteration and interpolates the
+    // wrong segment. Un-severed here; ported now that Task 7 is the first real caller.
+    void reset_structure_water_index_tracking() {
+        for (auto& structure : structures_) {
+            structure.reset_index_tracking();
+        }
     }
 
     // ported from: Inventory.cs public void Validate(). Transcribed verbatim, INCLUDING the
