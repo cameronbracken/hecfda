@@ -256,13 +256,13 @@ class SystemPerformanceResults {
         }
     }
 
-   private:
-    // ported from: SystemPerformanceResults.cs `internal DynamicHistogram GetAEPHistogram()`. Not
-    // called anywhere else in this class in the pinned C# source either -- a convenience accessor
-    // for later callers (ImpactAreaScenarioResults.GetAEPHistogramForPlotting, out of this task's
-    // scope). Kept private; wire to `public` if/when a later task's fixture needs it directly.
+    // ported from: SystemPerformanceResults.cs `internal DynamicHistogram GetAEPHistogram()`. Was
+    // private until Phase 5 Task 6: ImpactAreaScenarioResults::get_aep_histogram_for_plotting is
+    // this method's first caller (the class comment above anticipated this -- "wire to public if/
+    // when a later task's fixture needs it directly").
     DynamicHistogram& get_aep_histogram() { return get_assurance(kAepAssuranceType).assurance_histogram(); }
 
+   private:
     // ported from: SystemPerformanceResults.cs `internal AssuranceResultStorage GetAssurance(string
     // type, double standardNonExceedanceProbabilityForAssuranceOfTargetOrLevee = 0)`. See the class
     // comment's SEVERANCES note: throws on a miss instead of C#'s log-and-return-dummy-fallback.

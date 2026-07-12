@@ -14,6 +14,7 @@
 #include "hecfda/model/metrics/categoried_uncertain_paired_data.hpp"
 #include "hecfda/model/metrics/consequence_extensions.hpp"
 #include "hecfda/model/metrics/consequence_result.hpp"
+#include "hecfda/model/metrics/impact_area_scenario_results.hpp"
 #include "hecfda/model/metrics/performance_by_thresholds.hpp"
 #include "hecfda/model/metrics/study_area_consequences_binned.hpp"
 #include "hecfda/model/metrics/system_performance_results.hpp"
@@ -2911,6 +2912,117 @@ TEST_CASE("bootstrap_to_paired_data fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for ImpactAreaScenarioResults (Phase 5 Task 6): the compute-output container
+// holding one PerformanceByThresholds + one StudyAreaConsequencesBinned. `construct` is
+// {impact_area_id, damage_category, asset_category, consequence_convergence: {min_iterations,
+// max_iterations}, threshold: {id, type (ThresholdEnum name string), value, convergence:
+// {min_iterations, max_iterations}}}. Builds a fresh ImpactAreaScenarioResults(impact_area_id)
+// (the 1-arg public ctor), add_threshold's a Threshold built from `threshold`, and
+// add_new_consequence_result_object's ONE (damage_category, asset_category) combo into
+// consequence_results() with ConsequenceType::Damage/RiskType::Total (Total, not
+// StudyAreaConsequencesBinned's own Fail default -- matches the RiskType::Total default
+// mean_expected_annual_consequences itself uses at the ImpactAreaScenarioResults level; see
+// fixtures/metrics/impact_area_scenario_results.json's note). `consequence_realizations`
+// ({iteration, damage}) feed consequence_results().add_consequence_realization(...) (the
+// EAD-binning overload, same ConsequenceType::Damage/RiskType::Total), then
+// consequence_results().put_data_into_histograms() runs once. `aep_observations` ({iteration,
+// result}) feed the retrieved threshold's system_performance_results().add_aep_for_assurance(...),
+// then that same system_performance_results().put_data_into_histograms() runs once. One object is
+// built and staged per case, shared across every assertion (mirrors run_performance_by_thresholds/
+// run_study_area_consequences_binned's "one staged object per case" convention). `method`
+// dispatches mean_aep/median_aep (args [threshold_id]), long_term_exceedance_probability (args
+// [threshold_id, years]), assurance_of_aep (args [threshold_id, exceedance_probability]),
+// mean_expected_annual_consequences (args [impact_area_id], damage_category/asset_category/
+// ConsequenceType::Damage/RiskType::Total from construct), and results_are_converged (args
+// [upper, lower], mode bool -- ImpactAreaScenarioResults::results_are_converged(upper, lower,
+// /*check_consequence_results=*/true), returned as 1.0/0.0).
+static double run_impact_area_scenario_results(const json& c, const std::string& method, const json& args) {
+    using namespace hecfda::model::metrics;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    const auto& ctor = c["construct"];
+    int impact_area_id = ctor["impact_area_id"].get<int>();
+    std::string damage_category = ctor["damage_category"].get<std::string>();
+    std::string asset_category = ctor["asset_category"].get<std::string>();
+
+    ImpactAreaScenarioResults results(impact_area_id);
+
+    const auto& t = ctor["threshold"];
+    int threshold_id = t["id"].get<int>();
+    ThresholdEnum threshold_type = threshold_enum_from_name(t["type"].get<std::string>());
+    double threshold_value = t["value"].get<double>();
+    const auto& t_conv = t["convergence"];
+    ConvergenceCriteria threshold_cc(t_conv["min_iterations"].get<int>(), t_conv["max_iterations"].get<int>());
+    results.performance_by_thresholds().add_threshold(
+        Threshold(threshold_id, threshold_cc, threshold_type, threshold_value));
+
+    const auto& cons_conv = ctor["consequence_convergence"];
+    ConvergenceCriteria consequence_cc(cons_conv["min_iterations"].get<int>(), cons_conv["max_iterations"].get<int>());
+    results.consequence_results().add_new_consequence_result_object(
+        damage_category, asset_category, consequence_cc, impact_area_id, ConsequenceType::Damage, RiskType::Total);
+
+    for (const auto& r : c["consequence_realizations"]) {
+        results.consequence_results().add_consequence_realization(
+            r["damage"].get<double>(), damage_category, asset_category, impact_area_id,
+            r["iteration"].get<std::int64_t>(), ConsequenceType::Damage, RiskType::Total);
+    }
+    results.consequence_results().put_data_into_histograms();
+
+    Threshold& threshold = results.performance_by_thresholds().get_threshold(threshold_id);
+    threshold.system_performance_results().add_stage_assurance_histogram(0.98);
+    for (const auto& o : c["aep_observations"]) {
+        threshold.system_performance_results().add_aep_for_assurance(o["result"].get<double>(),
+                                                                        o["iteration"].get<int>());
+    }
+    for (const auto& o : c["stage_observations"]) {
+        threshold.system_performance_results().add_stage_for_assurance(0.98, o["result"].get<double>(),
+                                                                          o["iteration"].get<int>());
+    }
+    threshold.system_performance_results().put_data_into_histograms();
+
+    if (method == "mean_aep") return results.mean_aep(args[0].get<int>());
+    if (method == "median_aep") return results.median_aep(args[0].get<int>());
+    if (method == "long_term_exceedance_probability") {
+        return results.long_term_exceedance_probability(args[0].get<int>(), args[1].get<int>());
+    }
+    if (method == "assurance_of_aep") {
+        return results.assurance_of_aep(args[0].get<int>(), args[1].get<double>());
+    }
+    if (method == "mean_expected_annual_consequences") {
+        return results.mean_expected_annual_consequences(args[0].get<int>(), damage_category, asset_category,
+                                                           ConsequenceType::Damage, RiskType::Total);
+    }
+    if (method == "results_are_converged") {
+        bool converged =
+            results.results_are_converged(args[0].get<double>(), args[1].get<double>(), /*check_consequence_results=*/true);
+        return converged ? 1.0 : 0.0;
+    }
+    auto msg = std::string("unknown impact_area_scenario_results method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("impact_area_scenario_results fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/impact_area_scenario_results.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "impact_area_scenario_results");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_impact_area_scenario_results(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());

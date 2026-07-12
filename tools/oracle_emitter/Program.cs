@@ -1280,6 +1280,74 @@ namespace oracle_emitter {
       throw new Exception("unknown performance_by_thresholds method: " + method);
     }
 
+    // ImpactAreaScenarioResults (Phase 5 Task 6) is the compute-output container holding one
+    // PerformanceByThresholds + one StudyAreaConsequencesBinned -- built from
+    // patched/ImpactAreaScenarioResults.cs (see that file's header for the patch rationale: XML
+    // dropped, everything else including the GetOrCreateUncertainConsequenceFrequencyCurve lock
+    // kept VERBATIM). `construct` is {impact_area_id, damage_category, asset_category,
+    // consequence_convergence: {min_iterations, max_iterations}, threshold: {id, type
+    // (ThresholdEnum name string), value, convergence: {min_iterations, max_iterations}}}. Builds
+    // a fresh ImpactAreaScenarioResults(impactAreaID) (the 1-arg public ctor), AddThreshold's a
+    // Threshold built from `threshold`, and AddNewConsequenceResultObject's ONE (damageCategory,
+    // assetCategory) combo into ConsequenceResults with ConsequenceType.Damage/RiskType.Total
+    // (Total, not StudyAreaConsequencesBinned's own Fail default -- matches the RiskType.Total
+    // default MeanExpectedAnnualConsequences itself uses; see
+    // fixtures/metrics/impact_area_scenario_results.json's note). `consequence_realizations`
+    // ({iteration, damage}) feed ConsequenceResults.AddConsequenceRealization(damage,
+    // damageCategory, assetCategory, impactAreaID, iteration, ConsequenceType.Damage,
+    // RiskType.Total) (the EAD-binning overload), then ConsequenceResults.PutDataIntoHistograms()
+    // runs once. `aep_observations` ({iteration, result}) feed the retrieved threshold's
+    // SystemPerformanceResults.AddAEPForAssurance(...), then that same SystemPerformanceResults.
+    // PutDataIntoHistograms() runs once. `method` dispatches mean_aep/median_aep (args
+    // [thresholdID]), long_term_exceedance_probability (args [thresholdID, years]),
+    // assurance_of_aep (args [thresholdID, exceedanceProbability]),
+    // mean_expected_annual_consequences (args [impactAreaID]), and results_are_converged (args
+    // [upper, lower] -- ResultsAreConverged(upper, lower, checkConsequenceResults: true), returned
+    // as 1.0/0.0).
+    static object EvalImpactAreaScenarioResults(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      int impactAreaID = c.GetProperty("impact_area_id").GetInt32();
+      string damageCategory = c.GetProperty("damage_category").GetString();
+      string assetCategory = c.GetProperty("asset_category").GetString();
+
+      var results = new ImpactAreaScenarioResults(impactAreaID);
+
+      var t = c.GetProperty("threshold");
+      int thresholdId = t.GetProperty("id").GetInt32();
+      ThresholdEnum thresholdType = Enum.Parse<ThresholdEnum>(t.GetProperty("type").GetString());
+      double thresholdValue = D(t.GetProperty("value"));
+      var tConv = t.GetProperty("convergence");
+      var thresholdCc = new ConvergenceCriteria(tConv.GetProperty("min_iterations").GetInt32(), tConv.GetProperty("max_iterations").GetInt32());
+      results.PerformanceByThresholds.AddThreshold(new Threshold(thresholdId, thresholdCc, thresholdType, thresholdValue));
+
+      var consConv = c.GetProperty("consequence_convergence");
+      var consequenceCc = new ConvergenceCriteria(consConv.GetProperty("min_iterations").GetInt32(), consConv.GetProperty("max_iterations").GetInt32());
+      results.ConsequenceResults.AddNewConsequenceResultObject(damageCategory, assetCategory, consequenceCc, impactAreaID, ConsequenceType.Damage, RiskType.Total);
+
+      foreach (var r in caseEl.GetProperty("consequence_realizations").EnumerateArray()) {
+        results.ConsequenceResults.AddConsequenceRealization(D(r.GetProperty("damage")), damageCategory, assetCategory, impactAreaID, r.GetProperty("iteration").GetInt64(), ConsequenceType.Damage, RiskType.Total);
+      }
+      results.ConsequenceResults.PutDataIntoHistograms();
+
+      Threshold threshold = results.PerformanceByThresholds.GetThreshold(thresholdId);
+      threshold.SystemPerformanceResults.AddStageAssuranceHistogram(0.98);
+      foreach (var o in caseEl.GetProperty("aep_observations").EnumerateArray()) {
+        threshold.SystemPerformanceResults.AddAEPForAssurance(D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+      }
+      foreach (var o in caseEl.GetProperty("stage_observations").EnumerateArray()) {
+        threshold.SystemPerformanceResults.AddStageForAssurance(0.98, D(o.GetProperty("result")), o.GetProperty("iteration").GetInt32());
+      }
+      threshold.SystemPerformanceResults.PutDataIntoHistograms();
+
+      if (method == "mean_aep") return results.MeanAEP(argsEl[0].GetInt32());
+      if (method == "median_aep") return results.MedianAEP(argsEl[0].GetInt32());
+      if (method == "long_term_exceedance_probability") return results.LongTermExceedanceProbability(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+      if (method == "assurance_of_aep") return results.AssuranceOfAEP(argsEl[0].GetInt32(), D(argsEl[1]));
+      if (method == "mean_expected_annual_consequences") return results.MeanExpectedAnnualConsequences(argsEl[0].GetInt32(), damageCategory, assetCategory, ConsequenceType.Damage, RiskType.Total);
+      if (method == "results_are_converged") return results.ResultsAreConverged(D(argsEl[0]), D(argsEl[1]), true) ? 1.0 : 0.0;
+      throw new Exception("unknown impact_area_scenario_results method: " + method);
+    }
+
     // ContinuousDistributionExtensions.BootstrapToPairedData(this ContinuousDistribution, long
     // iterationNumber, double[] ExceedanceProbabilities, bool computeIsDeterministic) (Phase 5
     // Task 5) -- the analytical-frequency realization Task 8's EAD compute uses to turn a fitted
@@ -1361,6 +1429,7 @@ namespace oracle_emitter {
               case "assurance_result_storage": val = EvalAssuranceResultStorage(c, method, argsEl); break;
               case "system_performance_results": val = EvalSystemPerformanceResults(c, method, argsEl); break;
               case "performance_by_thresholds": val = EvalPerformanceByThresholds(c, method, argsEl); break;
+              case "impact_area_scenario_results": val = EvalImpactAreaScenarioResults(c, method, argsEl); break;
               case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;
               case "correct_dry_structure_wses": val = EvalHydraulicProfiles(c, method); break;
               case "stage_damage_geometry": val = EvalStageDamageGeometry(c, method, argsEl); break;

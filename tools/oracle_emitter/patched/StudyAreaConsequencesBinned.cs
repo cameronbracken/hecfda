@@ -19,14 +19,17 @@
 //    AggregatedConsequencesByQuantile/StudyAreaConsequencesByQuantile (not compiled into this
 //    subset project) and AggregatedConsequencesBinned.ConvertToSingleEmpiricalDistributionOfConsequences
 //    (also dropped by the Task 3 patch).
-//  - GetAggregateEmpiricalDistribution(...) / SampleMeanDamage(...) /
-//    ConsequenceExceededWithProbabilityQ(...) (the "Aggregation" region, minus GetConsequenceResult
-//    which is kept -- it's required by the compute path): NOT hard compile blockers (Empirical/
-//    DynamicHistogram.ConvertToEmpiricalDistribution live in the real, unpatched Statistics.dll
-//    referenced via ProjectReference, and FilterByCategories is patched in below), but dropped to
-//    match the C++ port's scope -- this task doesn't port them (see
-//    study_area_consequences_binned.hpp's SEVERANCES for the rationale: no fixture/produced-
-//    interface need, trivial to add later).
+//  - GetAggregateEmpiricalDistribution(...) / ConsequenceExceededWithProbabilityQ(...) (the
+//    "Aggregation" region, minus GetConsequenceResult which is kept -- it's required by the
+//    compute path): NOT hard compile blockers (Empirical/DynamicHistogram.
+//    ConvertToEmpiricalDistribution live in the real, unpatched Statistics.dll referenced via
+//    ProjectReference, and FilterByCategories is patched in below), but dropped to match the C++
+//    port's scope -- neither is ported (see study_area_consequences_binned.hpp's SEVERANCES for
+//    the rationale: no fixture/produced-interface need, trivial to add later).
+//  - SampleMeanDamage(...) was ALSO dropped by the original Phase 4 Task 4 patch (same rationale
+//    as the two methods above), but is ADDED BACK here by Phase 5 Task 6:
+//    ImpactAreaScenarioResults.MeanExpectedAnnualConsequences needs it (see
+//    patched/ImpactAreaScenarioResults.cs). Kept VERBATIM from the real source.
 using Statistics;
 using Statistics.Distributions;
 using Statistics.Histograms;
@@ -255,6 +258,14 @@ public class StudyAreaConsequencesBinned : ValidationErrorLogger
             .FilterByCategories(damageCategory, assetCategory, impactAreaID, consequenceType, riskType)
             .FirstOrDefault();
         return result;
+    }
+
+    // Added back by Phase 5 Task 6 -- see the header comment's SampleMeanDamage bullet.
+    public double SampleMeanDamage(string damageCategory = null, string assetCategory = null, int impactAreaID = utilities.IntegerGlobalConstants.DEFAULT_MISSING_VALUE, ConsequenceType consequenceType = ConsequenceType.Damage, RiskType riskType = RiskType.Fail)
+    {
+        return ConsequenceResultList
+            .FilterByCategories(damageCategory, assetCategory, impactAreaID, consequenceType, riskType)
+            .Sum(result => result.SampleMeanExpectedAnnualConsequences());
     }
     #endregion
 }
