@@ -19,6 +19,7 @@
 #include "hecfda/model/metrics/impact_area_scenario_results.hpp"
 #include "hecfda/model/metrics/performance_by_thresholds.hpp"
 #include "hecfda/model/metrics/study_area_consequences_binned.hpp"
+#include "hecfda/model/metrics/study_area_consequences_by_quantile.hpp"
 #include "hecfda/model/metrics/system_performance_results.hpp"
 #include "hecfda/model/metrics/threshold_enum.hpp"
 #include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
@@ -2376,6 +2377,96 @@ TEST_CASE("study_area_consequences_binned fixture") {
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for StudyAreaConsequencesByQuantile (Phase 6 Task 3): the Empirical-backed
+// collection wrapper, ByQuantile sibling of StudyAreaConsequencesBinned above. `construct` is
+// {consequence_results: [{damage_category, asset_category, impact_area_id, consequence_type,
+// risk_type, empirical: {probabilities, values}, sample_mean}, ...]}; one
+// AggregatedConsequencesByQuantile is built per entry (construction order), with Empirical.SampleMean
+// force-set to the entry's `sample_mean` field (reusing set_sample_mean, same as
+// EvalEmpiricalStacking's convention) so SampleMeanDamage/GetAggregateEmpiricalDistribution().
+// SampleMean produce non-trivial, distinguishing sums rather than 0+0+.... An optional
+// `add_existing` list of the same per-entry shape is then applied via
+// add_existing_consequence_result_object(...) in order, exercising the dedup-via-
+// GetConsequenceResult control flow. `method` dispatches sample_mean_damage or
+// get_aggregate_empirical_distribution_sample_mean; `args` is
+// [damage_category_or_null, asset_category_or_null, impact_area_id]. See
+// fixtures/metrics/study_area_consequences_by_quantile.json's note for what each case exercises.
+static hecfda::model::metrics::AggregatedConsequencesByQuantile make_aggregated_consequences_by_quantile_entry(
+    const json& entry) {
+    using namespace hecfda::model::metrics;
+    const auto& emp = entry["empirical"];
+    hecfda::statistics::distributions::Empirical empirical(emp["probabilities"].get<std::vector<double>>(),
+                                                             emp["values"].get<std::vector<double>>());
+    empirical.set_sample_mean(entry["sample_mean"].get<double>());
+    return AggregatedConsequencesByQuantile(
+        entry["damage_category"].get<std::string>(), entry["asset_category"].get<std::string>(),
+        std::move(empirical), entry["impact_area_id"].get<int>(),
+        parse_consequence_type(entry["consequence_type"].get<std::string>()),
+        parse_risk_type(entry["risk_type"].get<std::string>()));
+}
+
+static hecfda::model::metrics::StudyAreaConsequencesByQuantile make_study_area_consequences_by_quantile(
+    const json& c) {
+    using namespace hecfda::model::metrics;
+    std::vector<AggregatedConsequencesByQuantile> results;
+    for (const auto& entry : c["construct"]["consequence_results"]) {
+        results.push_back(make_aggregated_consequences_by_quantile_entry(entry));
+    }
+    StudyAreaConsequencesByQuantile study(std::move(results));
+    if (c.contains("add_existing")) {
+        for (const auto& entry : c["add_existing"]) {
+            study.add_existing_consequence_result_object(make_aggregated_consequences_by_quantile_entry(entry));
+        }
+    }
+    return study;
+}
+
+static std::optional<std::string> optional_string_arg(const json& arg) {
+    if (arg.is_null()) {
+        return std::nullopt;
+    }
+    return arg.get<std::string>();
+}
+
+static double run_study_area_consequences_by_quantile(const json& c, const std::string& method,
+                                                        const json& args) {
+    hecfda::model::metrics::StudyAreaConsequencesByQuantile study = make_study_area_consequences_by_quantile(c);
+    std::optional<std::string> damage_category = optional_string_arg(args[0]);
+    std::optional<std::string> asset_category = optional_string_arg(args[1]);
+    int impact_area_id = args[2].get<int>();
+    if (method == "sample_mean_damage") {
+        return study.sample_mean_damage(damage_category, asset_category, impact_area_id);
+    }
+    if (method == "get_aggregate_empirical_distribution_sample_mean") {
+        return study.get_aggregate_empirical_distribution(damage_category, asset_category, impact_area_id)
+            .sample_mean();
+    }
+    auto msg = std::string("unknown study_area_consequences_by_quantile method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("study_area_consequences_by_quantile fixture") {
+    std::ifstream f(fixtures_dir() + "/metrics/study_area_consequences_by_quantile.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "study_area_consequences_by_quantile");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_study_area_consequences_by_quantile(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
                 auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
                            " method: " + a["method"].get<std::string>();
                 FAIL(msg.c_str());

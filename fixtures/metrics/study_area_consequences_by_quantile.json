@@ -1,0 +1,98 @@
+{
+  "target": "study_area_consequences_by_quantile",
+  "kind": "study_area_consequences_by_quantile",
+  "source_test": "HEC.FDA.Model/metrics/StudyAreaConsequencesByQuantile.cs + Extensions/ConsequenceExtensions.cs (no upstream unit test file exists for this class; oracle-gate-reproduced against the real StudyAreaConsequencesByQuantile/AggregatedConsequencesByQuantile/Empirical directly)",
+  "note": "construct = {consequence_results: [{damage_category, asset_category, impact_area_id, consequence_type, risk_type, empirical: {probabilities, values}, sample_mean}, ...]}, building one AggregatedConsequencesByQuantile per entry (in list order, matching StudyAreaConsequencesByQuantile's construction-order iteration) via the (string,string,Empirical,int,ConsequenceType,RiskType) ctor -- the Empirical is built via the two-array (probabilities, values) ctor, then Empirical.SampleMean is force-set to the entry's `sample_mean` field (SampleMean is external bookkeeping, always 0 straight out of that ctor -- see empirical.hpp/aggregated_consequences_by_quantile.json's own note -- so this fixture sets it explicitly to exercise SampleMeanDamage/GetAggregateEmpiricalDistribution().SampleMean with non-trivial, distinguishing values rather than summing zeros), then StudyAreaConsequencesByQuantile(List<AggregatedConsequencesByQuantile>). Optional `add_existing`: a second list of the same per-entry shape, each applied via AddExistingConsequenceResultObject(...) IN ORDER after construction -- exercises the dedup-via-GetConsequenceResult control flow (a duplicate (damage_category, asset_category, impact_area_id, consequence_type, risk_type) combo is silently rejected; a novel combo is appended). `method` is `sample_mean_damage` (args [damage_category_or_null, asset_category_or_null, impact_area_id]) -> FilterByCategories(...).Sum(ConsequenceSampleMean), or `get_aggregate_empirical_distribution_sample_mean` (same args) -> FilterByCategories(...).Select(ConsequenceDistribution) stacked via Empirical.StackEmpiricalDistributions(list, Empirical.Sum), then .SampleMean read off the stacked result (the combined SampleMean is force-set onto the refit distribution by StackEmpiricalDistributions itself, left-to-right Sum over the matched entries' own SampleMean fields, in construction/first-seen order). consequence_type defaults Damage and risk_type defaults Total (wildcard) for every entry/query in this fixture, so only the damage_category/asset_category/impact_area_id filter axes are exercised (impact_area_id -999 == wildcard, matching every region). Cases: (1) multi_category_filtered_aggregation -- four entries spanning two damage categories (Residential, Commercial), three asset categories (Structure, Content, Vehicle), and two impact areas (5, 6) for the same (Residential, Structure) combo, to exercise the impact_area_id wildcard-vs-exact-match branch; assertions narrow the filter from damage-category-only down to an exact (damage, asset, area) triple. (2) add_existing_dedup_and_new -- starts from a single entry, attempts to add a DUPLICATE of it (same 5-tuple key, but a different sample_mean, to detect an accidental overwrite) which must be rejected, then adds a genuinely NEW (Commercial, Vehicle) entry which must be appended; assertions confirm the duplicate's sample_mean never entered the aggregate and the new entry's did. All values PIN (gate-captured, never hand-derived) -- SampleMeanDamage/GetAggregateEmpiricalDistribution both route through the real FilterByCategories predicate and, for the latter, the real 2500-step InverseCDF-sampling StackEmpiricalDistributions refit, so even though the SUM itself is simple addition, only the real C# code proves the filter selected the correct subset and StackEmpiricalDistributions' SampleMean bookkeeping combines it correctly.",
+  "cases": [
+    {
+      "name": "multi_category_filtered_aggregation",
+      "construct": {
+        "consequence_results": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "impact_area_id": 5,
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "empirical": { "probabilities": [0.25, 0.5, 0.75, 1.0], "values": [10, 20, 30, 40] },
+            "sample_mean": 15.0
+          },
+          {
+            "damage_category": "Residential",
+            "asset_category": "Content",
+            "impact_area_id": 5,
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "empirical": { "probabilities": [0.2, 0.4, 0.6, 0.8, 1.0], "values": [5, 10, 15, 20, 25] },
+            "sample_mean": 12.5
+          },
+          {
+            "damage_category": "Commercial",
+            "asset_category": "Structure",
+            "impact_area_id": 5,
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "empirical": { "probabilities": [0.5, 1.0], "values": [100, 200] },
+            "sample_mean": 150.0
+          },
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "impact_area_id": 6,
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "empirical": { "probabilities": [0.5, 1.0], "values": [90, 110] },
+            "sample_mean": 99.0
+          }
+        ]
+      },
+      "assertions": [
+        { "method": "sample_mean_damage", "args": ["Residential", null, -999], "expected": 126.5, "tol": 1e-9, "mode": "abs" },
+        { "method": "sample_mean_damage", "args": ["Residential", "Structure", -999], "expected": 114.0, "tol": 1e-9, "mode": "abs" },
+        { "method": "sample_mean_damage", "args": ["Residential", "Structure", 5], "expected": 15.0, "tol": 1e-9, "mode": "abs" },
+        { "method": "get_aggregate_empirical_distribution_sample_mean", "args": ["Residential", "Structure", -999], "expected": 114.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    },
+    {
+      "name": "add_existing_dedup_and_new",
+      "construct": {
+        "consequence_results": [
+          {
+            "damage_category": "Residential",
+            "asset_category": "Structure",
+            "impact_area_id": 5,
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "empirical": { "probabilities": [0.25, 0.5, 0.75, 1.0], "values": [10, 20, 30, 40] },
+            "sample_mean": 15.0
+          }
+        ]
+      },
+      "add_existing": [
+        {
+          "damage_category": "Residential",
+          "asset_category": "Structure",
+          "impact_area_id": 5,
+          "consequence_type": "Damage",
+          "risk_type": "Fail",
+          "empirical": { "probabilities": [0.5, 1.0], "values": [1, 2] },
+          "sample_mean": 999.0
+        },
+        {
+          "damage_category": "Commercial",
+          "asset_category": "Vehicle",
+          "impact_area_id": 5,
+          "consequence_type": "Damage",
+          "risk_type": "Fail",
+          "empirical": { "probabilities": [0.5, 1.0], "values": [70, 84] },
+          "sample_mean": 77.0
+        }
+      ],
+      "assertions": [
+        { "method": "sample_mean_damage", "args": ["Residential", "Structure", 5], "expected": 15.0, "tol": 1e-9, "mode": "abs" },
+        { "method": "sample_mean_damage", "args": [null, null, -999], "expected": 92.0, "tol": 1e-9, "mode": "abs" },
+        { "method": "get_aggregate_empirical_distribution_sample_mean", "args": [null, null, -999], "expected": 92.0, "tol": 1e-9, "mode": "abs" }
+      ]
+    }
+  ]
+}

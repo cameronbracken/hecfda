@@ -124,6 +124,19 @@
          only dependencies (Empirical, ConsequenceType, RiskType) are already compiled in above. No
          patched/ copy needed, compiles unpatched, verbatim, in full. -->
     <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/AggregatedConsequencesByQuantile.cs" />
+    <!-- Task Phase6T3: StudyAreaConsequencesByQuantile.cs (the collection wrapper over
+         AggregatedConsequencesByQuantile results) inherits `: Validation` and raises a
+         `MessageReport` event via `ReportMessage(this, ...)` on a GetConsequenceResult/
+         GetAggregateEmpiricalDistribution miss, but recon confirmed neither is a compile blocker:
+         `Validation`, `MessageReportedEventHandler`, `ErrorMessage`, and `MessageEventArgs` are all
+         already reachable transitively through the HEC.FDA.Statistics ProjectReference (the same
+         MVVM closure the Task Phase3T4 OccupancyType.cs recon above already established), and its
+         other dependencies (AggregatedConsequencesByQuantile, ConsequenceExtensions.FilterByCategories,
+         Empirical) are already compiled in above. Verified by direct `dotnet build`: compiles
+         clean, unpatched, 0 errors/warnings; no patched/StudyAreaConsequencesByQuantile.cs copy
+         needed (unlike patched/StudyAreaConsequencesBinned.cs, which needed real compile-blocker
+         trims for WriteToXML/ConvertToStudyAreaConsequencesByQuantile). -->
+    <Compile Include="../../upstream/HEC-FDA/HEC.FDA.Model/metrics/StudyAreaConsequencesByQuantile.cs" />
     <!-- Task Phase4T5: patched/HydraulicDataset.cs keeps ONLY the two pure-numeric
          CorrectDryStructureWSEs overloads (VERBATIM) plus a thin CorrectAllProfiles wrapper
          reproducing GetHydraulicDatasetInFloatsWithProbabilities's post-read correction loop

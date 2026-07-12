@@ -1070,6 +1070,45 @@ namespace oracle_emitter {
       throw new Exception("unknown aggregated_consequences_by_quantile method: " + method);
     }
 
+    // StudyAreaConsequencesByQuantile (Phase 6 Task 3) is the collection wrapper over
+    // AggregatedConsequencesByQuantile results, ByQuantile sibling of StudyAreaConsequencesBinned
+    // above -- built straight from the real StudyAreaConsequencesByQuantile.cs (compiled
+    // unpatched, see oracle_emitter.csproj's Task Phase6T3 comment: Validation/MessageReport are
+    // already reachable transitively, same as OccupancyType.cs). `construct` is
+    // {consequence_results: [{damage_category, asset_category, impact_area_id, consequence_type,
+    // risk_type, empirical: {probabilities, values}, sample_mean}, ...]}; one
+    // AggregatedConsequencesByQuantile is built per entry (list order), with Empirical.SampleMean
+    // force-set to the entry's `sample_mean` field (SampleMean is external bookkeeping, always 0
+    // straight out of the two-array ctor). An optional `add_existing` list of the same per-entry
+    // shape is then applied via AddExistingConsequenceResultObject(...) in order. `method`
+    // dispatches SampleMeanDamage (args [damageCategory, assetCategory, impactAreaID]) or a thin
+    // GetAggregateEmpiricalDistribution(...).SampleMean read (same args).
+    static AggregatedConsequencesByQuantile BuildAggregatedConsequencesByQuantileEntry(JsonElement entry) {
+      var emp = entry.GetProperty("empirical");
+      var empirical = new Empirical(DA(emp.GetProperty("probabilities")), DA(emp.GetProperty("values")));
+      empirical.SampleMean = D(entry.GetProperty("sample_mean"));
+      var consequenceType = Enum.Parse<ConsequenceType>(entry.GetProperty("consequence_type").GetString());
+      var riskType = Enum.Parse<RiskType>(entry.GetProperty("risk_type").GetString());
+      return new AggregatedConsequencesByQuantile(entry.GetProperty("damage_category").GetString(), entry.GetProperty("asset_category").GetString(), empirical, entry.GetProperty("impact_area_id").GetInt32(), consequenceType, riskType);
+    }
+    static string OptionalString(JsonElement e) => e.ValueKind == JsonValueKind.Null ? null : e.GetString();
+    static object EvalStudyAreaConsequencesByQuantile(JsonElement caseEl, string method, JsonElement argsEl) {
+      var c = caseEl.GetProperty("construct");
+      var results = c.GetProperty("consequence_results").EnumerateArray().Select(BuildAggregatedConsequencesByQuantileEntry).ToList();
+      var study = new StudyAreaConsequencesByQuantile(results);
+      if (caseEl.TryGetProperty("add_existing", out var addExisting)) {
+        foreach (var entry in addExisting.EnumerateArray()) {
+          study.AddExistingConsequenceResultObject(BuildAggregatedConsequencesByQuantileEntry(entry));
+        }
+      }
+      string damageCategory = OptionalString(argsEl[0]);
+      string assetCategory = OptionalString(argsEl[1]);
+      int impactAreaID = argsEl[2].GetInt32();
+      if (method == "sample_mean_damage") return study.SampleMeanDamage(damageCategory, assetCategory, impactAreaID);
+      if (method == "get_aggregate_empirical_distribution_sample_mean") return study.GetAggregateEmpiricalDistribution(damageCategory, assetCategory, impactAreaID).SampleMean;
+      throw new Exception("unknown study_area_consequences_by_quantile method: " + method);
+    }
+
     // StudyAreaConsequencesBinned (Phase 4 Task 4) is the collection wrapper over
     // per-asset-category AggregatedConsequencesBinned results -- built from
     // patched/StudyAreaConsequencesBinned.cs + patched/ConsequenceExtensions.cs (see those files'
@@ -1723,6 +1762,7 @@ namespace oracle_emitter {
               case "aggregated_consequences_binned": val = EvalAggregatedConsequencesBinned(c, method, argsEl); break;
               case "aggregated_consequences_by_quantile": val = EvalAggregatedConsequencesByQuantile(c, method, argsEl); break;
               case "study_area_consequences_binned": val = EvalStudyAreaConsequencesBinned(c, method, argsEl); break;
+              case "study_area_consequences_by_quantile": val = EvalStudyAreaConsequencesByQuantile(c, method, argsEl); break;
               case "categoried_uncertain_paired_data": val = EvalCategoriedUncertainPairedData(c, method, argsEl); break;
               case "assurance_result_storage": val = EvalAssuranceResultStorage(c, method, argsEl); break;
               case "system_performance_results": val = EvalSystemPerformanceResults(c, method, argsEl); break;
