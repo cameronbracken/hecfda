@@ -1172,7 +1172,11 @@ namespace oracle_emitter {
     // ConvertToStudyAreaConsequencesByQuantile directly. `method` dispatches SampleMeanDamage on the
     // resulting StudyAreaConsequencesByQuantile; `args` is [damage_category_or_null,
     // asset_category_or_null, impact_area_id], matching EvalStudyAreaConsequencesByQuantile's
-    // convention.
+    // convention, plus an OPTIONAL 4th element: a ConsequenceType name to pass as SampleMeanDamage's
+    // own consequenceType query parameter (default Damage when omitted). This is distinct from
+    // filter_consequence_type -- it lets an assertion query the CONVERTED collection for a type the
+    // case claims was excluded during conversion, so an exclusion claim is actually falsifiable
+    // (a leaked entry would surface as a nonzero sum instead of the expected 0).
     static AggregatedConsequencesBinned BuildStagedAggregatedConsequencesBinned(JsonElement entry) {
       var c = entry.GetProperty("construct");
       var conv = c.GetProperty("convergence");
@@ -1194,7 +1198,12 @@ namespace oracle_emitter {
       string damageCategory = OptionalString(argsEl[0]);
       string assetCategory = OptionalString(argsEl[1]);
       int impactAreaID = argsEl[2].GetInt32();
-      if (method == "sample_mean_damage") return quantileStudy.SampleMeanDamage(damageCategory, assetCategory, impactAreaID);
+      // args[3] is an optional ConsequenceType override for the query itself (distinct from
+      // filter_consequence_type, which controls the conversion), defaulting to Damage to match
+      // SampleMeanDamage's own default and keep pre-existing 3-arg assertions unchanged. Lets a
+      // case query the CONVERTED collection for a type it claims was excluded during conversion.
+      var queryConsequenceType = argsEl.GetArrayLength() > 3 ? Enum.Parse<ConsequenceType>(argsEl[3].GetString()) : ConsequenceType.Damage;
+      if (method == "sample_mean_damage") return quantileStudy.SampleMeanDamage(damageCategory, assetCategory, impactAreaID, queryConsequenceType);
       throw new Exception("unknown binned_to_quantile method: " + method);
     }
 

@@ -2486,6 +2486,10 @@ TEST_CASE("study_area_consequences_by_quantile fixture") {
 // `filter_consequence_type` is passed to convert_to_study_area_consequences_by_quantile; the
 // resulting StudyAreaConsequencesByQuantile's sample_mean_damage(args[0]-or-null, args[1]-or-null,
 // args[2]) is asserted (args order matches run_study_area_consequences_by_quantile's convention).
+// args[3] is an OPTIONAL ConsequenceType name for sample_mean_damage's own query parameter
+// (defaults to Damage when absent, distinct from filter_consequence_type which controls the
+// conversion) -- lets an assertion query the CONVERTED collection for a type a case claims was
+// excluded, so the exclusion claim is actually falsifiable by a leaked-item nonzero sum.
 // See fixtures/metrics/binned_to_quantile.json's note for what each case exercises.
 static hecfda::model::metrics::StudyAreaConsequencesBinned make_study_area_consequences_binned_from_results(
     const json& consequence_results) {
@@ -2512,8 +2516,17 @@ static double run_binned_to_quantile(const json& c, const std::string& method, c
     std::optional<std::string> damage_category = optional_string_arg(args[0]);
     std::optional<std::string> asset_category = optional_string_arg(args[1]);
     int impact_area_id = args[2].get<int>();
+    // args[3] is an optional ConsequenceType override for the query itself (distinct from
+    // filter_consequence_type, which controls the conversion), defaulting to Damage to match
+    // sample_mean_damage's own default and keep pre-existing 3-arg assertions unchanged. Lets a
+    // case query the CONVERTED collection for a type it claims was excluded during conversion.
+    ConsequenceType query_consequence_type = ConsequenceType::Damage;
+    if (args.size() > 3) {
+        query_consequence_type = parse_consequence_type(args[3].get<std::string>());
+    }
     if (method == "sample_mean_damage") {
-        return quantile_study.sample_mean_damage(damage_category, asset_category, impact_area_id);
+        return quantile_study.sample_mean_damage(damage_category, asset_category, impact_area_id,
+                                                   query_consequence_type);
     }
     auto msg = std::string("unknown binned_to_quantile method: ") + method;
     FAIL(msg.c_str());
