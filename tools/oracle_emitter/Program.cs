@@ -1413,14 +1413,38 @@ namespace oracle_emitter {
       }
       return new UncertainPairedData(xs, ys, new CurveMetaData());
     }
+    // Phase 5 Task 11: the direct graphical stage-frequency curve set via WithFrequencyStage() --
+    // mirrors StudyDataGraphicalStageFrequencyResultsTests.ComputeMeanEADWithIterations_Test's
+    // `.WithFrequencyStage(stageFrequency)` (no WithFlowFrequency/WithFlowStage at all in that
+    // test). `ctor` is {exceedance_probabilities, values, equivalent_record_length,
+    // using_stages_not_flows?, damage_category, asset_category?} -- damage_category/asset_category
+    // matter here (unlike EvalGupd's fixed "hello" metadata) since the resulting curve's metadata
+    // must match the mean_eac dispatch args.
+    static GraphicalUncertainPairedData MakeSimulationGupd(JsonElement ctor) {
+      double[] exceedanceProbabilities = DA(ctor.GetProperty("exceedance_probabilities"));
+      double[] values = DA(ctor.GetProperty("values"));
+      int erl = ctor.GetProperty("equivalent_record_length").GetInt32();
+      bool usingStagesNotFlows = ctor.TryGetProperty("using_stages_not_flows", out var usnf) ? usnf.GetBoolean() : true;
+      string damageCategory = ctor.GetProperty("damage_category").GetString();
+      string assetCategory = ctor.TryGetProperty("asset_category", out var ac) ? ac.GetString() : "unassigned";
+      return new GraphicalUncertainPairedData(exceedanceProbabilities, values, erl,
+                                               new CurveMetaData(damageCategory, assetCategory), usingStagesNotFlows);
+    }
     static ImpactAreaScenarioSimulation BuildSimulation(JsonElement ctor) {
       int impactAreaID = ctor.GetProperty("impact_area_id").GetInt32();
-      var flowFrequency = DistFactory(ctor.GetProperty("flow_frequency").GetProperty("type").GetString(),
-                                       DA(ctor.GetProperty("flow_frequency").GetProperty("params")));
-      var flowStage = MakeSimulationUpd(ctor.GetProperty("flow_stage"));
-      var builder = ImpactAreaScenarioSimulation.Builder(impactAreaID)
-          .WithFlowFrequency(flowFrequency)
-          .WithFlowStage(flowStage);
+      var builder = ImpactAreaScenarioSimulation.Builder(impactAreaID);
+      // flow_frequency/flow_stage are OPTIONAL as of Task 11 (a direct-graphical-frequency-stage
+      // simulation never calls WithFlowFrequency/WithFlowStage at all -- see frequency_stage below).
+      if (ctor.TryGetProperty("flow_frequency", out var ffEl)) {
+        var flowFrequency = DistFactory(ffEl.GetProperty("type").GetString(), DA(ffEl.GetProperty("params")));
+        builder = builder.WithFlowFrequency(flowFrequency);
+      }
+      if (ctor.TryGetProperty("flow_stage", out var fsEl)) {
+        builder = builder.WithFlowStage(MakeSimulationUpd(fsEl));
+      }
+      if (ctor.TryGetProperty("frequency_stage", out var freqStageEl)) {
+        builder = builder.WithFrequencyStage(MakeSimulationGupd(freqStageEl));
+      }
       // stage_damage is OPTIONAL as of Phase 5 Task 10 (a levee-only simulation with no stage
       // damage at all, e.g. PerformanceTest.ComputeLeveeAEP_Test, never calls WithStageDamages).
       if (ctor.TryGetProperty("stage_damage", out var sdEl)) {
@@ -1453,8 +1477,17 @@ namespace oracle_emitter {
       // Phase 5 Task 9: optional additional_threshold ({threshold_id, type, value}) -- mirrors
       // DefaultThresholdShould.NotOverrideUserProvidedDefaultThreshold's pre-registered ID-0
       // Threshold, built with ConvergenceCriteria(1, 1) matching every DefaultThresholdShould test.
+      // Phase 5 Task 11 adds an OPTIONAL `cc: [min, max, tolerance?]` override for cases (e.g.
+      // PerformanceTest.ComputeConditionalNonExceedanceProbability_Test) whose threshold is built
+      // with the SAME non-(1,1)/non-default-tolerance ConvergenceCriteria the simulation itself
+      // computes with (see BuildSimulation's C++ mirror's comment for why this matters).
       if (ctor.TryGetProperty("additional_threshold", out var at)) {
         var thresholdCc = new ConvergenceCriteria(1, 1);
+        if (at.TryGetProperty("cc", out var ccEl)) {
+          var ccArr = ccEl.EnumerateArray().ToArray();
+          double tolerance = ccArr.Length > 2 ? ccArr[2].GetDouble() : 0.01;
+          thresholdCc = new ConvergenceCriteria(ccArr[0].GetInt32(), ccArr[1].GetInt32(), 1.96039491692543, tolerance);
+        }
         var userThreshold = new Threshold(at.GetProperty("threshold_id").GetInt32(), thresholdCc,
                                            Enum.Parse<ThresholdEnum>(at.GetProperty("type").GetString()),
                                            at.GetProperty("value").GetDouble());
@@ -1537,6 +1570,21 @@ namespace oracle_emitter {
         bool computeIsDeterministic = argsEl[3].GetDouble() != 0.0;
         ImpactAreaScenarioResults results = simulation.Compute(cc, computeIsDeterministic);
         return results.MeanAEP(thresholdID);
+      }
+      // Phase 5 Task 11: PerformanceTest.ComputeConditionalNonExceedanceProbability_Test's seeded
+      // assurance-of-threshold oracle. args = [threshold_id, min_iterations, max_iterations,
+      // compute_is_deterministic (0/1), recurrence_interval, tolerance?] -- mirrors
+      // `results.AssuranceOfEvent(thresholdID, recurrenceInterval)` verbatim. `tolerance` is an
+      // OPTIONAL 6th arg (defaults to 0.01) matching the upstream test's `tolerance: .001`
+      // ConvergenceCriteria override -- must match the fixture's `additional_threshold.cc`.
+      if (method == "assurance_of_event") {
+        int thresholdID = argsEl[0].GetInt32();
+        double tolerance = argsEl.GetArrayLength() > 5 ? argsEl[5].GetDouble() : 0.01;
+        var cc = new ConvergenceCriteria(argsEl[1].GetInt32(), argsEl[2].GetInt32(), 1.96039491692543, tolerance);
+        bool computeIsDeterministic = argsEl[3].GetDouble() != 0.0;
+        double recurrenceInterval = argsEl[4].GetDouble();
+        ImpactAreaScenarioResults results = simulation.Compute(cc, computeIsDeterministic);
+        return results.AssuranceOfEvent(thresholdID, recurrenceInterval);
       }
       throw new Exception("unknown simulation method: " + method);
     }

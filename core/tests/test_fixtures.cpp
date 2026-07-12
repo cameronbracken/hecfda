@@ -3172,6 +3172,26 @@ make_simulation_continuous_distribution(const json& spec) {
     return std::unique_ptr<ContinuousDistribution>(continuous);
 }
 
+// Phase 5 Task 11: optional `frequency_stage` construct field ({exceedance_probabilities, values,
+// equivalent_record_length, using_stages_not_flows?, damage_category, asset_category?}), the
+// direct graphical stage-frequency curve set via with_frequency_stage() -- mirrors
+// StudyDataGraphicalStageFrequencyResultsTests.ComputeMeanEADWithIterations_Test's
+// `.WithFrequencyStage(stageFrequency)` (no WithFlowFrequency/WithFlowStage at all in that test).
+// damage_category/asset_category matter here (unlike make_gupd's fixed "hello" metadata) because
+// get_frequency_stage_sample()'s short-circuit gate is `!frequency_stage_.curve_meta_data().
+// is_null()`, and the resulting curve's metadata must match the mean_eac dispatch args.
+static hecfda::model::paired_data::GraphicalUncertainPairedData make_simulation_gupd(const json& ctor) {
+    using hecfda::model::paired_data::CurveMetaData;
+    using hecfda::model::paired_data::GraphicalUncertainPairedData;
+    std::vector<double> exceedance_probabilities = ctor["exceedance_probabilities"].get<std::vector<double>>();
+    std::vector<double> values = ctor["values"].get<std::vector<double>>();
+    int erl = ctor["equivalent_record_length"].get<int>();
+    bool using_stages_not_flows = ctor.value("using_stages_not_flows", true);
+    CurveMetaData metadata(ctor["damage_category"].get<std::string>(),
+                            ctor.value("asset_category", std::string("unassigned")));
+    return GraphicalUncertainPairedData(exceedance_probabilities, values, erl, metadata, using_stages_not_flows);
+}
+
 // Phase 5 Task 9: optional `additional_threshold` construct field ({threshold_id, type, value}),
 // pre-registering a user-supplied Threshold (mirrors DefaultThresholdShould.
 // NotOverrideUserProvidedDefaultThreshold's `new Threshold(0, convergenceCriteria,
@@ -3187,9 +3207,19 @@ static hecfda::model::compute::ImpactAreaScenarioSimulation build_simulation(con
 
     int impact_area_id = ctor["impact_area_id"].get<int>();
 
-    auto builder = ImpactAreaScenarioSimulation::builder(impact_area_id)
-                       .with_flow_frequency(make_simulation_continuous_distribution(ctor["flow_frequency"]))
-                       .with_flow_stage(make_simulation_upd(ctor["flow_stage"]));
+    auto builder = ImpactAreaScenarioSimulation::builder(impact_area_id);
+    // flow_frequency/flow_stage are OPTIONAL as of Task 11 (a direct-graphical-frequency-stage
+    // simulation, e.g. StudyDataGraphicalStageFrequencyResultsTests, never calls
+    // WithFlowFrequency/WithFlowStage at all -- see frequency_stage below).
+    if (ctor.contains("flow_frequency")) {
+        builder.with_flow_frequency(make_simulation_continuous_distribution(ctor["flow_frequency"]));
+    }
+    if (ctor.contains("flow_stage")) {
+        builder.with_flow_stage(make_simulation_upd(ctor["flow_stage"]));
+    }
+    if (ctor.contains("frequency_stage")) {
+        builder.with_frequency_stage(make_simulation_gupd(ctor["frequency_stage"]));
+    }
 
     // Each with_* mutates `builder`'s internal simulation in place and returns an (unused, here)
     // rvalue reference to the same object -- called as a plain statement on the `builder` lvalue
@@ -3227,7 +3257,21 @@ static hecfda::model::compute::ImpactAreaScenarioSimulation build_simulation(con
     }
     if (ctor.contains("additional_threshold")) {
         const auto& at = ctor["additional_threshold"];
+        // Default ConvergenceCriteria(1, 1) matches every DefaultThresholdShould/ComputeEAD test's
+        // own threshold construction (its own convergence criteria happened to equal the compute()
+        // call's own (1,1) cc in every fixture up through Task 10). Task 11 adds an OPTIONAL `cc:
+        // [min, max, tolerance?]` override for cases (e.g. PerformanceTest.
+        // ComputeConditionalNonExceedanceProbability_Test) whose threshold is built with the SAME
+        // non-(1,1)/non-default-tolerance ConvergenceCriteria the simulation itself computes with --
+        // SystemPerformanceResults stores this cc and uses it for its own assurance-histogram
+        // bin-width/convergence bookkeeping, so a mismatched threshold cc would silently diverge
+        // from the real C#.
         ConvergenceCriteria threshold_cc(1, 1);
+        if (at.contains("cc")) {
+            const auto& cc_arr = at["cc"];
+            double tolerance = cc_arr.size() > 2 ? cc_arr[2].get<double>() : 0.01;
+            threshold_cc = ConvergenceCriteria(cc_arr[0].get<int>(), cc_arr[1].get<int>(), 1.96039491692543, tolerance);
+        }
         Threshold user_threshold(at["threshold_id"].get<int>(), threshold_cc,
                                   threshold_enum_from_name(at["type"].get<std::string>()),
                                   at["value"].get<double>());
@@ -3319,6 +3363,24 @@ static std::vector<double> run_simulation(const json& c, const std::string& meth
         auto results = simulation.compute(cc, compute_is_deterministic);
         return {results.mean_aep(threshold_id)};
     }
+    // Phase 5 Task 11: PerformanceTest.ComputeConditionalNonExceedanceProbability_Test's seeded
+    // assurance-of-threshold oracle. args = [threshold_id, min_iterations, max_iterations,
+    // compute_is_deterministic (0/1), recurrence_interval, tolerance?] -- mirrors
+    // `results.AssuranceOfEvent(thresholdID, recurrenceInterval)` verbatim (only the non-levee
+    // simulation's assurance is pinned; the paired levee simulation in that test is only checked
+    // for internal self-consistency against this same value, not against its own golden literal).
+    // The upstream test's ConvergenceCriteria uses `tolerance: .001` (not the 0.01 default) --
+    // `tolerance` is an OPTIONAL 6th arg (defaults to 0.01) for cases that need the override; the
+    // fixture's `additional_threshold.cc` must carry the SAME cc (see build_simulation's comment).
+    if (method == "assurance_of_event") {
+        int threshold_id = args[0].get<int>();
+        double tolerance = args.size() > 5 ? args[5].get<double>() : 0.01;
+        ConvergenceCriteria cc(args[1].get<int>(), args[2].get<int>(), 1.96039491692543, tolerance);
+        bool compute_is_deterministic = args[3].get<double>() != 0.0;
+        double recurrence_interval = args[4].get<double>();
+        auto results = simulation.compute(cc, compute_is_deterministic);
+        return {results.assurance_of_event(threshold_id, recurrence_interval)};
+    }
     auto msg = std::string("unknown simulation method: ") + method;
     FAIL(msg.c_str());
     return {};
@@ -3401,6 +3463,34 @@ TEST_CASE("default_threshold fixture") {
 // exercises and where its upstream literal comes from.
 TEST_CASE("impact_area_scenario_simulation_deterministic fixture") {
     std::ifstream f(fixtures_dir() + "/compute/impact_area_scenario_simulation_deterministic.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "simulation");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_simulation(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Phase 5 Task 11: the SEEDED Monte Carlo EAD + performance benchmarks -- compute(cc,
+// computeIsDeterministic=false), exercising the per-curve seeds (Task 8) through the full MC loop
+// (Task 10) with cc.min_iterations==max_iterations wherever feasible so the iteration count (and
+// therefore the seeded value) is exactly fixed, not convergence-dependent. Reuses
+// build_simulation/run_simulation (with Task 11's new optional `frequency_stage` construct field
+// and `assurance_of_event` method), same as every other simulation-target fixture. See
+// fixtures/compute/impact_area_scenario_simulation_seeded.json's `note` for what each case
+// exercises and where its upstream literal comes from.
+TEST_CASE("impact_area_scenario_simulation_seeded fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/impact_area_scenario_simulation_seeded.json");
     REQUIRE(f.good());
     json fx; f >> fx;
     CHECK(fx["target"] == "simulation");
