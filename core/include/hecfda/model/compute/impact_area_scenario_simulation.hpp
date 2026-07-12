@@ -1,6 +1,7 @@
 // ported from: HEC.FDA.Model/compute/ImpactAreaScenarioSimulation.cs @ f63682a86a30dc306a105689714a92bfd95956c5
 #ifndef HECFDA_MODEL_COMPUTE_IMPACT_AREA_SCENARIO_SIMULATION_HPP
 #define HECFDA_MODEL_COMPUTE_IMPACT_AREA_SCENARIO_SIMULATION_HPP
+#include <cmath>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -11,20 +12,41 @@
 #include "hecfda/model/metrics/impact_area_scenario_results.hpp"
 #include "hecfda/model/metrics/threshold.hpp"
 #include "hecfda/model/paired_data/graphical_uncertain_paired_data.hpp"
+#include "hecfda/model/paired_data/paired_data.hpp"
 #include "hecfda/model/paired_data/uncertain_paired_data.hpp"
 #include "hecfda/statistics/convergence/convergence_criteria.hpp"
 #include "hecfda/statistics/distributions/continuous_distribution.hpp"
+#include "hecfda/statistics/distributions/continuous_distribution_extensions.hpp"
 #include "hecfda/statistics/validation.hpp"
 namespace hecfda {
 namespace model {
 namespace compute {
 
+// ported from: ImpactAreaScenarioSimulation.cs `internal readonly record struct
+// FrequencyStageCurves(PairedData ChannelStage, PairedData FloodplainStage)` (lines 25-28). Holds
+// both the channel (exterior) and floodplain (interior) frequency-stage curves produced by
+// get_frequency_stage_sample(); when no interior/exterior relationship exists both fields hold the
+// SAME realized curve. C#'s record struct wraps two REFERENCE-typed PairedData fields, so "the same
+// curve" there means both fields alias one object (ReferenceEquals true). This port's PairedData is
+// a plain value type (copyable, no reference semantics), so the closest observably-identical
+// analog is two independently-constructed copies holding identical x/y values -- read-only callers
+// (Task 9's risk/performance compute) cannot tell the difference; nothing in this port's PairedData
+// surface mutates a curve out from under an aliased caller the way a shared C# reference could.
+struct FrequencyStageCurves {
+    hecfda::model::paired_data::PairedData channel_stage;
+    hecfda::model::paired_data::PairedData floodplain_stage;
+};
+
 // ported from: ImpactAreaScenarioSimulation.cs `public class ImpactAreaScenarioSimulation :
 // ValidationErrorLogger, IProgressReport` -- the EAD (expected annual damage) Monte Carlo compute
 // engine. Phase 5 Task 7 ports the SKELETON: fields, the seed constants, the fluent
 // `SimulationBuilder`, `can_compute`/the inherited `validate()` gate, and
-// `initialize_consequence_histograms`. `compute()`'s actual Monte Carlo iteration loop is a STUB
-// (throws) -- Phase 5 Tasks 8-11 fill it in.
+// `initialize_consequence_histograms`. Phase 5 Task 8 adds `populate_random_numbers` (the seeded
+// per-curve RNG setup) and the frequency-stage assembly (`get_frequency_stage_sample`/
+// `get_stage_freq`), plus the `FrequencyStageCurves` struct above. `compute()`'s actual Monte Carlo
+// iteration loop is still a STUB (throws) -- neither of these new methods is wired into it yet;
+// they are exposed directly (same public-access-relaxation rationale as `can_compute`) for Task 9's
+// risk/performance compute and Task 10's compute loop to call. Phase 5 Tasks 9-11 finish the rest.
 //
 // Base class: `ValidationErrorLogger : Validation` is a thin WPF-messaging layer over the same
 // `Validation` this port already has (`hecfda::statistics::Validation`, ported Phase 1) -- see
@@ -54,15 +76,16 @@ namespace compute {
 //  - `LogSimulationPropertyRuleErrors()`: builds intro-message strings solely for the severed
 //    `ReportMessage` call -- no observable effect once messaging is gone, so dropped rather than
 //    kept as a silent no-op.
-//  - Everything downstream of the `can_compute` gate inside `Compute()` -- `SetupPerformanceThresholds`,
-//    `PopulateRandomNumbers`, `ComputeIterations` (the actual Monte Carlo loop),
-//    `DetermineSystemResponseThreshold`, `EnsureBottomAndTopHaveCorrectProbabilities`,
-//    `CreateHistogramsForAssuranceOfThresholds`, `GetFrequencyStageSample`,
-//    `ComputeRiskFromStageFrequency`, `ComputeDefaultThreshold` -- is Phase 5 Tasks 8-11's job.
-//    None of them are declared here (not even as stubs): nothing in this task's surface
-//    (`SimulationBuilder`, `can_compute`, `initialize_consequence_histograms`) calls them, and
-//    `compute()`'s success path throws immediately after `initialize_consequence_histograms`
-//    (see that method's comment) rather than call into not-yet-existing methods.
+//  - Everything downstream of the `can_compute` gate inside `Compute()` EXCEPT the two methods
+//    Task 8 adds -- `SetupPerformanceThresholds`, `ComputeIterations` (the actual Monte Carlo
+//    loop), `DetermineSystemResponseThreshold`, `EnsureBottomAndTopHaveCorrectProbabilities`,
+//    `CreateHistogramsForAssuranceOfThresholds`, `ComputeRiskFromStageFrequency`,
+//    `ComputeDefaultThreshold` -- remains Phase 5 Tasks 9-11's job. None of them are declared here
+//    (not even as stubs): `compute()`'s success path still throws immediately after
+//    `initialize_consequence_histograms` (see that method's comment) rather than call into
+//    not-yet-existing methods; `populate_random_numbers`/`get_frequency_stage_sample`/
+//    `get_stage_freq` (Task 8, below) are reachable only via direct fixture-dispatch calls for now,
+//    same as `can_compute`/`initialize_consequence_histograms` already were in Task 7.
 //  - Per-property validation-rule registration for every `With*(UncertainPairedData)` /
 //    `With*(GraphicalUncertainPairedData)` builder overload (`WithInflowOutflow`, `WithFlowStage`
 //    -- both its "flow stage" HasErrors rule AND its "stage range" Fatal rule --, `WithFrequencyStage`,
@@ -174,11 +197,143 @@ class ImpactAreaScenarioSimulation : public hecfda::statistics::Validation {
         }
     }
 
+    // ported from: ImpactAreaScenarioSimulation.cs `private void
+    // PopulateRandomNumbers(ConvergenceCriteria convergenceCriteria)` (lines 202-252). "This
+    // method tells each object that will be sampled in the full compute to generate random
+    // numbers for sampling." `quantityOfRandomNumbers = Convert.ToInt32(convergenceCriteria.
+    // MaxIterations * 1.25)` -- Convert.ToInt32(double) rounds HALF-TO-EVEN (banker's rounding),
+    // not truncation; see dynamic_histogram.hpp's convert_to_int32 for the established precedent
+    // of reproducing this via std::nearbyint (honors the default round-to-nearest-ties-to-even FP
+    // mode), used here directly rather than duplicating a private helper for one call site.
+    //
+    // Every per-curve conditional is transcribed verbatim, including which seed constant each
+    // curve uses. C#'s nullable-field gate is `!<field>.CurveMetaData.IsNull` for every
+    // `UncertainPairedData`/`GraphicalUncertainPairedData` field (`UncertainPairedData.IsNull` is
+    // itself defined as `CurveMetaData.IsNull` upstream, verified against
+    // HEC.FDA.Model/paireddata/UncertainPairedData.cs). This port's nullable UPD fields are
+    // `std::optional<UncertainPairedData>`, defaulting to `std::nullopt` for "never assigned by
+    // the builder" (the C# analog: the default parameterless-ctor UPD, whose CurveMetaData is
+    // ALSO IsNull==true) -- so `has_value() && !metadata().is_null()` reproduces the C# gate for
+    // both the "never assigned" and the "assigned but with a still-null CurveMetaData" cases
+    // identically to `!IsNull` on the always-present C# object. Public here (see class comment)
+    // for fixture-dispatch access, mirroring can_compute/initialize_consequence_histograms.
+    void populate_random_numbers(const ConvergenceCriteria& convergence_criteria) {
+        int quantity_of_random_numbers =
+            static_cast<int>(std::nearbyint(convergence_criteria.max_iterations() * 1.25));
+
+        if (frequency_discharge_ != nullptr) {
+            frequency_discharge_->generate_random_samples_of_numbers(kFrequencySeed, quantity_of_random_numbers);
+        }
+        if (!frequency_discharge_graphical_.curve_meta_data().is_null()) {
+            frequency_discharge_graphical_.generate_random_numbers(kFrequencySeed, quantity_of_random_numbers);
+        }
+        if (unregulated_regulated_.has_value() && !unregulated_regulated_->metadata().is_null()) {
+            unregulated_regulated_->generate_random_numbers(kFlowRegulationSeed, quantity_of_random_numbers);
+        }
+        if (discharge_stage_.has_value() && !discharge_stage_->metadata().is_null()) {
+            discharge_stage_->generate_random_numbers(kStageFlowSeed, quantity_of_random_numbers);
+        }
+        if (!frequency_stage_.curve_meta_data().is_null()) {
+            frequency_stage_.generate_random_numbers(kFrequencySeed, quantity_of_random_numbers);
+        }
+        if (channel_stage_floodplain_stage_.has_value() && !channel_stage_floodplain_stage_->metadata().is_null()) {
+            channel_stage_floodplain_stage_->generate_random_numbers(kExteriorInteriorSeed, quantity_of_random_numbers);
+        }
+        if (system_response_function_.has_value() && !system_response_function_->metadata().is_null()) {
+            system_response_function_->generate_random_numbers(kSystemResponseSeed, quantity_of_random_numbers);
+        }
+        for (auto& stage_damage : failure_stage_damage_functions_) {
+            stage_damage.generate_random_numbers(kStageDamageSeed, quantity_of_random_numbers);
+        }
+        for (auto& stage_damage : non_failure_stage_damage_functions_) {
+            stage_damage.generate_random_numbers(kStageDamageSeed, quantity_of_random_numbers);
+        }
+        for (auto& stage_life_loss : failure_stage_life_loss_functions_) {
+            stage_life_loss.generate_random_numbers(kStageLifeLossSeed, quantity_of_random_numbers);
+        }
+        for (auto& stage_life_loss : non_failure_stage_life_loss_functions_) {
+            stage_life_loss.generate_random_numbers(kStageLifeLossSeed, quantity_of_random_numbers);
+        }
+    }
+
+    // ported from: ImpactAreaScenarioSimulation.cs `private PairedData GetStageFreq(bool
+    // computeIsDeterministic, long thisComputeIteration, PairedData frequencyDischarge)` (lines
+    // 435-451). Composes the discharge-stage (rating) curve onto the sampled frequency-discharge
+    // curve, through an optional reg/unreg (inflow-outflow) transform first when present. The
+    // `_UnregulatedRegulated.CurveMetaData.IsNull` gate maps to this port's `std::optional` the
+    // same way populate_random_numbers()'s gates do (see its comment). `discharge_stage_` is
+    // assumed present (dereferenced unconditionally, matching the C#'s unconditional
+    // `_DischargeStage.SamplePairedData(...)` access on both branches) -- this method's caller
+    // contract, exactly as upstream, is that a simulation built without WithFlowStage/
+    // with_flow_stage never reaches here. Public here (see class comment).
+    hecfda::model::paired_data::PairedData get_stage_freq(
+        bool compute_is_deterministic, long this_compute_iteration,
+        const hecfda::model::paired_data::PairedData& frequency_discharge) {
+        using hecfda::model::paired_data::PairedData;
+        if (!unregulated_regulated_.has_value() || unregulated_regulated_->metadata().is_null()) {
+            PairedData discharge_stage_sample =
+                discharge_stage_->sample_paired_data(this_compute_iteration, compute_is_deterministic);
+            return discharge_stage_sample.compose(frequency_discharge);
+        }
+        PairedData inflow_outflow_sample =
+            unregulated_regulated_->sample_paired_data(this_compute_iteration, compute_is_deterministic);
+        PairedData transform_ff = inflow_outflow_sample.compose(frequency_discharge);
+        PairedData discharge_stage_sample =
+            discharge_stage_->sample_paired_data(this_compute_iteration, compute_is_deterministic);
+        return discharge_stage_sample.compose(transform_ff);
+    }
+
+    // ported from: ImpactAreaScenarioSimulation.cs `private FrequencyStageCurves
+    // GetFrequencyStageSample(bool computeIsDeterministic, long thisComputeIteration)` (lines
+    // 405-433). Builds the per-iteration frequency-stage realization: either straight from a
+    // direct graphical frequency-stage curve (short-circuit, `_FrequencyStage` set via
+    // with_frequency_stage), or by composing the sampled frequency curve (analytical
+    // `bootstrap_to_paired_data` or graphical `sample_paired_data` -- see
+    // sample_frequency_discharge() below) through get_stage_freq(); then, if an interior/exterior
+    // (channel-stage/floodplain-stage) relationship exists, composes that too and returns distinct
+    // channel/floodplain curves -- otherwise both fields hold copies of the same curve (see the
+    // FrequencyStageCurves struct comment for why "copies" replaces C#'s ReferenceEquals identity
+    // here). Public here (see class comment).
+    FrequencyStageCurves get_frequency_stage_sample(bool compute_is_deterministic, long this_compute_iteration) {
+        using hecfda::model::paired_data::PairedData;
+        PairedData frequency_stage_sample =
+            frequency_stage_.curve_meta_data().is_null()
+                ? get_stage_freq(compute_is_deterministic, this_compute_iteration,
+                                  sample_frequency_discharge(compute_is_deterministic, this_compute_iteration))
+                : frequency_stage_.sample_paired_data(this_compute_iteration, compute_is_deterministic);
+
+        if (channel_stage_floodplain_stage_.has_value() && !channel_stage_floodplain_stage_->metadata().is_null()) {
+            PairedData channelstage_floodplainstage_sample =
+                channel_stage_floodplain_stage_->sample_paired_data(this_compute_iteration, compute_is_deterministic);
+            PairedData frequency_floodplainstage = channelstage_floodplainstage_sample.compose(frequency_stage_sample);
+            return FrequencyStageCurves{std::move(frequency_stage_sample), std::move(frequency_floodplainstage)};
+        }
+        return FrequencyStageCurves{frequency_stage_sample, std::move(frequency_stage_sample)};
+    }
+
     // Exposed for testing/fixture-dispatch (no C# analog beyond what Compute() returns).
     ImpactAreaScenarioResults& results() { return impact_area_scenario_results_; }
     const ImpactAreaScenarioResults& results() const { return impact_area_scenario_results_; }
 
    private:
+    // ported from: the `frequencyDischarge` local-variable computation inside
+    // GetFrequencyStageSample (lines 410-419), factored into its own method: C++'s PairedData has
+    // no default constructor, so the C#'s "declare a reference-typed local, assign it across an
+    // if/else" pattern has no direct transcription here (the ternary in
+    // get_frequency_stage_sample() needs a single expression to initialize
+    // frequency_stage_sample). analytical (`_FrequencyDischargeGraphical.CurveMetaData.IsNull` ==
+    // true) uses bootstrap_to_paired_data over the fixed 173-point exceedance-probability grid;
+    // graphical uses GraphicalUncertainPairedData::sample_paired_data directly.
+    hecfda::model::paired_data::PairedData sample_frequency_discharge(bool compute_is_deterministic,
+                                                                        long this_compute_iteration) {
+        if (frequency_discharge_graphical_.curve_meta_data().is_null()) {
+            return hecfda::statistics::distributions::bootstrap_to_paired_data(
+                *frequency_discharge_, this_compute_iteration,
+                hecfda::statistics::distributions::required_exceedance_probabilities(), compute_is_deterministic);
+        }
+        return frequency_discharge_graphical_.sample_paired_data(this_compute_iteration, compute_is_deterministic);
+    }
+
     // ported from: ImpactAreaScenarioSimulation.cs `internal ImpactAreaScenarioSimulation(int
     // impactAreaID)`. C#'s `internal` (assembly-visibility) ctor access is reproduced here as
     // `private` reachable only via the `builder()` static factory (mirrors

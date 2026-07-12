@@ -1450,6 +1450,17 @@ namespace oracle_emitter {
         simulation.InitializeConsequenceHistograms(cc);
         return (double)simulation.ImpactAreaScenarioResultsForTest.ConsequenceResults.ConsequenceResultList.Count;
       }
+      // Phase 5 Task 8: frequency-stage assembly + seeded PopulateRandomNumbers. args =
+      // [min_iterations, max_iterations, iteration_number, compute_is_deterministic (0/1)] --
+      // see fixtures/compute/frequency_stage_sample.json's `note`.
+      if (method == "frequency_stage_channel_yvals" || method == "frequency_stage_floodplain_yvals") {
+        var cc = new ConvergenceCriteria(argsEl[0].GetInt32(), argsEl[1].GetInt32());
+        simulation.PopulateRandomNumbers(cc);
+        long iterationNumber = argsEl[2].GetInt64();
+        bool computeIsDeterministic = argsEl[3].GetDouble() != 0.0;
+        FrequencyStageCurves curves = simulation.GetFrequencyStageSample(computeIsDeterministic, iterationNumber);
+        return method == "frequency_stage_channel_yvals" ? curves.ChannelStage.Yvals : curves.FloodplainStage.Yvals;
+      }
       throw new Exception("unknown simulation method: " + method);
     }
 

@@ -1,13 +1,19 @@
 // PATCHED LOCAL COPY of HEC.FDA.Model/compute/ImpactAreaScenarioSimulation.cs
 // @ f63682a86a30dc306a105689714a92bfd95956c5
-// Phase 5 Task 7. This is the heaviest patched copy of the phase: it keeps the skeleton (fields,
-// seed constants, ctor), the fluent Builder/SimulationBuilder (every With* overload, including
-// every AddSinglePropertyRule call VERBATIM -- this emitter runs against the REAL
+// Phase 5 Task 7 (skeleton) + Task 8 (frequency-stage assembly + seeded PopulateRandomNumbers).
+// This is the heaviest patched copy of the phase: it keeps the skeleton (fields, seed constants,
+// ctor), the fluent Builder/SimulationBuilder (every With* overload, including every
+// AddSinglePropertyRule call VERBATIM -- this emitter runs against the REAL
 // UncertainPairedData/GraphicalUncertainPairedData/ContinuousDistribution, which DO have working
 // Validate()/HasErrors() surfaces, unlike the C++ port's Task-7-scoped severance of those same
 // rules -- see impact_area_scenario_simulation.hpp's class comment for why the port severs them
-// and why that's safe for every case this fixture actually exercises), CanCompute, and
-// InitializeConsequenceHistograms/CreateEAConsequenceHistograms VERBATIM.
+// and why that's safe for every case this fixture actually exercises), CanCompute,
+// InitializeConsequenceHistograms/CreateEAConsequenceHistograms, and (Task 8) PopulateRandomNumbers/
+// GetFrequencyStageSample/GetStageFreq VERBATIM, plus the FrequencyStageCurves record struct.
+// FrequencyStageCurves/GetFrequencyStageSample/GetStageFreq are made `public` here (all `internal`/
+// `private` in the real C#) -- same access-relaxation rationale as CanCompute/
+// InitializeConsequenceHistograms below (no InternalsVisibleTo-equivalent in this subset-compiled
+// emitter project).
 //
 // Dropped (mirrors the C++ port's SEVERANCES list in impact_area_scenario_simulation.hpp):
 //  - `: ValidationErrorLogger, IProgressReport` base -> plain `: Validation` (ValidationErrorLogger
@@ -18,21 +24,24 @@
 //    analog (the dummy-fallback-free CanCompute logic itself is kept verbatim).
 //  - `[StoredProperty("ImpactAreaScenarioSimulation")]`: reflection-driven serialization metadata.
 //  - `System.Threading`/`System.Threading.Tasks` (`CancellationToken`, the 3-arg `Compute`
-//    overload it delegates to, `ComputeIterations`, `PopulateRandomNumbers`,
-//    `SetupPerformanceThresholds`, `DetermineSystemResponseThreshold`,
-//    `EnsureBottomAndTopHaveCorrectProbabilities`, `CreateHistogramsForAssuranceOfThresholds`,
-//    `GetFrequencyStageSample`, `ComputeRiskFromStageFrequency`, `ComputeDefaultThreshold`,
-//    `LogSimulationPropertyRuleErrors`): the Monte Carlo compute loop, Phase 5 Tasks 8-11's job,
-//    not reachable from any of this task's fixture cases (every case either short-circuits at the
-//    CanCompute gate or calls CanCompute/InitializeConsequenceHistograms directly). The public
-//    2-arg `Compute(ConvergenceCriteria, bool)` overload is kept but truncated to the CanCompute
-//    gate + InitializeConsequenceHistograms, then throws NotImplementedException -- matching the
-//    C++ port's `compute()` scope boundary exactly (see that method's header comment) so the
-//    real-C#-vs-port comparison stays apples-to-apples for the is_null fixture case.
+//    overload it delegates to, `ComputeIterations`, `SetupPerformanceThresholds`,
+//    `DetermineSystemResponseThreshold`, `EnsureBottomAndTopHaveCorrectProbabilities`,
+//    `CreateHistogramsForAssuranceOfThresholds`, `ComputeRiskFromStageFrequency`,
+//    `ComputeDefaultThreshold`, `LogSimulationPropertyRuleErrors`): the rest of the Monte Carlo
+//    compute loop, Phase 5 Tasks 9-11's job, not reachable from any of this task's fixture cases
+//    (every case either short-circuits at the CanCompute gate, or calls CanCompute/
+//    InitializeConsequenceHistograms/PopulateRandomNumbers/GetFrequencyStageSample directly). The
+//    public 2-arg `Compute(ConvergenceCriteria, bool)` overload is kept but truncated to the
+//    CanCompute gate + InitializeConsequenceHistograms, then throws NotImplementedException --
+//    matching the C++ port's `compute()` scope boundary exactly (see that method's header
+//    comment) so the real-C#-vs-port comparison stays apples-to-apples for the is_null fixture
+//    case.
 using System;
 using System.Collections.Generic;
+using HEC.FDA.Model.extensions;
 using HEC.FDA.Model.metrics;
 using HEC.FDA.Model.paireddata;
+using HEC.FDA.Model.utilities;
 using HEC.MVVMFramework.Base.Enumerations;
 using HEC.MVVMFramework.Base.Implementations;
 using Statistics;
@@ -40,6 +49,14 @@ using Statistics.Distributions;
 
 namespace HEC.FDA.Model.compute
 {
+    // ported from: ImpactAreaScenarioSimulation.cs `internal readonly record struct
+    // FrequencyStageCurves(PairedData ChannelStage, PairedData FloodplainStage)` (lines 25-28).
+    // Made `public` here -- see file header.
+    public readonly record struct FrequencyStageCurves(
+        PairedData ChannelStage,
+        PairedData FloodplainStage
+    );
+
     public class ImpactAreaScenarioSimulation : Validation
     {
         private const int FREQUENCY_SEED = 1234;
@@ -164,6 +181,113 @@ namespace HEC.FDA.Model.compute
                 canCompute = false;
             }
             return canCompute;
+        }
+
+        // ported from: ImpactAreaScenarioSimulation.cs `private void
+        // PopulateRandomNumbers(ConvergenceCriteria convergenceCriteria)` (lines 202-252),
+        // VERBATIM. Made `public` here -- see file header.
+        public void PopulateRandomNumbers(ConvergenceCriteria convergenceCriteria)
+        {
+            int quantityOfRandomNumbers = Convert.ToInt32(convergenceCriteria.MaxIterations * 1.25);
+
+            if (_FrequencyDischarge != null)
+            {
+                _FrequencyDischarge.GenerateRandomSamplesofNumbers(FREQUENCY_SEED, quantityOfRandomNumbers);
+            }
+            if (!_FrequencyDischargeGraphical.CurveMetaData.IsNull)
+            {
+                _FrequencyDischargeGraphical.GenerateRandomNumbers(FREQUENCY_SEED, quantityOfRandomNumbers);
+            }
+            if (!_UnregulatedRegulated.CurveMetaData.IsNull)
+            {
+                _UnregulatedRegulated.GenerateRandomNumbers(FLOW_REGULATION_SEED, quantityOfRandomNumbers);
+            }
+            if (!_DischargeStage.CurveMetaData.IsNull)
+            {
+                _DischargeStage.GenerateRandomNumbers(STAGE_FLOW_SEED, quantityOfRandomNumbers);
+            }
+            if (!_FrequencyStage.CurveMetaData.IsNull)
+            {
+                _FrequencyStage.GenerateRandomNumbers(FREQUENCY_SEED, quantityOfRandomNumbers);
+            }
+            if (!_ChannelStageFloodplainStage.CurveMetaData.IsNull)
+            {
+                _ChannelStageFloodplainStage.GenerateRandomNumbers(EXTERIOR_INTERIOR_SEED, quantityOfRandomNumbers);
+            }
+            if (!_SystemResponseFunction.CurveMetaData.IsNull)
+            {
+                _SystemResponseFunction.GenerateRandomNumbers(SYSTEM_RESPONSE_SEED, quantityOfRandomNumbers);
+            }
+            foreach (UncertainPairedData stageDamage in _FailureStageDamageFunctions)
+            {
+                stageDamage.GenerateRandomNumbers(STAGE_DAMAGE_SEED, quantityOfRandomNumbers);
+            }
+            foreach (UncertainPairedData stageDamage in _NonFailureStageDamageFunctions)
+            {
+                stageDamage.GenerateRandomNumbers(STAGE_DAMAGE_SEED, quantityOfRandomNumbers);
+            }
+            foreach (UncertainPairedData stageLifeLoss in _FailureStageLifeLossFunctions)
+            {
+                stageLifeLoss.GenerateRandomNumbers(STAGE_LIFELOSS_SEED, quantityOfRandomNumbers);
+            }
+            foreach (UncertainPairedData stageLifeLoss in _NonFailureStageLifeLossFunctions)
+            {
+                stageLifeLoss.GenerateRandomNumbers(STAGE_LIFELOSS_SEED, quantityOfRandomNumbers);
+            }
+        }
+
+        // ported from: ImpactAreaScenarioSimulation.cs `private FrequencyStageCurves
+        // GetFrequencyStageSample(bool computeIsDeterministic, long thisComputeIteration)` (lines
+        // 405-433), VERBATIM. Made `public` here -- see file header.
+        public FrequencyStageCurves GetFrequencyStageSample(bool computeIsDeterministic, long thisComputeIteration)
+        {
+            PairedData frequency_stage_sample;
+            if (_FrequencyStage.CurveMetaData.IsNull)
+            {
+                PairedData frequencyDischarge;
+
+                if (_FrequencyDischargeGraphical.CurveMetaData.IsNull)
+                {
+                    frequencyDischarge = _FrequencyDischarge.BootstrapToPairedData(thisComputeIteration, utilities.DoubleGlobalStatics.RequiredExceedanceProbabilities, computeIsDeterministic);
+                }
+                else
+                {
+                    frequencyDischarge = _FrequencyDischargeGraphical.SamplePairedData(thisComputeIteration, computeIsDeterministic);
+                }
+                frequency_stage_sample = GetStageFreq(computeIsDeterministic, thisComputeIteration, frequencyDischarge);
+            }
+            else
+            {
+                frequency_stage_sample = _FrequencyStage.SamplePairedData(thisComputeIteration, computeIsDeterministic);
+            }
+            if (!_ChannelStageFloodplainStage.IsNull)
+            {
+                PairedData channelstage_floodplainstage_sample = _ChannelStageFloodplainStage.SamplePairedData(thisComputeIteration, computeIsDeterministic);
+                PairedData frequency_floodplainstage = channelstage_floodplainstage_sample.compose(frequency_stage_sample);
+                return new FrequencyStageCurves(ChannelStage: frequency_stage_sample, FloodplainStage: frequency_floodplainstage);
+            }
+            return new FrequencyStageCurves(ChannelStage: frequency_stage_sample, FloodplainStage: frequency_stage_sample);
+        }
+
+        // ported from: ImpactAreaScenarioSimulation.cs `private PairedData GetStageFreq(bool
+        // computeIsDeterministic, long thisComputeIteration, PairedData frequencyDischarge)`
+        // (lines 435-451), VERBATIM. Made `public` here -- see file header.
+        public PairedData GetStageFreq(bool computeIsDeterministic, long thisComputeIteration, PairedData frequencyDischarge)
+        {
+            PairedData frequency_stage;
+            if (_UnregulatedRegulated.CurveMetaData.IsNull)
+            {
+                PairedData discharge_stage_sample = _DischargeStage.SamplePairedData(thisComputeIteration, computeIsDeterministic);
+                frequency_stage = discharge_stage_sample.compose(frequencyDischarge);
+            }
+            else
+            {
+                PairedData inflow_outflow_sample = _UnregulatedRegulated.SamplePairedData(thisComputeIteration, computeIsDeterministic);
+                PairedData transformff = inflow_outflow_sample.compose(frequencyDischarge);
+                PairedData discharge_stage_sample = _DischargeStage.SamplePairedData(thisComputeIteration, computeIsDeterministic);
+                frequency_stage = discharge_stage_sample.compose(transformff);
+            }
+            return frequency_stage;
         }
 
         public static SimulationBuilder Builder(int impactAreaID)

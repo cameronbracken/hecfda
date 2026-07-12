@@ -3202,6 +3202,18 @@ static std::vector<double> run_simulation(const json& c, const std::string& meth
         simulation.initialize_consequence_histograms(cc);
         return {static_cast<double>(simulation.results().consequence_results().consequence_result_list().size())};
     }
+    // Phase 5 Task 8: frequency-stage assembly + seeded PopulateRandomNumbers. args =
+    // [min_iterations, max_iterations, iteration_number, compute_is_deterministic (0/1)]; see
+    // fixtures/compute/frequency_stage_sample.json's `note` for the exact call sequence
+    // (populate_random_numbers(cc), then get_frequency_stage_sample(deterministic, iteration)).
+    if (method == "frequency_stage_channel_yvals" || method == "frequency_stage_floodplain_yvals") {
+        ConvergenceCriteria cc(args[0].get<int>(), args[1].get<int>());
+        simulation.populate_random_numbers(cc);
+        long iteration_number = args[2].get<long>();
+        bool compute_is_deterministic = args[3].get<double>() != 0.0;
+        auto curves = simulation.get_frequency_stage_sample(compute_is_deterministic, iteration_number);
+        return method == "frequency_stage_channel_yvals" ? curves.channel_stage.yvals() : curves.floodplain_stage.yvals();
+    }
     auto msg = std::string("unknown simulation method: ") + method;
     FAIL(msg.c_str());
     return {};
@@ -3218,6 +3230,30 @@ TEST_CASE("simulation fixture") {
             bool mode_is_bool = a["mode"].get<std::string>() == "bool";
             std::vector<double> exp = mode_is_bool ? std::vector<double>{a["expected"].get<bool>() ? 1.0 : 0.0}
                                                     : std::vector<double>{a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// Phase 5 Task 8: frequency-stage assembly (get_frequency_stage_sample/get_stage_freq) + seeded
+// populate_random_numbers. Separate TEST_CASE (rather than folded into "simulation fixture" above)
+// because this fixture's assertions are vector-valued (173-point Yvals), unlike
+// simulation_validation.json's bool/scalar assertions -- reuses build_simulation/run_simulation.
+TEST_CASE("frequency_stage_sample fixture") {
+    std::ifstream f(fixtures_dir() + "/compute/frequency_stage_sample.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "simulation");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            auto got = run_simulation(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = a["expected"].get<std::vector<double>>();
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
             if (!hecfda_test::compare_by_mode(got, exp, tol, mode)) {
