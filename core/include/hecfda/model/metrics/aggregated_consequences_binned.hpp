@@ -84,6 +84,41 @@ class AggregatedConsequencesBinned {
           temp_counts_(static_cast<std::size_t>(convergence_criteria.iteration_count()), 0.0),
           histogram_not_constructed_(true) {}
 
+    // ported from: AggregatedConsequencesBinned.cs `public AggregatedConsequencesBinned(string
+    // damageCategory, string assetCategory, IHistogram histogram, int impactAreaID, ConsequenceType
+    // consequenceType = ConsequenceType.Damage, RiskType riskType = RiskType.Fail)` -- reconstructs
+    // from an already-built histogram. UN-SEVERED Phase 6 Task 9 (the class comment's
+    // DONE_WITH_CONCERNS originally deferred this: "not required by this task; trivial to add
+    // later"): `Alternative`'s own upstream unit tests (AlternativeTest.cs, e.g.
+    // `LifeLossResultsExcludedFromEqad`) construct `AggregatedConsequencesBinned` directly from a
+    // pre-built `DynamicHistogram` this way, so this task's fixture needs the same surface.
+    // `damaged_element_quantity_histogram_` is left null/unset here, matching C# leaving
+    // `DamagedElementQuantityHistogram` at its default null (never assigned in this ctor).
+    // Takes ownership of the histogram via `unique_ptr` (the value-semantics analogue of C#'s
+    // `ConsequenceHistogram = histogram` reference assignment) rather than a raw/const reference,
+    // matching every other move-only-member ctor in this port. `temp_results_`/`temp_counts_` are
+    // still allocated and sized to `convergence_criteria.iteration_count()` per the C# ctor body
+    // (dead storage here: `histogram_not_constructed_` stays false, so
+    // `put_data_into_histogram()`'s branch that would consume them never runs) -- kept anyway for
+    // faithfulness, matching how the C# ctor allocates `_TempResults`/`_TempCounts` unconditionally
+    // too.
+    AggregatedConsequencesBinned(std::string damage_category, std::string asset_category,
+                                  std::unique_ptr<statistics::histograms::DynamicHistogram> histogram,
+                                  int impact_area_id,
+                                  ConsequenceType consequence_type = ConsequenceType::Damage,
+                                  RiskType risk_type = RiskType::Fail)
+        : damage_category_(std::move(damage_category)),
+          asset_category_(std::move(asset_category)),
+          consequence_type_(consequence_type),
+          risk_type_(risk_type),
+          region_id_(impact_area_id),
+          is_null_(false),
+          convergence_criteria_(histogram->convergence_criteria()),
+          temp_results_(static_cast<std::size_t>(convergence_criteria_.iteration_count()), 0.0),
+          temp_counts_(static_cast<std::size_t>(convergence_criteria_.iteration_count()), 0.0),
+          histogram_not_constructed_(false),
+          consequence_histogram_(std::move(histogram)) {}
+
     const std::string& damage_category() const { return damage_category_; }
     const std::string& asset_category() const { return asset_category_; }
     ConsequenceType consequence_type() const { return consequence_type_; }

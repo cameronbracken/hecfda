@@ -17,6 +17,7 @@ using HEC.FDA.Model.utilities;
 using HEC.FDA.Model.extensions;
 using HEC.FDA.Model.structures;
 using HEC.FDA.Model.metrics;
+using HEC.FDA.Model.alternatives;
 using HEC.FDA.Model.hydraulics;
 using HEC.FDA.Model.stageDamage;
 using HEC.FDA.Model.scenarios;
@@ -1760,6 +1761,81 @@ namespace oracle_emitter {
       throw new Exception("unknown alternative_comparison_report_results method: " + method);
     }
 
+    // Alternative (Phase 6 Task 9): the headline EqAD annualization math -- Alternative.
+    // ComputeEqad (interpolate/present-value/PVIFA, no ScenarioResults involved) and Alternative.
+    // AnnualizationCompute (single- and two-scenario paths), via patched/Alternative.cs (drops the
+    // ProgressReporter parameter/calls -- see that file's header). Two case `kind`s: `compute_eqad`
+    // dispatches straight to Alternative.ComputeEqad with args [baseYearEAD, baseYear,
+    // mostLikelyFutureEAD, mostLikelyFutureYear, periodOfAnalysis, discountRate]. `annualization`
+    // builds `base_impact_area`/`future_impact_area` (either may be JSON null) via
+    // BuildAlternativeBinnedEntry below -- an AggregatedConsequencesBinned constructed directly
+    // from an already-built DynamicHistogram (the (string,string,IHistogram,int,ConsequenceType,
+    // RiskType) ctor), `values_start`/`values_count` reproducing
+    // `Enumerable.Range(start,count).Select(i => (double)i)` -- mirrors AlternativeTest.cs's own
+    // construction (e.g. LifeLossResultsExcludedFromEqad) exactly, RiskType.Fail throughout. See
+    // fixtures/alternatives/alternative.json's note for the full method dispatch rationale.
+    static AggregatedConsequencesBinned BuildAlternativeBinnedEntry(JsonElement entry, int impactAreaID, ConvergenceCriteria cc) {
+      int start = entry.GetProperty("values_start").GetInt32();
+      int count = entry.GetProperty("values_count").GetInt32();
+      var values = Enumerable.Range(start, count).Select(i => (double)i).ToList();
+      var histogram = new DynamicHistogram(values, cc);
+      return new AggregatedConsequencesBinned(
+          entry.GetProperty("damage_category").GetString(), entry.GetProperty("asset_category").GetString(),
+          histogram, impactAreaID,
+          Enum.Parse<ConsequenceType>(entry.GetProperty("consequence_type").GetString()),
+          Enum.Parse<RiskType>(entry.GetProperty("risk_type").GetString()));
+    }
+    static ScenarioResults BuildAlternativeScenarioResults(JsonElement impactAreaEl, int impactAreaID, ConvergenceCriteria cc) {
+      var scenario = new ScenarioResults();
+      var ia = new ImpactAreaScenarioResults(impactAreaID);
+      foreach (var entry in impactAreaEl.GetProperty("consequence_results").EnumerateArray()) {
+        ia.ConsequenceResults.AddExistingConsequenceResultObject(BuildAlternativeBinnedEntry(entry, impactAreaID, cc));
+      }
+      scenario.AddResults(ia);
+      return scenario;
+    }
+    static bool AlternativeScenarioHasLifeLoss(ScenarioResults results) {
+      return results.ResultsList.SelectMany(r => r.ConsequenceResults.ConsequenceResultList)
+          .Any(c => c.ConsequenceType == ConsequenceType.LifeLoss);
+    }
+    static object EvalAlternative(JsonElement caseEl, string method, JsonElement argsEl) {
+      string kind = caseEl.GetProperty("kind").GetString();
+      if (kind == "compute_eqad") {
+        return Alternative.ComputeEqad(D(argsEl[0]), argsEl[1].GetInt32(), D(argsEl[2]), argsEl[3].GetInt32(),
+                                        argsEl[4].GetInt32(), D(argsEl[5]));
+      }
+
+      // kind == "annualization"
+      int impactAreaID = caseEl.GetProperty("impact_area_id").GetInt32();
+      var conv = caseEl.GetProperty("convergence");
+      var cc = new ConvergenceCriteria(conv.GetProperty("min_iterations").GetInt32(), conv.GetProperty("max_iterations").GetInt32());
+
+      var baseEl = caseEl.GetProperty("base_impact_area");
+      ScenarioResults baseResults = baseEl.ValueKind == JsonValueKind.Null ? null : BuildAlternativeScenarioResults(baseEl, impactAreaID, cc);
+      var futureEl = caseEl.GetProperty("future_impact_area");
+      ScenarioResults futureResults = futureEl.ValueKind == JsonValueKind.Null ? null : BuildAlternativeScenarioResults(futureEl, impactAreaID, cc);
+
+      AlternativeResults alt = Alternative.AnnualizationCompute(
+          D(caseEl.GetProperty("discount_rate")), caseEl.GetProperty("period_of_analysis").GetInt32(),
+          caseEl.GetProperty("alternative_id").GetInt32(), baseResults, futureResults,
+          caseEl.GetProperty("base_year").GetInt32(), caseEl.GetProperty("future_year").GetInt32());
+
+      if (method == "sample_mean_eqad") {
+        return alt.SampleMeanEqad(impactAreaID, argsEl[0].GetString(), argsEl[1].GetString(), ConsequenceType.Damage, RiskType.Total);
+      }
+      if (method == "eqad_count_by_type") {
+        var want = Enum.Parse<ConsequenceType>(argsEl[0].GetString());
+        return (double)alt.EqadResults.ConsequenceResultList.Count(r => r.ConsequenceType == want);
+      }
+      if (method == "base_has_lifeloss") {
+        return AlternativeScenarioHasLifeLoss(alt.BaseYearScenarioResults) ? 1.0 : 0.0;
+      }
+      if (method == "future_has_lifeloss") {
+        return AlternativeScenarioHasLifeLoss(alt.FutureYearScenarioResults) ? 1.0 : 0.0;
+      }
+      throw new Exception("unknown alternative method: " + method);
+    }
+
     // ImpactAreaScenarioSimulation (Phase 5 Task 7): the skeleton + fluent SimulationBuilder +
     // CanCompute + InitializeConsequenceHistograms surface only -- see
     // patched/ImpactAreaScenarioSimulation.cs's header for what's kept/dropped and why. `construct`
@@ -2079,6 +2155,7 @@ namespace oracle_emitter {
               case "scenario_results": val = EvalScenarioResults(c, method, argsEl); break;
               case "alternative_results": val = EvalAlternativeResults(c, method, argsEl); break;
               case "alternative_comparison_report_results": val = EvalAlternativeComparisonReportResults(c, method, argsEl); break;
+              case "alternative": val = EvalAlternative(c, method, argsEl); break;
               case "simulation": val = EvalSimulation(c, method, argsEl); break;
               case "scenario": val = EvalScenario(c, method, argsEl); break;
               case "bootstrap_to_paired_data": val = EvalBootstrapToPairedData(c, method); break;

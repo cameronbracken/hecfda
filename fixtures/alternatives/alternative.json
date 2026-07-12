@@ -1,0 +1,396 @@
+{
+  "target": "alternative",
+  "kind": "alternative",
+  "source_test": "HEC.FDA.ModelTest/unittests/AlternativeTest.cs (ComputeEEAD_Test, SingleBaseScenario_EqadMatchesInputAndExcludesLifeLoss, SingleFutureScenario_EqadMatchesInputAndExcludesLifeLoss, LifeLossResultsExcludedFromEqad)",
+  "note": "Phase 6 Task 9. Two case `kind`s, both dispatched by run_alternative/EvalAlternative: `compute_eqad` (method `compute_eqad`, args [baseYearEAD, baseYear, mostLikelyFutureEAD, mostLikelyFutureYear, periodOfAnalysis, discountRate]) calls Alternative::compute_eqad directly -- no ScenarioResults involved, THE tightest oracle pin (interpolate/present-value/PVIFA), transcribed from AlternativeTest.ComputeEEAD_Test's 8 [InlineData] rows verbatim (abs tol 0.005, matching the C# test's own `Assert.Equal(expected, actual, .01)` looser 2-decimal literal -- PIN captures the full-precision value). `annualization` cases build a base/future ScenarioResults directly from AggregatedConsequencesBinned constructed from an already-built DynamicHistogram (the (string,string,unique_ptr<DynamicHistogram>,int,ConsequenceType,RiskType) ctor, Task 9 un-severance), matching AlternativeTest's own `new DynamicHistogram(Enumerable.Range(start,count)...)` + `new AggregatedConsequencesBinned(...)` construction exactly -- `values_start`/`values_count` reproduce `Enumerable.Range(start, count).Select(i => (double)i)`. Every consequence entry uses RiskType.Fail (the real default AggregatedConsequencesBinned/StudyAreaConsequencesBinned::GetConsequenceResult search against, NOT the RiskType.Total convention scenario_results.json/alternative_results.json's OWN impact-area builder uses for THEIR different testing purpose) so process_base_and_future_year_scenario_results' 4-arg GetConsequenceResult lookups (which default riskType to Fail) actually find their matches. `annualization_single_base`/`annualization_single_future` supply only one side (`future_impact_area`/`base_impact_area` is null) -- exercises the single-scenario null-coalesce + identical-scenario short-circuit (no discounting), each impact area holding both a Damage and a LifeLoss consequence result (mirrors SingleBaseScenario_EqadMatchesInputAndExcludesLifeLoss/SingleFutureScenario_...): `sample_mean_eqad` is PIN (delegates to base_year_scenario_results_.SampleMeanExpectedAnnualConsequences, which equals the input histogram's own SampleMean exactly -- the identical branch never recomputes it), `eqad_count_by_type` is a structural (hand-derivable, not PIN) count of EqadResults.ConsequenceResultList entries matching a ConsequenceType: Damage=1 (survives ScenarioResults::convert_to_study_area_consequences_by_quantile's ConsequenceType::Damage filter), LifeLoss=0 (filtered out -- 'there is no concept of EqAD for life loss'). `annualization_lifeloss_excluded` supplies BOTH sides as two DISTINCT ScenarioResults with the SAME impact_area_id and matching (damage_category, asset_category) Damage categories but different histogram values (so ScenarioResults::equals is false -- takes process_base_and_future_year_scenario_results, exercising the real 25000-step iterate_on_eqad Monte-Carlo-quantile walk end to end, not just the identical-scenario short-circuit) plus a LifeLoss category on BOTH sides (mirrors LifeLossResultsExcludedFromEqad) -- `sample_mean_eqad` is PIN (the real discounted quantile-walk mean), `eqad_count_by_type` Damage=1/LifeLoss=0 (structural, same rationale as above), and `base_has_lifeloss`/`future_has_lifeloss` are structural (exact 1.0) checks that alt.base_year_scenario_results()/future_year_scenario_results() still carry the LifeLoss data post-compute (both sides are genuinely distinct objects here, so the port's single-scenario-aliasing ownership deviation -- see alternative.hpp's class comment -- does not apply and both fields are faithfully populated, unlike the single-scenario cases above where only base_year_scenario_results_ is ever populated by design). `expected: \"PIN\"` gate-captured, never hand-derived; the 8 ComputeEqad literals below are a cross-check against the C# unit test's own rounded InlineData, not the fixture's actual pinned value.",
+  "cases": [
+    {
+      "name": "compute_eqad_35000_2072_50_.07",
+      "kind": "compute_eqad",
+      "assertions": [
+        {
+          "method": "compute_eqad",
+          "args": [
+            35000,
+            2023,
+            50000,
+            2072,
+            50,
+            0.07
+          ],
+          "expected": 38835.309867432676,
+          "tol": 0.005,
+          "mode": "abs"
+        }
+      ]
+    },
+    {
+      "name": "compute_eqad_0_1000_2072_50_.07",
+      "kind": "compute_eqad",
+      "assertions": [
+        {
+          "method": "compute_eqad",
+          "args": [
+            0,
+            2023,
+            1000,
+            2072,
+            50,
+            0.07
+          ],
+          "expected": 255.68732449551467,
+          "tol": 0.005,
+          "mode": "abs"
+        }
+      ]
+    },
+    {
+      "name": "compute_eqad_35000_35000_2072_50_.07",
+      "kind": "compute_eqad",
+      "assertions": [
+        {
+          "method": "compute_eqad",
+          "args": [
+            35000,
+            2023,
+            35000,
+            2072,
+            50,
+            0.07
+          ],
+          "expected": 34999.99999999998,
+          "tol": 0.005,
+          "mode": "abs"
+        }
+      ]
+    },
+    {
+      "name": "compute_eqad_35000_50000_2047_50_.07",
+      "kind": "compute_eqad",
+      "assertions": [
+        {
+          "method": "compute_eqad",
+          "args": [
+            35000,
+            2023,
+            50000,
+            2047,
+            50,
+            0.07
+          ],
+          "expected": 41893.12345590999,
+          "tol": 0.005,
+          "mode": "abs"
+        }
+      ]
+    },
+    {
+      "name": "compute_eqad_35000_50000_2072_50_.03",
+      "kind": "compute_eqad",
+      "assertions": [
+        {
+          "method": "compute_eqad",
+          "args": [
+            35000,
+            2023,
+            50000,
+            2072,
+            50,
+            0.03
+          ],
+          "expected": 40680.87018281858,
+          "tol": 0.005,
+          "mode": "abs"
+        }
+      ]
+    },
+    {
+      "name": "compute_eqad_0_1000_2072_50_.03",
+      "kind": "compute_eqad",
+      "assertions": [
+        {
+          "method": "compute_eqad",
+          "args": [
+            0,
+            2023,
+            1000,
+            2072,
+            50,
+            0.03
+          ],
+          "expected": 378.72467885457417,
+          "tol": 0.005,
+          "mode": "abs"
+        }
+      ]
+    },
+    {
+      "name": "compute_eqad_35000_35000_2072_50_.03",
+      "kind": "compute_eqad",
+      "assertions": [
+        {
+          "method": "compute_eqad",
+          "args": [
+            35000,
+            2023,
+            35000,
+            2072,
+            50,
+            0.03
+          ],
+          "expected": 34999.99999999996,
+          "tol": 0.005,
+          "mode": "abs"
+        }
+      ]
+    },
+    {
+      "name": "compute_eqad_35000_50000_2047_50_.03",
+      "kind": "compute_eqad",
+      "assertions": [
+        {
+          "method": "compute_eqad",
+          "args": [
+            35000,
+            2023,
+            50000,
+            2047,
+            50,
+            0.03
+          ],
+          "expected": 44279.92399187029,
+          "tol": 0.005,
+          "mode": "abs"
+        }
+      ]
+    },
+    {
+      "name": "annualization_single_base",
+      "kind": "annualization",
+      "discount_rate": 0.0275,
+      "period_of_analysis": 50,
+      "alternative_id": 1,
+      "base_year": 2023,
+      "future_year": 2072,
+      "impact_area_id": 1,
+      "convergence": {
+        "min_iterations": 100,
+        "max_iterations": 100
+      },
+      "base_impact_area": {
+        "consequence_results": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "values_start": 100,
+            "values_count": 100
+          },
+          {
+            "damage_category": "LifeLoss",
+            "asset_category": "LifeLoss",
+            "consequence_type": "LifeLoss",
+            "risk_type": "Fail",
+            "values_start": 10,
+            "values_count": 100
+          }
+        ]
+      },
+      "future_impact_area": null,
+      "assertions": [
+        {
+          "method": "sample_mean_eqad",
+          "args": [
+            "residential",
+            "content"
+          ],
+          "expected": 149.5,
+          "tol": 1e-09,
+          "mode": "abs"
+        },
+        {
+          "method": "eqad_count_by_type",
+          "args": [
+            "Damage"
+          ],
+          "expected": 1.0,
+          "tol": 0.0,
+          "mode": "exact"
+        },
+        {
+          "method": "eqad_count_by_type",
+          "args": [
+            "LifeLoss"
+          ],
+          "expected": 0.0,
+          "tol": 0.0,
+          "mode": "exact"
+        }
+      ]
+    },
+    {
+      "name": "annualization_single_future",
+      "kind": "annualization",
+      "discount_rate": 0.0275,
+      "period_of_analysis": 50,
+      "alternative_id": 1,
+      "base_year": 2023,
+      "future_year": 2072,
+      "impact_area_id": 1,
+      "convergence": {
+        "min_iterations": 100,
+        "max_iterations": 100
+      },
+      "base_impact_area": null,
+      "future_impact_area": {
+        "consequence_results": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "values_start": 200,
+            "values_count": 100
+          },
+          {
+            "damage_category": "LifeLoss",
+            "asset_category": "LifeLoss",
+            "consequence_type": "LifeLoss",
+            "risk_type": "Fail",
+            "values_start": 20,
+            "values_count": 100
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "sample_mean_eqad",
+          "args": [
+            "residential",
+            "content"
+          ],
+          "expected": 249.5,
+          "tol": 1e-09,
+          "mode": "abs"
+        },
+        {
+          "method": "eqad_count_by_type",
+          "args": [
+            "Damage"
+          ],
+          "expected": 1.0,
+          "tol": 0.0,
+          "mode": "exact"
+        },
+        {
+          "method": "eqad_count_by_type",
+          "args": [
+            "LifeLoss"
+          ],
+          "expected": 0.0,
+          "tol": 0.0,
+          "mode": "exact"
+        }
+      ]
+    },
+    {
+      "name": "annualization_lifeloss_excluded",
+      "kind": "annualization",
+      "discount_rate": 0.0275,
+      "period_of_analysis": 50,
+      "alternative_id": 1,
+      "base_year": 2023,
+      "future_year": 2072,
+      "impact_area_id": 1,
+      "convergence": {
+        "min_iterations": 100,
+        "max_iterations": 100
+      },
+      "base_impact_area": {
+        "consequence_results": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "values_start": 100,
+            "values_count": 100
+          },
+          {
+            "damage_category": "LifeLoss",
+            "asset_category": "LifeLoss",
+            "consequence_type": "LifeLoss",
+            "risk_type": "Fail",
+            "values_start": 10,
+            "values_count": 100
+          }
+        ]
+      },
+      "future_impact_area": {
+        "consequence_results": [
+          {
+            "damage_category": "residential",
+            "asset_category": "content",
+            "consequence_type": "Damage",
+            "risk_type": "Fail",
+            "values_start": 200,
+            "values_count": 100
+          },
+          {
+            "damage_category": "LifeLoss",
+            "asset_category": "LifeLoss",
+            "consequence_type": "LifeLoss",
+            "risk_type": "Fail",
+            "values_start": 20,
+            "values_count": 100
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "method": "sample_mean_eqad",
+          "args": [
+            "residential",
+            "content"
+          ],
+          "expected": 188.3092040764881,
+          "tol": 1e-06,
+          "mode": "abs"
+        },
+        {
+          "method": "eqad_count_by_type",
+          "args": [
+            "Damage"
+          ],
+          "expected": 1.0,
+          "tol": 0.0,
+          "mode": "exact"
+        },
+        {
+          "method": "eqad_count_by_type",
+          "args": [
+            "LifeLoss"
+          ],
+          "expected": 0.0,
+          "tol": 0.0,
+          "mode": "exact"
+        },
+        {
+          "method": "base_has_lifeloss",
+          "args": [],
+          "expected": 1.0,
+          "tol": 0.0,
+          "mode": "exact"
+        },
+        {
+          "method": "future_has_lifeloss",
+          "args": [],
+          "expected": 1.0,
+          "tol": 0.0,
+          "mode": "exact"
+        }
+      ]
+    }
+  ]
+}

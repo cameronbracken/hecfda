@@ -270,5 +270,15 @@
          (construct ScenarioResults, foreach impact area Compute()+AddResults()), and the
          ComputeDate/SoftwareVersion stamp are kept VERBATIM. Same auto-pickup as the patched/
          files above, no explicit Compile Include. -->
+    <!-- Task Phase6T9: Alternative.cs (the headline EqAD annualization static class) pulls in
+         Utility.Progress (ProgressReporter) via its `ProgressReporter reporter = null` parameters
+         and `reporter.Report*` calls, a genuine compile blocker not reachable/needed by this
+         subset-compiled project (same rationale as patched/ImpactAreaStageDamage.cs's own
+         ProgressReporter strip). patched/Alternative.cs drops exactly the reporter
+         parameters/calls (and the now-unused `using Utility.Progress;`); CanCompute,
+         AnnualizationCompute, RunAnnualizationCompute, ProcessBaseAndFutureYearScenarioResults,
+         IterateOnEqad (Parallel.For KEPT verbatim: plain BCL, deterministic per-step), ComputeEqad,
+         IntoEquivalentAnnualTerms, PresentValueCompute, and Interpolate are kept VERBATIM. Same
+         auto-pickup as the patched/ files above, no explicit Compile Include. -->
   </ItemGroup>
 </Project>

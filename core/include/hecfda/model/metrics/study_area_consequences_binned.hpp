@@ -379,6 +379,45 @@ class StudyAreaConsequencesBinned {
     // filter_by_categories), matching the C# source exactly. On a miss: SEVERED MVVM
     // ErrorMessage/ReportMessage + severed placeholder `new DynamicHistogram()` fallback -- see the
     // class comment's SEVERANCES entry for why this throws instead.
+    // ported from: StudyAreaConsequencesBinned.cs `public AggregatedConsequencesBinned
+    // GetConsequenceResult(string damageCategory, string assetCategory, int impactAreaID =
+    // ..DEFAULT_MISSING_VALUE, ConsequenceType consequenceType = ConsequenceType.Damage, RiskType
+    // riskType = RiskType.Fail)`. UN-SEVERED Phase 6 Task 9: this pair used to be private (the
+    // class comment's original SEVERANCES note explained why -- no caller outside this class
+    // needed a nullptr-on-miss lookup before now). `Alternative::process_base_and_future_year_
+    // scenario_results` (alternative.hpp) is the first outside caller, matching upstream's own
+    // `public` visibility exactly (StudyAreaConsequencesBinned.cs:325) -- it walks a future year's
+    // `ConsequenceResultList` looking for the AggregatedConsequencesBinned matching a given base
+    // year result's (damageCategory, assetCategory, RegionID, ConsequenceType), tolerating a miss
+    // (nullptr) as a real, expected outcome (an unmatched category), not an error. Default args
+    // transcribed verbatim (note: RiskType defaults to Fail here, NOT Total/wildcard like
+    // filter_by_categories's own default -- GetConsequenceResult always forwards an explicit
+    // riskType). Returns nullptr on no match (C# `FirstOrDefault()` returning null).
+    AggregatedConsequencesBinned* get_consequence_result(
+        const std::string& damage_category, const std::string& asset_category,
+        int impact_area_id = kDefaultMissingValue, ConsequenceType consequence_type = ConsequenceType::Damage,
+        RiskType risk_type = RiskType::Fail) {
+        std::vector<AggregatedConsequencesBinned*> matches = consequence_extensions::filter_by_categories(
+            consequence_result_list_, damage_category, asset_category, impact_area_id, consequence_type,
+            risk_type);
+        return matches.empty() ? nullptr : matches.front();
+    }
+
+    // const overload of the above, added Phase 5 Task 6 for equals() (see that method's comment):
+    // the same lookup, but through consequence_extensions::filter_by_categories's const overload,
+    // so a const StudyAreaConsequencesBinned can still be queried read-only. Also public since
+    // Phase 6 Task 9 (see the non-const overload's comment) -- Alternative's base/future
+    // `const ScenarioResults&` reads reach this overload.
+    const AggregatedConsequencesBinned* get_consequence_result(
+        const std::string& damage_category, const std::string& asset_category,
+        int impact_area_id = kDefaultMissingValue, ConsequenceType consequence_type = ConsequenceType::Damage,
+        RiskType risk_type = RiskType::Fail) const {
+        std::vector<const AggregatedConsequencesBinned*> matches = consequence_extensions::filter_by_categories(
+            consequence_result_list_, damage_category, asset_category, impact_area_id, consequence_type,
+            risk_type);
+        return matches.empty() ? nullptr : matches.front();
+    }
+
     const DynamicHistogram* get_specific_histogram(const std::string& damage_category,
                                                     const std::string& asset_category, int impact_area_id,
                                                     bool get_quantity_histogram = false) const {
@@ -427,37 +466,6 @@ class StudyAreaConsequencesBinned {
     }
 
    private:
-    // ported from: StudyAreaConsequencesBinned.cs `public AggregatedConsequencesBinned
-    // GetConsequenceResult(string damageCategory, string assetCategory, int impactAreaID =
-    // ..DEFAULT_MISSING_VALUE, ConsequenceType consequenceType = ConsequenceType.Damage, RiskType
-    // riskType = RiskType.Fail)`. Default args transcribed verbatim (note: RiskType defaults to
-    // Fail here, NOT Total/wildcard like filter_by_categories's own default -- GetConsequenceResult
-    // always forwards an explicit riskType). Returns nullptr on no match (C# `FirstOrDefault()`
-    // returning null), rather than the AggregatedConsequencesByQuantile/Empirical aggregation-region
-    // callers this also served upstream (severed here -- see class comment).
-    AggregatedConsequencesBinned* get_consequence_result(
-        const std::string& damage_category, const std::string& asset_category,
-        int impact_area_id = kDefaultMissingValue, ConsequenceType consequence_type = ConsequenceType::Damage,
-        RiskType risk_type = RiskType::Fail) {
-        std::vector<AggregatedConsequencesBinned*> matches = consequence_extensions::filter_by_categories(
-            consequence_result_list_, damage_category, asset_category, impact_area_id, consequence_type,
-            risk_type);
-        return matches.empty() ? nullptr : matches.front();
-    }
-
-    // const overload of the above, added Phase 5 Task 6 for equals() (see that method's comment):
-    // the same lookup, but through consequence_extensions::filter_by_categories's const overload,
-    // so a const StudyAreaConsequencesBinned can still be queried read-only.
-    const AggregatedConsequencesBinned* get_consequence_result(
-        const std::string& damage_category, const std::string& asset_category,
-        int impact_area_id = kDefaultMissingValue, ConsequenceType consequence_type = ConsequenceType::Damage,
-        RiskType risk_type = RiskType::Fail) const {
-        std::vector<const AggregatedConsequencesBinned*> matches = consequence_extensions::filter_by_categories(
-            consequence_result_list_, damage_category, asset_category, impact_area_id, consequence_type,
-            risk_type);
-        return matches.empty() ? nullptr : matches.front();
-    }
-
     // Shared by both add_consequence_realization overloads: get_consequence_result, but throws
     // instead of returning nullptr on a miss. C# has no equivalent helper -- both overloads call
     // GetConsequenceResult(...) directly and dereference the (possibly null) result immediately,

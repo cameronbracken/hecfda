@@ -6,6 +6,7 @@
 #include "doctest.h"
 #include "json.hpp"
 #include "check.hpp"
+#include "hecfda/model/alternatives/alternative.hpp"
 #include "hecfda/model/compute/impact_area_scenario_simulation.hpp"
 #include "hecfda/model/compute/random_provider.hpp"
 #include "hecfda/model/extensions/graphical_distribution.hpp"
@@ -3748,6 +3749,145 @@ TEST_CASE("alternative_comparison_report_results fixture") {
     for (const auto& c : fx["cases"]) {
         for (const auto& a : c["assertions"]) {
             double got = run_alternative_comparison_report_results(c, a["method"].get<std::string>(), a["args"]);
+            std::vector<double> exp = {a["expected"].get<double>()};
+            std::string mode = a["mode"].get<std::string>();
+            double tol = a["tol"].get<double>();
+            if (!hecfda_test::compare_by_mode({got}, exp, tol, mode)) {
+                auto msg = std::string("comparison failed for case: ") + c["name"].get<std::string>() +
+                           " method: " + a["method"].get<std::string>();
+                FAIL(msg.c_str());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bespoke dispatch for Alternative (Phase 6 Task 9): the headline EqAD annualization math --
+// Alternative::compute_eqad (interpolate/present-value/PVIFA, no ScenarioResults involved) and
+// Alternative::annualization_compute (single- and two-scenario paths). Two case `kind`s:
+// `compute_eqad` dispatches straight to Alternative::compute_eqad with args [baseYearEAD,
+// baseYear, mostLikelyFutureEAD, mostLikelyFutureYear, periodOfAnalysis, discountRate] -- no
+// builder needed. `annualization` builds `base_impact_area`/`future_impact_area` (either may be
+// JSON null, matching AlternativeTest's own single-scenario AnnualizationCompute(..., null, ...)
+// calls) via make_alternative_binned_entry below -- AggregatedConsequencesBinned constructed
+// directly from an already-built DynamicHistogram (the
+// (string,string,unique_ptr<DynamicHistogram>,int,ConsequenceType,RiskType) ctor, this task's
+// un-severance), `values_start`/`values_count` reproducing C#'s `Enumerable.Range(start,
+// count).Select(i => (double)i)` -- mirrors AlternativeTest.cs's own construction (e.g.
+// `LifeLossResultsExcludedFromEqad`) exactly, RiskType.Fail throughout (the real
+// GetConsequenceResult default, not scenario_results.json's own RiskType.Total testing
+// convention). `method` dispatches: sample_mean_eqad (args [damage_category, asset_category],
+// ConsequenceType::Damage/RiskType::Total defaults) -- AlternativeResults::sample_mean_eqad;
+// eqad_count_by_type (args [consequence_type_name]) -- a structural count of
+// alt.eqad_results().consequence_result_list() entries matching that ConsequenceType, proving the
+// life-loss exclusion without relying on the identical-vs-eqad delegation branch;
+// base_has_lifeloss/future_has_lifeloss (args []) -- structural checks that
+// alt.base_year_scenario_results()/future_year_scenario_results() still carry a LifeLoss
+// consequence result post-compute (only meaningful for the two-distinct-scenario case -- see
+// alternative.hpp's "Ownership deviation" comment for why the single-scenario cases don't assert
+// this on the unpopulated side).
+static hecfda::model::metrics::AggregatedConsequencesBinned make_alternative_binned_entry(
+    const json& entry, int impact_area_id, const hecfda::statistics::ConvergenceCriteria& cc) {
+    using namespace hecfda::model::metrics;
+    int start = entry["values_start"].get<int>();
+    int count = entry["values_count"].get<int>();
+    std::vector<double> values;
+    values.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        values.push_back(static_cast<double>(start + i));
+    }
+    auto histogram = std::make_unique<hecfda::statistics::histograms::DynamicHistogram>(values, cc);
+    return AggregatedConsequencesBinned(
+        entry["damage_category"].get<std::string>(), entry["asset_category"].get<std::string>(),
+        std::move(histogram), impact_area_id, parse_consequence_type(entry["consequence_type"].get<std::string>()),
+        parse_risk_type(entry["risk_type"].get<std::string>()));
+}
+
+static hecfda::model::metrics::ScenarioResults make_alternative_scenario_results(
+    const json& impact_area_json, int impact_area_id, const hecfda::statistics::ConvergenceCriteria& cc) {
+    using namespace hecfda::model::metrics;
+    ScenarioResults scenario;
+    ImpactAreaScenarioResults ia(impact_area_id);
+    for (const auto& entry : impact_area_json["consequence_results"]) {
+        ia.consequence_results().add_existing_consequence_result_object(
+            make_alternative_binned_entry(entry, impact_area_id, cc));
+    }
+    scenario.add_results(std::move(ia));
+    return scenario;
+}
+
+static bool alternative_scenario_has_lifeloss(const hecfda::model::metrics::ScenarioResults& results) {
+    using namespace hecfda::model::metrics;
+    for (const ImpactAreaScenarioResults& ia : results.results_list()) {
+        for (const AggregatedConsequencesBinned& result : ia.consequence_results().consequence_result_list()) {
+            if (result.consequence_type() == ConsequenceType::LifeLoss) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static double run_alternative(const json& c, const std::string& method, const json& args) {
+    using namespace hecfda::model::metrics;
+    using namespace hecfda::model::alternatives;
+
+    std::string kind = c["kind"].get<std::string>();
+    if (kind == "compute_eqad") {
+        return Alternative::compute_eqad(args[0].get<double>(), args[1].get<int>(), args[2].get<double>(),
+                                          args[3].get<int>(), args[4].get<int>(), args[5].get<double>());
+    }
+
+    // kind == "annualization"
+    int impact_area_id = c["impact_area_id"].get<int>();
+    const auto& conv = c["convergence"];
+    hecfda::statistics::ConvergenceCriteria cc(conv["min_iterations"].get<int>(), conv["max_iterations"].get<int>());
+
+    std::optional<ScenarioResults> base;
+    if (!c["base_impact_area"].is_null()) {
+        base = make_alternative_scenario_results(c["base_impact_area"], impact_area_id, cc);
+    }
+    std::optional<ScenarioResults> future;
+    if (!c["future_impact_area"].is_null()) {
+        future = make_alternative_scenario_results(c["future_impact_area"], impact_area_id, cc);
+    }
+
+    AlternativeResults alt = Alternative::annualization_compute(
+        c["discount_rate"].get<double>(), c["period_of_analysis"].get<int>(), c["alternative_id"].get<int>(),
+        base.has_value() ? &base.value() : nullptr, future.has_value() ? &future.value() : nullptr,
+        c["base_year"].get<int>(), c["future_year"].get<int>());
+
+    if (method == "sample_mean_eqad") {
+        return alt.sample_mean_eqad(impact_area_id, args[0].get<std::string>(), args[1].get<std::string>(),
+                                     ConsequenceType::Damage, RiskType::Total);
+    }
+    if (method == "eqad_count_by_type") {
+        ConsequenceType want = parse_consequence_type(args[0].get<std::string>());
+        int n = 0;
+        for (const AggregatedConsequencesByQuantile& result : alt.eqad_results().consequence_result_list()) {
+            if (result.consequence_type() == want) ++n;
+        }
+        return static_cast<double>(n);
+    }
+    if (method == "base_has_lifeloss") {
+        return alternative_scenario_has_lifeloss(alt.base_year_scenario_results()) ? 1.0 : 0.0;
+    }
+    if (method == "future_has_lifeloss") {
+        return alternative_scenario_has_lifeloss(alt.future_year_scenario_results()) ? 1.0 : 0.0;
+    }
+    auto msg = std::string("unknown alternative method: ") + method;
+    FAIL(msg.c_str());
+    return 0.0;
+}
+
+TEST_CASE("alternative fixture") {
+    std::ifstream f(fixtures_dir() + "/alternatives/alternative.json");
+    REQUIRE(f.good());
+    json fx; f >> fx;
+    CHECK(fx["target"] == "alternative");
+    for (const auto& c : fx["cases"]) {
+        for (const auto& a : c["assertions"]) {
+            double got = run_alternative(c, a["method"].get<std::string>(), a["args"]);
             std::vector<double> exp = {a["expected"].get<double>()};
             std::string mode = a["mode"].get<std::string>();
             double tol = a["tol"].get<double>();
