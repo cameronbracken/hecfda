@@ -500,3 +500,17 @@ static hecfda::model::compute::ImpactAreaScenarioSimulation r_build_impact_area_
     auto results = scenario.compute(cc, compute_is_deterministic);
     return results.sample_mean_expected_annual_consequences(query_impact_area_id, damage_category, asset_category);
 }
+
+// Public-API seeded sampling (0.1.0): quantile sampling for any factory distribution.
+// sample = inverse_cdf(next_random()) over a fresh RandomProvider(seed) -- the identical chain
+// every ported sampler uses (UncertainPairedData::sample_paired_data, OccupancyType::sample), so
+// seeded draws are cross-language and C#-consistent by construction.
+[[cpp11::register]] cpp11::doubles hecfda_dist_sample(std::string type, cpp11::doubles params,
+                                                        int n, int seed) {
+    auto dist = nd::IDistributionFactory::create(nd::distribution_type_from_name(type),
+                                                  std::vector<double>(params.begin(), params.end()));
+    hecfda::model::compute::RandomProvider rp(seed);
+    cpp11::writable::doubles out(n);
+    for (int i = 0; i < n; ++i) out[i] = dist->inverse_cdf(rp.next_random());
+    return out;
+}

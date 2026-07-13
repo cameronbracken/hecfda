@@ -500,8 +500,18 @@ static double scenario(std::vector<int> impact_area_ids, const std::string& flow
     return results.sample_mean_expected_annual_consequences(query_impact_area_id, damage_category, asset_category);
 }
 
+// Public-API seeded sampling (0.1.0): see hecfdar/src/glue.cpp's hecfda_dist_sample.
+static std::vector<double> dist_sample(const std::string& type, const std::vector<double>& params,
+                                        int n, int seed) {
+    auto dist = nd::IDistributionFactory::create(nd::distribution_type_from_name(type), params);
+    hecfda::model::compute::RandomProvider rp(seed);
+    std::vector<double> out(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) out[static_cast<std::size_t>(i)] = dist->inverse_cdf(rp.next_random());
+    return out;
+}
+
 PYBIND11_MODULE(_core, mod) {
-    mod.def("rng_sequence", &rng_sequence);
+    mod.def("rng_sequence", &rng_sequence, py::arg("seed"), py::arg("n"));
     mod.def("dist_eval", &dist_eval);
     mod.def("paired_f", &paired_f);
     mod.def("upd_sample_integrate", &upd_sample_integrate);
@@ -539,4 +549,6 @@ PYBIND11_MODULE(_core, mod) {
              py::arg("stage_damage_params"), py::arg("damage_category"), py::arg("asset_category"),
              py::arg("threshold_id"), py::arg("threshold_value"), py::arg("min_iterations"),
              py::arg("max_iterations"), py::arg("compute_is_deterministic"), py::arg("query_impact_area_id"));
+    mod.def("dist_sample", &dist_sample, py::arg("dist"), py::arg("params"), py::arg("n"),
+             py::arg("seed"));
 }

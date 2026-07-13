@@ -12,3 +12,4 @@ from ._core import (
     alternative_compute_eqad,
     scenario,
 )
+from .distributions import dist_pdf, dist_cdf, dist_quantile, dist_sample

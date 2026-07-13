@@ -1,1 +1,6 @@
 useDynLib(hecfdar, .registration = TRUE)
+export(dist_pdf)
+export(dist_cdf)
+export(dist_quantile)
+export(dist_sample)
+export(rng_sequence)

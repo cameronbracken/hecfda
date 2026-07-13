@@ -47,3 +47,7 @@ hecfda_alternative_compute_eqad <- function(base_value, base_year, future_value,
 hecfda_scenario <- function(impact_area_ids, flow_freq_type, flow_freq_params, flow_stage_xs, flow_stage_types, flow_stage_params, stage_damage_xs, stage_damage_types, stage_damage_params, damage_category, asset_category, threshold_id, threshold_value, min_iterations, max_iterations, compute_is_deterministic, query_impact_area_id) {
   .Call(`_hecfdar_hecfda_scenario`, impact_area_ids, flow_freq_type, flow_freq_params, flow_stage_xs, flow_stage_types, flow_stage_params, stage_damage_xs, stage_damage_types, stage_damage_params, damage_category, asset_category, threshold_id, threshold_value, min_iterations, max_iterations, compute_is_deterministic, query_impact_area_id)
 }
+
+hecfda_dist_sample <- function(type, params, n, seed) {
+  .Call(`_hecfdar_hecfda_dist_sample`, type, params, n, seed)
+}

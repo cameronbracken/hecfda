@@ -89,12 +89,20 @@ extern "C" SEXP _hecfdar_hecfda_scenario(SEXP impact_area_ids, SEXP flow_freq_ty
     return cpp11::as_sexp(hecfda_scenario(cpp11::as_cpp<cpp11::decay_t<cpp11::integers>>(impact_area_ids), cpp11::as_cpp<cpp11::decay_t<std::string>>(flow_freq_type), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(flow_freq_params), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(flow_stage_xs), cpp11::as_cpp<cpp11::decay_t<cpp11::strings>>(flow_stage_types), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(flow_stage_params), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(stage_damage_xs), cpp11::as_cpp<cpp11::decay_t<cpp11::strings>>(stage_damage_types), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(stage_damage_params), cpp11::as_cpp<cpp11::decay_t<std::string>>(damage_category), cpp11::as_cpp<cpp11::decay_t<std::string>>(asset_category), cpp11::as_cpp<cpp11::decay_t<int>>(threshold_id), cpp11::as_cpp<cpp11::decay_t<double>>(threshold_value), cpp11::as_cpp<cpp11::decay_t<int>>(min_iterations), cpp11::as_cpp<cpp11::decay_t<int>>(max_iterations), cpp11::as_cpp<cpp11::decay_t<bool>>(compute_is_deterministic), cpp11::as_cpp<cpp11::decay_t<int>>(query_impact_area_id)));
   END_CPP11
 }
+// glue.cpp
+cpp11::doubles hecfda_dist_sample(std::string type, cpp11::doubles params, int n, int seed);
+extern "C" SEXP _hecfdar_hecfda_dist_sample(SEXP type, SEXP params, SEXP n, SEXP seed) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(hecfda_dist_sample(cpp11::as_cpp<cpp11::decay_t<std::string>>(type), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(params), cpp11::as_cpp<cpp11::decay_t<int>>(n), cpp11::as_cpp<cpp11::decay_t<int>>(seed)));
+  END_CPP11
+}
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
     {"_hecfdar_hecfda_alternative_compute_eqad",        (DL_FUNC) &_hecfdar_hecfda_alternative_compute_eqad,         6},
     {"_hecfdar_hecfda_consequence_result",              (DL_FUNC) &_hecfdar_hecfda_consequence_result,               5},
     {"_hecfdar_hecfda_dist_eval",                       (DL_FUNC) &_hecfdar_hecfda_dist_eval,                        4},
+    {"_hecfdar_hecfda_dist_sample",                     (DL_FUNC) &_hecfdar_hecfda_dist_sample,                      4},
     {"_hecfdar_hecfda_impact_area_scenario_simulation", (DL_FUNC) &_hecfdar_hecfda_impact_area_scenario_simulation, 16},
     {"_hecfdar_hecfda_impact_area_stage_damage",        (DL_FUNC) &_hecfdar_hecfda_impact_area_stage_damage,         7},
     {"_hecfdar_hecfda_paired_f",                        (DL_FUNC) &_hecfdar_hecfda_paired_f,                         4},
