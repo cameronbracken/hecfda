@@ -118,6 +118,13 @@ extern "C" SEXP _hecfdar_hecfda_annualization(SEXP base_handle, SEXP future_hand
   END_CPP11
 }
 // glue.cpp
+cpp11::list hecfda_stage_damage(cpp11::list structures, cpp11::list occupancy_types, cpp11::list hydraulics, cpp11::list stage_frequency, cpp11::doubles stages, int impact_area_id, bool compute_is_deterministic);
+extern "C" SEXP _hecfdar_hecfda_stage_damage(SEXP structures, SEXP occupancy_types, SEXP hydraulics, SEXP stage_frequency, SEXP stages, SEXP impact_area_id, SEXP compute_is_deterministic) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(hecfda_stage_damage(cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(structures), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(occupancy_types), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(hydraulics), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(stage_frequency), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(stages), cpp11::as_cpp<cpp11::decay_t<int>>(impact_area_id), cpp11::as_cpp<cpp11::decay_t<bool>>(compute_is_deterministic)));
+  END_CPP11
+}
+// glue.cpp
 cpp11::list hecfda_alt_comparison(cpp11::sexp without_handle, cpp11::list with_handles);
 extern "C" SEXP _hecfdar_hecfda_alt_comparison(SEXP without_handle, SEXP with_handles) {
   BEGIN_CPP11
@@ -140,6 +147,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_hecfdar_hecfda_rng_sequence",                    (DL_FUNC) &_hecfdar_hecfda_rng_sequence,                     2},
     {"_hecfdar_hecfda_scenario",                        (DL_FUNC) &_hecfdar_hecfda_scenario,                        17},
     {"_hecfdar_hecfda_scenario_compute",                (DL_FUNC) &_hecfdar_hecfda_scenario_compute,                 4},
+    {"_hecfdar_hecfda_stage_damage",                    (DL_FUNC) &_hecfdar_hecfda_stage_damage,                     7},
     {"_hecfdar_hecfda_structure",                       (DL_FUNC) &_hecfdar_hecfda_structure,                       32},
     {"_hecfdar_hecfda_system_performance_results",      (DL_FUNC) &_hecfdar_hecfda_system_performance_results,       7},
     {"_hecfdar_hecfda_upd_sample_integrate",            (DL_FUNC) &_hecfdar_hecfda_upd_sample_integrate,             4},

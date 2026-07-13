@@ -670,6 +670,115 @@ static py::dict scenario_compute(py::list specs, int min_iterations, int max_ite
     return out;
 }
 
+// Public-API stage-damage (0.1.0): marshaled generalization of the fixture-literal
+// impact_area_stage_damage above (same core call chain; see that function's comment).
+// occupancy_types spec fields: name, damage_category, structure_curve, content_curve,
+// content_to_structure_value_ratio (dict with "central" -> deterministic ctor, or
+// dict with dist/std_or_min/central/max), optional first_floor_elevation / structure_value
+// (dict with dist/std_or_min/max). Mirrors hecfdar/src/glue.cpp's r_spec_to_occupancy_type +
+// hecfda_stage_damage.
+static ms::OccupancyType py_spec_to_occupancy_type(py::dict spec) {
+    auto builder = ms::OccupancyType::builder()
+                       .with_name(spec["name"].cast<std::string>())
+                       .with_damage_category(spec["damage_category"].cast<std::string>())
+                       .with_structure_depth_percent_damage(
+                           py_spec_to_curve(spec["structure_curve"].cast<py::dict>()))
+                       .with_content_depth_percent_damage(
+                           py_spec_to_curve(spec["content_curve"].cast<py::dict>()));
+    py::dict csvr = spec["content_to_structure_value_ratio"].cast<py::dict>();
+    if (!csvr.contains("dist")) {
+        builder.with_content_to_structure_value_ratio(
+            ms::ValueRatioWithUncertainty(csvr["central"].cast<double>()));
+    } else {
+        builder.with_content_to_structure_value_ratio(ms::ValueRatioWithUncertainty(
+            nd::distribution_type_from_name(csvr["dist"].cast<std::string>()),
+            csvr["std_or_min"].cast<double>(), csvr["central"].cast<double>(),
+            csvr["max"].cast<double>()));
+    }
+    if (spec.contains("first_floor_elevation")) {
+        py::dict ffe = spec["first_floor_elevation"].cast<py::dict>();
+        builder.with_first_floor_elevation_uncertainty(ms::FirstFloorElevationUncertainty(
+            nd::distribution_type_from_name(ffe["dist"].cast<std::string>()),
+            ffe["std_or_min"].cast<double>(), ffe["max"].cast<double>()));
+    }
+    if (spec.contains("structure_value")) {
+        py::dict sv = spec["structure_value"].cast<py::dict>();
+        builder.with_structure_value_uncertainty(ms::ValueUncertainty(
+            nd::distribution_type_from_name(sv["dist"].cast<std::string>()),
+            sv["std_or_min"].cast<double>(), sv["max"].cast<double>()));
+    }
+    return builder.build();
+}
+
+static py::list stage_damage(py::dict structures, py::list occupancy_types, py::dict hydraulics,
+                              py::dict stage_frequency, std::vector<double> stages,
+                              int impact_area_id, bool compute_is_deterministic) {
+    std::map<std::string, ms::OccupancyType> occ_types;
+    for (auto item : occupancy_types) {
+        auto occ = py_spec_to_occupancy_type(item.cast<py::dict>());
+        std::string name = occ.name();
+        occ_types.emplace(std::move(name), std::move(occ));
+    }
+    std::vector<std::string> fid = structures["fid"].cast<std::vector<std::string>>();
+    std::vector<double> ffe = structures["first_floor_elevation"].cast<std::vector<double>>();
+    std::vector<double> val_struct = structures["value_structure"].cast<std::vector<double>>();
+    std::vector<std::string> damcat = structures["damage_category"].cast<std::vector<std::string>>();
+    std::vector<std::string> occtype = structures["occupancy_type"].cast<std::vector<std::string>>();
+    std::vector<double> ground = structures["ground_elevation"].cast<std::vector<double>>();
+    std::size_t n = fid.size();
+    auto optional_col = [&](const char* key) {
+        if (structures.contains(key)) return structures[key].cast<std::vector<double>>();
+        return std::vector<double>(n, 0.0);
+    };
+    std::vector<double> val_cont = optional_col("value_content");
+    std::vector<double> val_vehic = optional_col("value_vehicle");
+    std::vector<double> val_other = optional_col("value_other");
+    std::vector<ms::Structure> structs;
+    for (std::size_t i = 0; i < n; ++i) {
+        structs.push_back(ms::Structure(fid[i], ffe[i], val_struct[i], damcat[i], occtype[i],
+                                         impact_area_id, val_cont[i], val_vehic[i], val_other[i],
+                                         "unassigned", ms::Structure::kDefaultMissingValue,
+                                         ground[i]));
+    }
+    ms::Inventory inventory(std::move(occ_types), std::move(structs));
+
+    std::vector<double> hyd_probs = hydraulics["probabilities"].cast<std::vector<double>>();
+    py::list wses_list = hydraulics["wses"].cast<py::list>();
+    std::vector<std::vector<float>> wses;
+    for (auto item : wses_list) {
+        std::vector<double> profile = item.cast<std::vector<double>>();
+        wses.push_back(std::vector<float>(profile.begin(), profile.end()));
+    }
+    sd::HydraulicProfiles hyd(hyd_probs, wses);
+
+    std::vector<double> freq_probs = stage_frequency["probabilities"].cast<std::vector<double>>();
+    std::vector<double> freq_stages = stage_frequency["stages"].cast<std::vector<double>>();
+    pd::CurveMetaData freq_md("probability", "stages", "graphical stage frequency");
+    pd::GraphicalUncertainPairedData frequency(freq_probs, freq_stages,
+                                                stage_frequency["erl"].cast<double>(), freq_md,
+                                                /*using_stages_not_flows=*/true);
+
+    sd::ImpactAreaStageDamage iasd(impact_area_id, std::move(inventory), std::move(hyd),
+                                    /*analysis_year=*/9999, /*analytical_flow_frequency=*/nullptr,
+                                    &frequency, /*discharge_stage=*/nullptr,
+                                    /*unregulated_regulated=*/nullptr, /*using_mock_data=*/true);
+    auto compute_result = iasd.compute(compute_is_deterministic);
+
+    py::list rows;
+    for (const auto& upd : compute_result.first) {
+        auto sampled = upd.sample_paired_data(1, true);
+        for (double s : stages) {
+            py::dict row;
+            row["damage_category"] = upd.metadata().damage_category();
+            row["asset_category"] = upd.metadata().asset_category();
+            row["stage"] = s;
+            row["damage"] = sampled.f(s);
+            rows.append(row);
+        }
+    }
+    return rows;
+}
+
 // Public-API annualization (0.1.0, Task 4): two computed ScenarioResultsHandle objects -> EqAD
 // AlternativeResults, returned as an opaque AlternativeResultsHandle. MOVES OUT of the handles'
 // `results` pointees (annualization_compute's documented ownership contract) -- the Python
@@ -794,6 +903,9 @@ PYBIND11_MODULE(_core, mod) {
              py::arg("seed"));
     mod.def("ead_simulation", &ead_simulation, py::arg("spec"), py::arg("min_iterations"),
              py::arg("max_iterations"), py::arg("compute_is_deterministic"));
+    mod.def("stage_damage", &stage_damage, py::arg("structures"), py::arg("occupancy_types"),
+             py::arg("hydraulics"), py::arg("stage_frequency"), py::arg("stages"),
+             py::arg("impact_area_id"), py::arg("compute_is_deterministic"));
 
     py::class_<ScenarioResultsHandle>(mod, "ScenarioResultsHandle");
     py::class_<AlternativeResultsHandle>(mod, "AlternativeResultsHandle");

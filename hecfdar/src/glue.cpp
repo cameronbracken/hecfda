@@ -725,6 +725,126 @@ static hecfda::model::compute::ImpactAreaScenarioSimulation r_spec_to_simulation
     });
 }
 
+// Public-API stage-damage (0.1.0): marshaled generalization of the fixture-literal
+// hecfda_impact_area_stage_damage above (same core call chain; see that function's comment).
+// occupancy_types spec fields: name, damage_category, structure_curve, content_curve,
+// content_to_structure_value_ratio (list(central) -> deterministic ctor, or
+// list(dist, std_or_min, central, max)), optional first_floor_elevation / structure_value
+// (list(dist, std_or_min, max)).
+static ms::OccupancyType r_spec_to_occupancy_type(cpp11::list spec) {
+    auto builder = ms::OccupancyType::builder()
+                       .with_name(cpp11::as_cpp<std::string>(spec["name"]))
+                       .with_damage_category(cpp11::as_cpp<std::string>(spec["damage_category"]))
+                       .with_structure_depth_percent_damage(
+                           r_spec_to_curve(cpp11::list(spec["structure_curve"])))
+                       .with_content_depth_percent_damage(
+                           r_spec_to_curve(cpp11::list(spec["content_curve"])));
+    cpp11::list csvr(spec["content_to_structure_value_ratio"]);
+    if (csvr["dist"] == R_NilValue) {
+        builder.with_content_to_structure_value_ratio(
+            ms::ValueRatioWithUncertainty(cpp11::as_cpp<double>(csvr["central"])));
+    } else {
+        builder.with_content_to_structure_value_ratio(ms::ValueRatioWithUncertainty(
+            nd::distribution_type_from_name(cpp11::as_cpp<std::string>(csvr["dist"])),
+            cpp11::as_cpp<double>(csvr["std_or_min"]), cpp11::as_cpp<double>(csvr["central"]),
+            cpp11::as_cpp<double>(csvr["max"])));
+    }
+    if (spec["first_floor_elevation"] != R_NilValue) {
+        cpp11::list ffe(spec["first_floor_elevation"]);
+        builder.with_first_floor_elevation_uncertainty(ms::FirstFloorElevationUncertainty(
+            nd::distribution_type_from_name(cpp11::as_cpp<std::string>(ffe["dist"])),
+            cpp11::as_cpp<double>(ffe["std_or_min"]), cpp11::as_cpp<double>(ffe["max"])));
+    }
+    if (spec["structure_value"] != R_NilValue) {
+        cpp11::list sv(spec["structure_value"]);
+        builder.with_structure_value_uncertainty(ms::ValueUncertainty(
+            nd::distribution_type_from_name(cpp11::as_cpp<std::string>(sv["dist"])),
+            cpp11::as_cpp<double>(sv["std_or_min"]), cpp11::as_cpp<double>(sv["max"])));
+    }
+    return builder.build();
+}
+
+[[cpp11::register]] cpp11::list hecfda_stage_damage(cpp11::list structures,
+                                                      cpp11::list occupancy_types,
+                                                      cpp11::list hydraulics,
+                                                      cpp11::list stage_frequency,
+                                                      cpp11::doubles stages, int impact_area_id,
+                                                      bool compute_is_deterministic) {
+    std::map<std::string, ms::OccupancyType> occ_types;
+    for (R_xlen_t i = 0; i < occupancy_types.size(); ++i) {
+        auto occ = r_spec_to_occupancy_type(cpp11::list(occupancy_types[i]));
+        std::string name = occ.name();
+        occ_types.emplace(std::move(name), std::move(occ));
+    }
+    cpp11::strings fid(structures["fid"]);
+    cpp11::doubles ffe(structures["first_floor_elevation"]);
+    cpp11::doubles val_struct(structures["value_structure"]);
+    cpp11::strings damcat(structures["damage_category"]);
+    cpp11::strings occtype(structures["occupancy_type"]);
+    cpp11::doubles ground(structures["ground_elevation"]);
+    auto optional_col = [&](const char* name, R_xlen_t n) {
+        if (structures[name] != R_NilValue) return cpp11::doubles(structures[name]);
+        return cpp11::doubles(cpp11::writable::doubles(std::vector<double>(n, 0.0)));
+    };
+    R_xlen_t n = fid.size();
+    cpp11::doubles val_cont = optional_col("value_content", n);
+    cpp11::doubles val_vehic = optional_col("value_vehicle", n);
+    cpp11::doubles val_other = optional_col("value_other", n);
+    std::vector<ms::Structure> structs;
+    for (R_xlen_t i = 0; i < n; ++i) {
+        structs.push_back(ms::Structure(std::string(fid[i]), ffe[i], val_struct[i],
+                                         std::string(damcat[i]), std::string(occtype[i]),
+                                         impact_area_id, val_cont[i], val_vehic[i], val_other[i],
+                                         "unassigned", ms::Structure::kDefaultMissingValue,
+                                         ground[i]));
+    }
+    ms::Inventory inventory(std::move(occ_types), std::move(structs));
+
+    cpp11::doubles hyd_probs(hydraulics["probabilities"]);
+    cpp11::list wses_list(hydraulics["wses"]);
+    std::vector<std::vector<float>> wses;
+    for (R_xlen_t i = 0; i < wses_list.size(); ++i) {
+        cpp11::doubles profile(wses_list[i]);
+        wses.push_back(std::vector<float>(profile.begin(), profile.end()));
+    }
+    sd::HydraulicProfiles hyd(std::vector<double>(hyd_probs.begin(), hyd_probs.end()), wses);
+
+    cpp11::doubles freq_probs(stage_frequency["probabilities"]);
+    cpp11::doubles freq_stages(stage_frequency["stages"]);
+    pd::CurveMetaData freq_md("probability", "stages", "graphical stage frequency");
+    pd::GraphicalUncertainPairedData frequency(
+        std::vector<double>(freq_probs.begin(), freq_probs.end()),
+        std::vector<double>(freq_stages.begin(), freq_stages.end()),
+        cpp11::as_cpp<double>(stage_frequency["erl"]), freq_md, /*using_stages_not_flows=*/true);
+
+    sd::ImpactAreaStageDamage iasd(impact_area_id, std::move(inventory), std::move(hyd),
+                                    /*analysis_year=*/9999, /*analytical_flow_frequency=*/nullptr,
+                                    &frequency, /*discharge_stage=*/nullptr,
+                                    /*unregulated_regulated=*/nullptr, /*using_mock_data=*/true);
+    auto compute_result = iasd.compute(compute_is_deterministic);
+
+    cpp11::writable::strings out_damcat;
+    cpp11::writable::strings out_asset;
+    cpp11::writable::doubles out_stage;
+    cpp11::writable::doubles out_damage;
+    for (const auto& upd : compute_result.first) {
+        auto sampled = upd.sample_paired_data(1, true);
+        for (double s : stages) {
+            out_damcat.push_back(upd.metadata().damage_category());
+            out_asset.push_back(upd.metadata().asset_category());
+            out_stage.push_back(s);
+            out_damage.push_back(sampled.f(s));
+        }
+    }
+    using namespace cpp11::literals;
+    return cpp11::writable::list({
+        "damage_category"_nm = out_damcat,
+        "asset_category"_nm = out_asset,
+        "stage"_nm = out_stage,
+        "damage"_nm = out_damage
+    });
+}
+
 // Public-API with/without benefits (0.1.0): consumes (moves) the without and with
 // AlternativeResults handles into compute_alternative_comparison_report, then reports the
 // wildcard reduced means per with-project alternative.

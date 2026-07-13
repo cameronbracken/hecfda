@@ -64,6 +64,10 @@ hecfda_annualization <- function(base_handle, future_handle, discount_rate, peri
   .Call(`_hecfdar_hecfda_annualization`, base_handle, future_handle, discount_rate, period_of_analysis, alternative_id, base_year, future_year)
 }
 
+hecfda_stage_damage <- function(structures, occupancy_types, hydraulics, stage_frequency, stages, impact_area_id, compute_is_deterministic) {
+  .Call(`_hecfdar_hecfda_stage_damage`, structures, occupancy_types, hydraulics, stage_frequency, stages, impact_area_id, compute_is_deterministic)
+}
+
 hecfda_alt_comparison <- function(without_handle, with_handles) {
   .Call(`_hecfdar_hecfda_alt_comparison`, without_handle, with_handles)
 }

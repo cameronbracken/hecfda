@@ -19,4 +19,5 @@ from .workflow import (
     eqad,
     alternative_ead,
     alternative_comparison,
+    stage_damage,
 )

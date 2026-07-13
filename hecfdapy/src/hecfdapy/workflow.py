@@ -147,6 +147,41 @@ def alternative_ead(base, future=None, *, base_year, future_year, period_of_anal
         int(base_year), int(future_year))
 
 
+def stage_damage(structures, occupancy_types, hydraulics, stage_frequency, stages,
+                 impact_area_id=1, deterministic=True):
+    """Stage-damage curves from a structure inventory (ported ImpactAreaStageDamage).
+
+    See the R documentation for the field-by-field spec; shapes are identical with dicts in
+    place of named lists and a dict of column lists in place of the data frame.
+
+    Scope note: the deterministic path is the oracle-validated one (upstream
+    ``TractableStageDamageTests``); occupancy types support structure and content curves plus
+    CSVR/FFE/structure-value uncertainty (the subset the existing bindings marshal); the
+    flow-frequency + discharge-stage input path stays internal (C++-validated only).
+
+    Returns
+    -------
+    list of dict
+        One row per (damage_category, asset_category, stage): ``{"damage_category",
+        "asset_category", "stage", "damage"}``.
+    """
+    occ_specs = []
+    for occ in occupancy_types:
+        occ = dict(occ)
+        occ["structure_curve"] = _normalize_curve(occ["structure_curve"])
+        occ["content_curve"] = _normalize_curve(occ["content_curve"])
+        occ_specs.append(occ)
+    return _core.stage_damage(
+        {k: list(v) for k, v in structures.items()},
+        occ_specs,
+        {"probabilities": [float(p) for p in hydraulics["probabilities"]],
+         "wses": [[float(w) for w in profile] for profile in hydraulics["wses"]]},
+        {"probabilities": [float(p) for p in stage_frequency["probabilities"]],
+         "stages": [float(s) for s in stage_frequency["stages"]],
+         "erl": float(stage_frequency["erl"])},
+        [float(s) for s in stages], int(impact_area_id), bool(deterministic))
+
+
 def alternative_comparison(without, with_):
     """With/without-project damage-reduction benefits.
 
