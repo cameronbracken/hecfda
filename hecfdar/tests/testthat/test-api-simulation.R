@@ -44,3 +44,19 @@ test_that("ead_simulation accepts an integer-valued frequency_stage spec", {
   expect_true(is.numeric(res$total_ead))
   expect_false(is.na(res$total_ead))
 })
+
+test_that("ead_simulation rejects both frequency input paths at once", {
+  fx = fx_read("compute", "impact_area_scenario_simulation_deterministic.json")
+  case = Filter(\(c) c$name == "compute_ead", fx$cases)[[1]]
+  args = fx_sim_args(case$construct)
+  args$frequency_stage = list(
+    probabilities = c(0.5, 0.2), stages = c(1, 2), erl = 50,
+    damage_category = "residential", asset_category = "Structure"
+  )
+  expect_error(
+    do.call(ead_simulation, c(args, list(
+      min_iterations = 1L, max_iterations = 1L, deterministic = TRUE
+    ))),
+    "not both"
+  )
+})

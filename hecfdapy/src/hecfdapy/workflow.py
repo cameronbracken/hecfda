@@ -27,6 +27,8 @@ def _as_sim_spec(sim):
     frequency_stage = sim.get("frequency_stage")
     if flow_frequency is None and frequency_stage is None:
         raise ValueError("each simulation needs flow_frequency + flow_stage or frequency_stage")
+    if flow_frequency is not None and frequency_stage is not None:
+        raise ValueError("supply flow_frequency + flow_stage or frequency_stage, not both")
     spec = {
         "impact_area_id": int(sim.get("impact_area_id", 1)),
         "stage_damage": [_normalize_curve(c) for c in sim["stage_damage"]],
