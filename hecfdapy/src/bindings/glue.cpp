@@ -670,6 +670,77 @@ static py::dict scenario_compute(py::list specs, int min_iterations, int max_ite
     return out;
 }
 
+// Public-API annualization (0.1.0, Task 4): two computed ScenarioResultsHandle objects -> EqAD
+// AlternativeResults, returned as an opaque AlternativeResultsHandle. MOVES OUT of the handles'
+// `results` pointees (annualization_compute's documented ownership contract) -- the Python
+// wrapper documents the handles as single-use. `future.is_none()` is the single-scenario case:
+// the same pointer is passed for base and future, matching the C# null-coalesce
+// (`computedResultsBaseYear ??= computedResultsFutureYear`) aliasing branch. Mirrors
+// hecfdar/src/glue.cpp's hecfda_annualization.
+static py::dict annualization(py::object base, py::object future, double discount_rate,
+                               int period_of_analysis, int alternative_id, int base_year,
+                               int future_year) {
+    using hecfda::model::alternatives::Alternative;
+
+    auto& base_handle = base.cast<ScenarioResultsHandle&>();
+    mm::ScenarioResults* base_ptr = base_handle.results.get();
+    mm::ScenarioResults* future_ptr = base_ptr;
+    if (!future.is_none()) {
+        auto& future_handle = future.cast<ScenarioResultsHandle&>();
+        future_ptr = future_handle.results.get();
+    }
+    auto result = std::make_unique<mm::AlternativeResults>(Alternative::annualization_compute(
+        discount_rate, period_of_analysis, alternative_id, base_ptr, future_ptr, base_year,
+        future_year));
+    if (result->is_null()) {
+        throw std::runtime_error(
+            "alternative_ead: invalid analysis years (future_year must fall inside the period "
+            "of analysis starting at base_year)");
+    }
+    py::dict out;
+    out["mean_eqad"] = result->sample_mean_eqad();
+    out["base_year_ead"] = result->sample_mean_base_year_ead();
+    out["future_year_ead"] = result->sample_mean_future_year_ead();
+    std::unique_ptr<AlternativeResultsHandle> handle(new AlternativeResultsHandle{std::move(result)});
+    out["handle"] = py::cast(handle.release(), py::return_value_policy::take_ownership);
+    return out;
+}
+
+// Public-API with/without benefits (0.1.0, Task 4): consumes (moves) the without and with
+// AlternativeResultsHandle objects into compute_alternative_comparison_report, then reports the
+// wildcard reduced means per with-project alternative. Mirrors hecfdar/src/glue.cpp's
+// hecfda_alt_comparison.
+static py::dict alt_comparison(py::object without, py::list with_handles) {
+    using hecfda::model::alternative_comparison_report::AlternativeComparisonReport;
+
+    auto& without_handle = without.cast<AlternativeResultsHandle&>();
+    std::vector<mm::AlternativeResults> withs;
+    std::vector<int> with_ids;
+    for (auto item : with_handles) {
+        auto& w = item.cast<AlternativeResultsHandle&>();
+        with_ids.push_back(w.results->alternative_id());
+        withs.push_back(std::move(*w.results));
+    }
+    auto results = AlternativeComparisonReport::compute_alternative_comparison_report(
+        std::move(*without_handle.results), std::move(withs));
+
+    py::list rows;
+    for (int id : with_ids) {
+        py::dict row;
+        row["alternative_id"] = id;
+        row["eqad_reduced"] = results.sample_mean_eqad_reduced(id);
+        row["base_year_ead_reduced"] = results.sample_mean_base_year_ead_reduced(id);
+        row["future_year_ead_reduced"] = results.sample_mean_future_year_ead_reduced(id);
+        row["with_project_eqad"] = results.sample_mean_with_project_eqad(id);
+        rows.append(row);
+    }
+    py::dict out;
+    out["reduced"] = rows;
+    out["without_base_year_ead"] = results.sample_mean_without_project_base_year_ead();
+    out["without_future_year_ead"] = results.sample_mean_without_project_future_year_ead();
+    return out;
+}
+
 // Public-API seeded sampling (0.1.0): see hecfdar/src/glue.cpp's hecfda_dist_sample.
 static std::vector<double> dist_sample(const std::string& type, const std::vector<double>& params,
                                         int n, int seed) {
@@ -728,4 +799,8 @@ PYBIND11_MODULE(_core, mod) {
     py::class_<AlternativeResultsHandle>(mod, "AlternativeResultsHandle");
     mod.def("scenario_compute", &scenario_compute, py::arg("specs"), py::arg("min_iterations"),
              py::arg("max_iterations"), py::arg("compute_is_deterministic"));
+    mod.def("annualization", &annualization, py::arg("base"), py::arg("future"),
+             py::arg("discount_rate"), py::arg("period_of_analysis"), py::arg("alternative_id"),
+             py::arg("base_year"), py::arg("future_year"));
+    mod.def("alt_comparison", &alt_comparison, py::arg("without"), py::arg("with_handles"));
 }

@@ -686,3 +686,84 @@ static hecfda::model::compute::ImpactAreaScenarioSimulation r_spec_to_simulation
         "handle"_nm = cpp11::external_pointer<ScenarioResults>(results.release())
     });
 }
+
+// Public-API annualization (0.1.0): two computed ScenarioResults handles -> EqAD
+// AlternativeResults. MOVES OUT of the scenario pointees (annualization_compute's documented
+// ownership contract) -- the R wrapper documents the handles as single-use. future == R_NilValue
+// is the single-scenario case: the same pointer is passed for base and future, matching the C#
+// null-coalesce (`computedResultsBaseYear ??= computedResultsFutureYear`) aliasing branch.
+[[cpp11::register]] cpp11::list hecfda_annualization(cpp11::sexp base_handle,
+                                                       cpp11::sexp future_handle,
+                                                       double discount_rate,
+                                                       int period_of_analysis, int alternative_id,
+                                                       int base_year, int future_year) {
+    using hecfda::model::alternatives::Alternative;
+    using hecfda::model::metrics::AlternativeResults;
+    using hecfda::model::metrics::ScenarioResults;
+
+    cpp11::external_pointer<ScenarioResults> base(base_handle);
+    ScenarioResults* base_ptr = base.get();
+    ScenarioResults* future_ptr = base_ptr;
+    if (future_handle != R_NilValue) {
+        cpp11::external_pointer<ScenarioResults> future(future_handle);
+        future_ptr = future.get();
+    }
+    auto result = std::make_unique<AlternativeResults>(Alternative::annualization_compute(
+        discount_rate, period_of_analysis, alternative_id, base_ptr, future_ptr, base_year,
+        future_year));
+    if (result->is_null()) {
+        throw std::runtime_error(
+            "alternative_ead: invalid analysis years (future_year must fall inside the period "
+            "of analysis starting at base_year)");
+    }
+    using namespace cpp11::literals;
+    return cpp11::writable::list({
+        "mean_eqad"_nm = result->sample_mean_eqad(),
+        "base_year_ead"_nm = result->sample_mean_base_year_ead(),
+        "future_year_ead"_nm = result->sample_mean_future_year_ead(),
+        "handle"_nm = cpp11::external_pointer<AlternativeResults>(result.release())
+    });
+}
+
+// Public-API with/without benefits (0.1.0): consumes (moves) the without and with
+// AlternativeResults handles into compute_alternative_comparison_report, then reports the
+// wildcard reduced means per with-project alternative.
+[[cpp11::register]] cpp11::list hecfda_alt_comparison(cpp11::sexp without_handle,
+                                                        cpp11::list with_handles) {
+    using hecfda::model::alternative_comparison_report::AlternativeComparisonReport;
+    using hecfda::model::metrics::AlternativeResults;
+
+    cpp11::external_pointer<AlternativeResults> without(without_handle);
+    std::vector<AlternativeResults> withs;
+    std::vector<int> with_ids;
+    for (R_xlen_t i = 0; i < with_handles.size(); ++i) {
+        cpp11::external_pointer<AlternativeResults> w(with_handles[i]);
+        with_ids.push_back(w->alternative_id());
+        withs.push_back(std::move(*w.get()));
+    }
+    auto results = AlternativeComparisonReport::compute_alternative_comparison_report(
+        std::move(*without.get()), std::move(withs));
+
+    cpp11::writable::integers alternative_ids;
+    cpp11::writable::doubles eqad_reduced;
+    cpp11::writable::doubles base_year_ead_reduced;
+    cpp11::writable::doubles future_year_ead_reduced;
+    cpp11::writable::doubles with_project_eqad;
+    for (int id : with_ids) {
+        alternative_ids.push_back(id);
+        eqad_reduced.push_back(results.sample_mean_eqad_reduced(id));
+        base_year_ead_reduced.push_back(results.sample_mean_base_year_ead_reduced(id));
+        future_year_ead_reduced.push_back(results.sample_mean_future_year_ead_reduced(id));
+        with_project_eqad.push_back(results.sample_mean_with_project_eqad(id));
+    }
+    using namespace cpp11::literals;
+    return cpp11::writable::list({
+        "alternative_id"_nm = alternative_ids,
+        "eqad_reduced"_nm = eqad_reduced,
+        "base_year_ead_reduced"_nm = base_year_ead_reduced,
+        "future_year_ead_reduced"_nm = future_year_ead_reduced,
+        "with_project_eqad"_nm = with_project_eqad,
+        "without_base_year_ead"_nm = results.sample_mean_without_project_base_year_ead(),
+        "without_future_year_ead"_nm = results.sample_mean_without_project_future_year_ead()
+    });
+}

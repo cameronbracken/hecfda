@@ -106,3 +106,70 @@ def scenario_results(simulations, min_iterations=100, max_iterations=100000,
     specs = [_as_sim_spec(sim) for sim in simulations]
     return _core.scenario_compute(specs, int(min_iterations), int(max_iterations),
                                   bool(deterministic))
+
+
+def eqad(base_value, base_year, future_value, future_year, period_of_analysis, discount_rate):
+    """Equivalent annual damage (EqAD) annualization (interpolate, present-value, PVIFA).
+
+    The HEC-FDA annualization math alone: linearly interpolate EAD between the base and most
+    likely future year, hold it flat to the end of the period of analysis, discount each year to
+    present value, and divide by the annuity factor (PVIFA). Wraps the ported
+    ``Alternative::ComputeEqad``.
+    """
+    return _core.alternative_compute_eqad(
+        float(base_value), int(base_year), float(future_value), int(future_year),
+        int(period_of_analysis), float(discount_rate))
+
+
+def _scenario_handle(x):
+    return x["handle"] if isinstance(x, dict) else x
+
+
+def alternative_ead(base, future=None, *, base_year, future_year, period_of_analysis,
+                    discount_rate, alternative_id=1):
+    """Annualize a base/future scenario pair into EqAD alternative results.
+
+    Builds equivalent annual damage (EqAD) results from a base-year and a future-year scenario
+    compute. Wraps the ported ``Alternative::AnnualizationCompute``. ``future=None`` reuses the
+    base scenario for both years (the single-scenario case). Consumes the scenario handles
+    (single use): annualization takes ownership of the underlying results, so a handle cannot be
+    used twice (recompute the scenario if needed).
+
+    Returns
+    -------
+    dict
+        ``{"mean_eqad", "base_year_ead", "future_year_ead", "handle"}`` -- ``handle`` is consumed
+        by :func:`alternative_comparison` (single-use).
+    """
+    return _core.annualization(
+        _scenario_handle(base), None if future is None else _scenario_handle(future),
+        float(discount_rate), int(period_of_analysis), int(alternative_id),
+        int(base_year), int(future_year))
+
+
+def alternative_comparison(without, with_):
+    """With/without-project damage-reduction benefits.
+
+    Subtracts each with-project alternative's damage distributions from the without-project
+    alternative's (empirical-distribution subtraction) and reports the mean reduced EqAD and
+    reduced base/future-year EAD per alternative. Wraps the ported
+    ``AlternativeComparisonReport``. Consumes the alternative handles (single use).
+
+    Parameters
+    ----------
+    without : dict
+        An :func:`alternative_ead` result (or its ``"handle"``): the without-project condition.
+    with_ : dict or list of dict
+        One :func:`alternative_ead` result or a list of them: the with-project alternatives.
+
+    Returns
+    -------
+    dict
+        ``{"reduced": [{"alternative_id", "eqad_reduced", "base_year_ead_reduced",
+        "future_year_ead_reduced", "with_project_eqad"}, ...], "without_base_year_ead",
+        "without_future_year_ead"}``
+    """
+    if isinstance(with_, dict):
+        with_ = [with_]
+    return _core.alt_comparison(_scenario_handle(without),
+                                [_scenario_handle(w) for w in with_])

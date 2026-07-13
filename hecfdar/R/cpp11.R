@@ -59,3 +59,11 @@ hecfda_ead_simulation <- function(spec, min_iterations, max_iterations, compute_
 hecfda_scenario_compute <- function(specs, min_iterations, max_iterations, compute_is_deterministic) {
   .Call(`_hecfdar_hecfda_scenario_compute`, specs, min_iterations, max_iterations, compute_is_deterministic)
 }
+
+hecfda_annualization <- function(base_handle, future_handle, discount_rate, period_of_analysis, alternative_id, base_year, future_year) {
+  .Call(`_hecfdar_hecfda_annualization`, base_handle, future_handle, discount_rate, period_of_analysis, alternative_id, base_year, future_year)
+}
+
+hecfda_alt_comparison <- function(without_handle, with_handles) {
+  .Call(`_hecfdar_hecfda_alt_comparison`, without_handle, with_handles)
+}

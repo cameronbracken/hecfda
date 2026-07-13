@@ -110,10 +110,26 @@ extern "C" SEXP _hecfdar_hecfda_scenario_compute(SEXP specs, SEXP min_iterations
     return cpp11::as_sexp(hecfda_scenario_compute(cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(specs), cpp11::as_cpp<cpp11::decay_t<int>>(min_iterations), cpp11::as_cpp<cpp11::decay_t<int>>(max_iterations), cpp11::as_cpp<cpp11::decay_t<bool>>(compute_is_deterministic)));
   END_CPP11
 }
+// glue.cpp
+cpp11::list hecfda_annualization(cpp11::sexp base_handle, cpp11::sexp future_handle, double discount_rate, int period_of_analysis, int alternative_id, int base_year, int future_year);
+extern "C" SEXP _hecfdar_hecfda_annualization(SEXP base_handle, SEXP future_handle, SEXP discount_rate, SEXP period_of_analysis, SEXP alternative_id, SEXP base_year, SEXP future_year) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(hecfda_annualization(cpp11::as_cpp<cpp11::decay_t<cpp11::sexp>>(base_handle), cpp11::as_cpp<cpp11::decay_t<cpp11::sexp>>(future_handle), cpp11::as_cpp<cpp11::decay_t<double>>(discount_rate), cpp11::as_cpp<cpp11::decay_t<int>>(period_of_analysis), cpp11::as_cpp<cpp11::decay_t<int>>(alternative_id), cpp11::as_cpp<cpp11::decay_t<int>>(base_year), cpp11::as_cpp<cpp11::decay_t<int>>(future_year)));
+  END_CPP11
+}
+// glue.cpp
+cpp11::list hecfda_alt_comparison(cpp11::sexp without_handle, cpp11::list with_handles);
+extern "C" SEXP _hecfdar_hecfda_alt_comparison(SEXP without_handle, SEXP with_handles) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(hecfda_alt_comparison(cpp11::as_cpp<cpp11::decay_t<cpp11::sexp>>(without_handle), cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(with_handles)));
+  END_CPP11
+}
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
+    {"_hecfdar_hecfda_alt_comparison",                  (DL_FUNC) &_hecfdar_hecfda_alt_comparison,                   2},
     {"_hecfdar_hecfda_alternative_compute_eqad",        (DL_FUNC) &_hecfdar_hecfda_alternative_compute_eqad,         6},
+    {"_hecfdar_hecfda_annualization",                   (DL_FUNC) &_hecfdar_hecfda_annualization,                    7},
     {"_hecfdar_hecfda_consequence_result",              (DL_FUNC) &_hecfdar_hecfda_consequence_result,               5},
     {"_hecfdar_hecfda_dist_eval",                       (DL_FUNC) &_hecfdar_hecfda_dist_eval,                        4},
     {"_hecfdar_hecfda_dist_sample",                     (DL_FUNC) &_hecfdar_hecfda_dist_sample,                      4},
