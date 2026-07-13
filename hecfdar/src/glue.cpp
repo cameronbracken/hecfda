@@ -639,3 +639,50 @@ static hecfda::model::compute::ImpactAreaScenarioSimulation r_spec_to_simulation
         "mean_aep"_nm = results.mean_aep(/*threshold_id=*/0)
     });
 }
+
+// Public-API scenario compute (0.1.0): N impact-area simulation specs -> one Scenario ->
+// ScenarioResults. The results object is move-only and is consumed later by
+// hecfda_annualization, so it is heap-allocated and handed to R as an external pointer
+// (single-use: annualization moves out of the pointee; see alternative_ead's R docs).
+[[cpp11::register]] cpp11::list hecfda_scenario_compute(cpp11::list specs, int min_iterations,
+                                                          int max_iterations,
+                                                          bool compute_is_deterministic) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::metrics::ScenarioResults;
+    using hecfda::model::scenarios::Scenario;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    std::vector<ImpactAreaScenarioSimulation> sims;
+    for (R_xlen_t i = 0; i < specs.size(); ++i) {
+        sims.push_back(r_spec_to_simulation(cpp11::list(specs[i]), min_iterations, max_iterations));
+    }
+    Scenario scenario(std::move(sims));
+    ConvergenceCriteria cc(min_iterations, max_iterations);
+    auto* results = new ScenarioResults(scenario.compute(cc, compute_is_deterministic));
+
+    using hecfda::model::metrics::ConsequenceType;
+    cpp11::writable::integers impact_area_ids;
+    cpp11::writable::strings damage_categories;
+    cpp11::writable::strings asset_categories;
+    cpp11::writable::doubles mean_ead;
+    for (int id : results->get_impact_area_ids(ConsequenceType::Damage)) {
+        for (const auto& dc : results->get_damage_categories()) {
+            for (const auto& ac : results->get_asset_categories()) {
+                impact_area_ids.push_back(id);
+                damage_categories.push_back(dc);
+                asset_categories.push_back(ac);
+                mean_ead.push_back(results->sample_mean_expected_annual_consequences(id, dc, ac));
+            }
+        }
+    }
+    double total = results->sample_mean_expected_annual_consequences();
+    using namespace cpp11::literals;
+    return cpp11::writable::list({
+        "impact_area_id"_nm = impact_area_ids,
+        "damage_category"_nm = damage_categories,
+        "asset_category"_nm = asset_categories,
+        "mean_ead"_nm = mean_ead,
+        "total_ead"_nm = total,
+        "handle"_nm = cpp11::external_pointer<ScenarioResults>(results)
+    });
+}

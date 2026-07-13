@@ -16,6 +16,38 @@ def _normalize_curve(curve):
     return out
 
 
+def _as_sim_spec(sim):
+    """Assemble one ``_core.ead_simulation``/``_core.scenario_compute`` spec dict from a `sim`
+    dict shaped like ``ead_simulation``'s arguments (minus the iteration controls):
+    ``impact_area_id``, ``flow_frequency``, ``flow_stage``, ``frequency_stage``, ``stage_damage``,
+    ``threshold``, ``levee``. Shared by ``ead_simulation`` (Task 2) and ``scenario_results``
+    (Task 3) so the spec-assembly logic exists in exactly one place.
+    """
+    flow_frequency = sim.get("flow_frequency")
+    frequency_stage = sim.get("frequency_stage")
+    if flow_frequency is None and frequency_stage is None:
+        raise ValueError("each simulation needs flow_frequency + flow_stage or frequency_stage")
+    spec = {
+        "impact_area_id": int(sim.get("impact_area_id", 1)),
+        "stage_damage": [_normalize_curve(c) for c in sim["stage_damage"]],
+    }
+    if flow_frequency is not None:
+        spec["flow_frequency"] = {"dist": flow_frequency["dist"],
+                                  "params": [float(v) for v in flow_frequency["params"]]}
+        spec["flow_stage"] = _normalize_curve(sim["flow_stage"])
+    if frequency_stage is not None:
+        spec["frequency_stage"] = frequency_stage
+    threshold = sim.get("threshold")
+    if threshold is not None:
+        spec["threshold"] = {"id": int(threshold["id"]), "value": float(threshold["value"])}
+    levee = sim.get("levee")
+    if levee is not None:
+        lv = _normalize_curve({k: v for k, v in levee.items() if k != "top_of_levee_elevation"})
+        lv["top_of_levee_elevation"] = float(levee["top_of_levee_elevation"])
+        spec["levee"] = lv
+    return spec
+
+
 def ead_simulation(stage_damage, impact_area_id=1, flow_frequency=None, flow_stage=None,
                    frequency_stage=None, threshold=None, levee=None, min_iterations=100,
                    max_iterations=100000, deterministic=False):
@@ -55,23 +87,22 @@ def ead_simulation(stage_damage, impact_area_id=1, flow_frequency=None, flow_sta
         ``{"ead": [{"damage_category", "asset_category", "mean_ead"}, ...], "total_ead",
         "mean_aep"}``
     """
-    if flow_frequency is None and frequency_stage is None:
-        raise ValueError("supply either flow_frequency + flow_stage or frequency_stage")
-    spec = {
-        "impact_area_id": int(impact_area_id),
-        "stage_damage": [_normalize_curve(c) for c in stage_damage],
-    }
-    if flow_frequency is not None:
-        spec["flow_frequency"] = {"dist": flow_frequency["dist"],
-                                  "params": [float(v) for v in flow_frequency["params"]]}
-        spec["flow_stage"] = _normalize_curve(flow_stage)
-    if frequency_stage is not None:
-        spec["frequency_stage"] = frequency_stage
-    if threshold is not None:
-        spec["threshold"] = {"id": int(threshold["id"]), "value": float(threshold["value"])}
-    if levee is not None:
-        lv = _normalize_curve({k: v for k, v in levee.items() if k != "top_of_levee_elevation"})
-        lv["top_of_levee_elevation"] = float(levee["top_of_levee_elevation"])
-        spec["levee"] = lv
+    spec = _as_sim_spec({
+        "impact_area_id": impact_area_id, "flow_frequency": flow_frequency,
+        "flow_stage": flow_stage, "frequency_stage": frequency_stage,
+        "stage_damage": stage_damage, "threshold": threshold, "levee": levee,
+    })
     return _core.ead_simulation(spec, int(min_iterations), int(max_iterations),
                                 bool(deterministic))
+
+
+def scenario_results(simulations, min_iterations=100, max_iterations=100000,
+                     deterministic=False):
+    """Compute a scenario (impact-area fan-out); returns a summary and a single-use handle.
+
+    See :func:`ead_simulation` for the per-simulation spec fields. The returned ``handle`` feeds
+    :func:`alternative_ead`; annualization takes ownership of it (single use).
+    """
+    specs = [_as_sim_spec(sim) for sim in simulations]
+    return _core.scenario_compute(specs, int(min_iterations), int(max_iterations),
+                                  bool(deterministic))

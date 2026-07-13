@@ -18,6 +18,32 @@ normalize_curve = function(curve) {
   curve
 }
 
+`%||%` = function(a, b) if (is.null(a)) b else a
+
+# Internal: assemble one `hecfda_*_compute` simulation spec from a `sim` list shaped like
+# `ead_simulation`'s arguments (minus the iteration controls: `impact_area_id`, `flow_frequency`,
+# `flow_stage`, `frequency_stage`, `stage_damage`, `threshold`, `levee`). Shared by `ead_simulation`
+# (Task 2) and `scenario_results` (Task 3) so the spec-assembly logic exists in exactly one place.
+as_sim_spec = function(sim) {
+  if (is.null(sim$flow_frequency) && is.null(sim$frequency_stage)) {
+    stop("each simulation needs flow_frequency + flow_stage or frequency_stage")
+  }
+  list(
+    impact_area_id = as.integer(sim$impact_area_id %||% 1L),
+    flow_frequency = if (!is.null(sim$flow_frequency)) {
+      list(dist = sim$flow_frequency$dist, params = as.double(sim$flow_frequency$params))
+    },
+    flow_stage = if (!is.null(sim$flow_stage)) normalize_curve(sim$flow_stage),
+    frequency_stage = sim$frequency_stage,
+    stage_damage = lapply(sim$stage_damage, normalize_curve),
+    threshold = sim$threshold,
+    levee = if (!is.null(sim$levee)) {
+      c(normalize_curve(sim$levee[setdiff(names(sim$levee), "top_of_levee_elevation")]),
+        list(top_of_levee_elevation = as.double(sim$levee$top_of_levee_elevation)))
+    }
+  )
+}
+
 #' Seeded Monte Carlo expected annual damage (EAD) simulation
 #'
 #' The HEC-FDA impact-area EAD compute: assemble a frequency function, a stage transform, and one
@@ -66,23 +92,11 @@ ead_simulation = function(stage_damage, impact_area_id = 1L, flow_frequency = NU
                           flow_stage = NULL, frequency_stage = NULL, threshold = NULL,
                           levee = NULL, min_iterations = 100L, max_iterations = 100000L,
                           deterministic = FALSE) {
-  if (is.null(flow_frequency) && is.null(frequency_stage)) {
-    stop("supply either flow_frequency + flow_stage or frequency_stage")
-  }
-  spec = list(
-    impact_area_id = as.integer(impact_area_id),
-    flow_frequency = if (!is.null(flow_frequency)) {
-      list(dist = flow_frequency$dist, params = as.double(flow_frequency$params))
-    },
-    flow_stage = if (!is.null(flow_stage)) normalize_curve(flow_stage),
-    frequency_stage = frequency_stage,
-    stage_damage = lapply(stage_damage, normalize_curve),
-    threshold = threshold,
-    levee = if (!is.null(levee)) {
-      c(normalize_curve(levee[setdiff(names(levee), "top_of_levee_elevation")]),
-        list(top_of_levee_elevation = as.double(levee$top_of_levee_elevation)))
-    }
-  )
+  spec = as_sim_spec(list(
+    impact_area_id = impact_area_id, flow_frequency = flow_frequency, flow_stage = flow_stage,
+    frequency_stage = frequency_stage, stage_damage = stage_damage, threshold = threshold,
+    levee = levee
+  ))
   raw = hecfda_ead_simulation(spec, as.integer(min_iterations), as.integer(max_iterations),
                               isTRUE(deterministic))
   list(

@@ -34,6 +34,18 @@ namespace ms = hecfda::model::structures;
 namespace mm = hecfda::model::metrics;
 namespace sd = hecfda::model::stage_damage;
 
+// Opaque handles (0.1.0, Task 3): the move-only metrics results types
+// (ScenarioResults/AlternativeResults) can't cross the pybind11 boundary by value, so each handle
+// owns one via unique_ptr and is registered as a class with no methods -- pure single-use tokens
+// passed from scenario_compute() into Task 4's alternative_ead(). Reused (not re-declared) by
+// Task 4.
+struct ScenarioResultsHandle {
+    std::unique_ptr<mm::ScenarioResults> results;
+};
+struct AlternativeResultsHandle {
+    std::unique_ptr<mm::AlternativeResults> results;
+};
+
 static std::vector<double> rng_sequence(int seed, int n) {
     hecfda::model::compute::RandomProvider rp(seed);
     return rp.next_random_sequence(n);
@@ -616,6 +628,48 @@ static py::dict ead_simulation(py::dict spec, int min_iterations, int max_iterat
     return out;
 }
 
+// Public-API scenario compute (0.1.0): N impact-area simulation specs -> one Scenario ->
+// ScenarioResults. The results object is move-only and is consumed later by annualization
+// (Task 4), so it is heap-allocated into a ScenarioResultsHandle and handed back as an opaque
+// object (single-use: annualization moves out of the pointee; see alternative_ead's docs).
+// Mirrors hecfdar/src/glue.cpp's hecfda_scenario_compute loop-for-loop.
+static py::dict scenario_compute(py::list specs, int min_iterations, int max_iterations,
+                                  bool compute_is_deterministic) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::metrics::ScenarioResults;
+    using hecfda::model::scenarios::Scenario;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    std::vector<ImpactAreaScenarioSimulation> sims;
+    for (auto item : specs) {
+        sims.push_back(py_spec_to_simulation(item.cast<py::dict>(), min_iterations, max_iterations));
+    }
+    Scenario scenario(std::move(sims));
+    ConvergenceCriteria cc(min_iterations, max_iterations);
+    auto* handle = new ScenarioResultsHandle{
+        std::make_unique<mm::ScenarioResults>(scenario.compute(cc, compute_is_deterministic))};
+
+    using hecfda::model::metrics::ConsequenceType;
+    py::list rows;
+    for (int id : handle->results->get_impact_area_ids(ConsequenceType::Damage)) {
+        for (const auto& dc : handle->results->get_damage_categories()) {
+            for (const auto& ac : handle->results->get_asset_categories()) {
+                py::dict row;
+                row["impact_area_id"] = id;
+                row["damage_category"] = dc;
+                row["asset_category"] = ac;
+                row["mean_ead"] = handle->results->sample_mean_expected_annual_consequences(id, dc, ac);
+                rows.append(row);
+            }
+        }
+    }
+    py::dict out;
+    out["summary"] = rows;
+    out["total_ead"] = handle->results->sample_mean_expected_annual_consequences();
+    out["handle"] = py::cast(handle, py::return_value_policy::take_ownership);
+    return out;
+}
+
 // Public-API seeded sampling (0.1.0): see hecfdar/src/glue.cpp's hecfda_dist_sample.
 static std::vector<double> dist_sample(const std::string& type, const std::vector<double>& params,
                                         int n, int seed) {
@@ -668,5 +722,10 @@ PYBIND11_MODULE(_core, mod) {
     mod.def("dist_sample", &dist_sample, py::arg("dist"), py::arg("params"), py::arg("n"),
              py::arg("seed"));
     mod.def("ead_simulation", &ead_simulation, py::arg("spec"), py::arg("min_iterations"),
+             py::arg("max_iterations"), py::arg("compute_is_deterministic"));
+
+    py::class_<ScenarioResultsHandle>(mod, "ScenarioResultsHandle");
+    py::class_<AlternativeResultsHandle>(mod, "AlternativeResultsHandle");
+    mod.def("scenario_compute", &scenario_compute, py::arg("specs"), py::arg("min_iterations"),
              py::arg("max_iterations"), py::arg("compute_is_deterministic"));
 }

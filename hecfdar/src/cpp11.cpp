@@ -103,6 +103,13 @@ extern "C" SEXP _hecfdar_hecfda_ead_simulation(SEXP spec, SEXP min_iterations, S
     return cpp11::as_sexp(hecfda_ead_simulation(cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(spec), cpp11::as_cpp<cpp11::decay_t<int>>(min_iterations), cpp11::as_cpp<cpp11::decay_t<int>>(max_iterations), cpp11::as_cpp<cpp11::decay_t<bool>>(compute_is_deterministic)));
   END_CPP11
 }
+// glue.cpp
+cpp11::list hecfda_scenario_compute(cpp11::list specs, int min_iterations, int max_iterations, bool compute_is_deterministic);
+extern "C" SEXP _hecfdar_hecfda_scenario_compute(SEXP specs, SEXP min_iterations, SEXP max_iterations, SEXP compute_is_deterministic) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(hecfda_scenario_compute(cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(specs), cpp11::as_cpp<cpp11::decay_t<int>>(min_iterations), cpp11::as_cpp<cpp11::decay_t<int>>(max_iterations), cpp11::as_cpp<cpp11::decay_t<bool>>(compute_is_deterministic)));
+  END_CPP11
+}
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
@@ -116,6 +123,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_hecfdar_hecfda_paired_f",                        (DL_FUNC) &_hecfdar_hecfda_paired_f,                         4},
     {"_hecfdar_hecfda_rng_sequence",                    (DL_FUNC) &_hecfdar_hecfda_rng_sequence,                     2},
     {"_hecfdar_hecfda_scenario",                        (DL_FUNC) &_hecfdar_hecfda_scenario,                        17},
+    {"_hecfdar_hecfda_scenario_compute",                (DL_FUNC) &_hecfdar_hecfda_scenario_compute,                 4},
     {"_hecfdar_hecfda_structure",                       (DL_FUNC) &_hecfdar_hecfda_structure,                       32},
     {"_hecfdar_hecfda_system_performance_results",      (DL_FUNC) &_hecfdar_hecfda_system_performance_results,       7},
     {"_hecfdar_hecfda_upd_sample_integrate",            (DL_FUNC) &_hecfdar_hecfda_upd_sample_integrate,             4},
