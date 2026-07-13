@@ -44,3 +44,6 @@ site/objects.json
 compile_commands.json
 core/.cache/
 .cache/
+
+# pixi
+.pixi/
