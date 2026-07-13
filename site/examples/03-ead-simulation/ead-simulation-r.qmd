@@ -47,11 +47,11 @@ sim = list(
 res = do.call(ead_simulation, c(sim, list(
   min_iterations = 1L, max_iterations = 1L, deterministic = TRUE
 )))
-res$ead
+res$total_ead
 res$mean_aep
 ```
 
-`res$ead` is 150000 -- the HEC-FDA deterministic oracle for this construct. `res$mean_aep` is the
+`res$total_ead` is 150000 -- the HEC-FDA deterministic oracle for this construct. `res$mean_aep` is the
 mean annual exceedance probability of the automatically-selected default performance threshold
 (HEC-FDA always derives one from the damage-frequency function itself, even with no threshold
 supplied): here it comes out to about 0.95, meaning this pipeline's own damage-producing range is
@@ -74,7 +74,7 @@ sim_levee = c(sim, list(levee = list(
 res_levee = do.call(ead_simulation, c(sim_levee, list(
   min_iterations = 1L, max_iterations = 1L, deterministic = TRUE
 )))
-res_levee$ead
+res_levee$total_ead
 ```
 
 Adding the levee cuts expected annual damage from 150000 to 84187.50 -- HEC-FDA's own oracle for
@@ -112,8 +112,8 @@ frequency -> stage -> damage -> integrate pipeline.
 
 ## Convergence
 
-Run the same construct at increasing iteration counts and watch the seeded mean settle toward the
-deterministic value:
+Run the same construct at increasing iteration counts and watch the seeded mean settle toward its
+own limit:
 
 ```{r}
 iters = c(100L, 1000L, 10000L)
@@ -128,17 +128,24 @@ data.frame(iterations = iters, mean_ead = mean_ead)
 ```
 
 ```{r}
-#| fig-cap: "Mean EAD vs. Monte Carlo iterations, settling toward the deterministic value"
+#| fig-cap: "Mean EAD vs. Monte Carlo iterations, flattening near 135600 -- below the deterministic
+#|   150000 (dashed, shown for reference)"
 plot(iters, mean_ead, type = "b", log = "x", col = "#588157", lwd = 2, pch = 16,
      xlab = "iterations", ylab = "mean EAD ($)", ylim = range(c(mean_ead, 150000)))
 abline(h = 150000, col = "#cb997e", lty = 2, lwd = 2)
-legend("bottomright", legend = c("seeded Monte Carlo", "deterministic (150000)"),
+legend("bottomright", legend = c("seeded Monte Carlo", "deterministic (150000, reference only)"),
        col = c("#588157", "#cb997e"), lty = c(1, 2), lwd = 2, bty = "n")
 ```
 
-More iterations narrow the histogram's sampling noise around the same mean the deterministic pass
-computes directly. 150000 isn't a different answer -- it's the noise-free limit the seeded compute
-is estimating.
+The sweep flattens near 135600, not 150000. That gap is not sampling noise, and more iterations
+will not close it. `deterministic = TRUE` collapses every input distribution to its mean before any
+curve runs, so the deterministic pass evaluates the pipeline once on those mean values. The seeded
+Monte Carlo does the opposite: it samples first and evaluates the curves per draw, then averages
+the results. The stage-damage curve is nonlinear -- flat at 600000 for any stage of 15 or more --
+so the mean of the damage is not the damage of the mean: `E[f(X)] != f(E[X])`. Averaging before a
+nonlinear curve and averaging after it are different questions with different correct answers.
+150000 is the deterministic answer; the Monte Carlo converges to its own limit near 135600, and
+both are right.
 
 ## Why the numbers are trustworthy
 
