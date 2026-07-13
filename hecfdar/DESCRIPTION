@@ -1,13 +1,17 @@
 Package: hecfdar
 Title: Flood Damage Analysis Compute Engine (HEC-FDA Port)
-Version: 0.0.0.9000
+Version: 0.1.0
 Authors@R: person("Cameron", "Bracken", email = "cameron.bracken@pm.me", role = c("aut","cre"))
 Description: R interface to a C++17 port of the HEC-FDA flood damage analysis
     compute engine. Reproduces the upstream computations with seeded reproducibility
     shared with the Python package.
 License: file LICENSE
 Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 8.0.0
 SystemRequirements: C++17
 LinkingTo: cpp11
 Suggests: testthat (>= 3.0.0), jsonlite
 Config/testthat/edition: 3
+URL: https://github.com/cameronbracken/hecfda, https://cameronbracken.github.io/hecfda/
+BugReports: https://github.com/cameronbracken/hecfda/issues

@@ -10,6 +10,7 @@ dist/
 hecfdar.Rcheck/
 hecfdar_*.tar.gz
 .Rhistory
+hecfdar/docs/
 
 # Python
 __pycache__/

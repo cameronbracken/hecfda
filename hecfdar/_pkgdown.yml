@@ -1,0 +1,37 @@
+url: https://cameronbracken.github.io/hecfda/r
+
+template:
+  bootstrap: 5
+  bootswatch: flatly
+  light-switch: true
+  bslib:
+    primary: "#6b7f3f"
+    # flatly's navbar is ~72px tall (--bs-navbar-padding-y: 1rem), not the 56px
+    # pkgdown assumes; without this the fixed navbar overlaps the top of the
+    # home-page intro text.
+    pkgdown-nav-height: 100px
+
+navbar:
+  structure:
+    left: [reference]
+    right: [mainsite, search, github, lightswitch]
+  components:
+    mainsite:
+      text: Documentation home
+      href: https://cameronbracken.github.io/hecfda/
+
+home:
+  links:
+    - text: Worked examples (main site)
+      href: https://cameronbracken.github.io/hecfda/examples/
+    - text: Python package reference
+      href: https://cameronbracken.github.io/hecfda/reference/
+
+reference:
+  - title: Workflow
+    contents: [stage_damage, ead_simulation, scenario_results, alternative_ead,
+               alternative_comparison, eqad]
+  - title: Distributions
+    contents: [dist_pdf, dist_cdf, dist_quantile, dist_sample]
+  - title: Reproducibility
+    contents: [rng_sequence]
