@@ -1,0 +1,15 @@
+{
+  "hash": "72fe11ebd2d68b29331fa1f5e245c473",
+  "result": {
+    "engine": "knitr",
+    "markdown": "---\ntitle: \"Getting started (R)\"\n---\n\nhecfda ports the numerical core of USACE HEC-FDA to C++ with R and Python packages on top.\nThis example installs the package, draws from the seeded generator, and evaluates a\ndistribution. The draws below are identical in R, Python, and the upstream C#, because all\nthree run the same algorithm: .NET's seeded `System.Random`.\n\n## Install\n\n\n::: {.cell}\n\n```{.r .cell-code}\n# install.packages(\"pak\")\npak::pak(\"cameronbracken/hecfda/hecfdar\")\n```\n:::\n\n\n## Seeded reproducibility\n\n\n::: {.cell}\n\n```{.r .cell-code}\nlibrary(hecfdar)\nrng_sequence(seed = 1234L, n = 5L)\n```\n\n::: {.cell-output .cell-output-stdout}\n\n```\n[1] 0.3990810 0.8958995 0.3192029 0.9467375 0.3394360\n```\n\n\n:::\n:::\n\n\nThe same call in Python (`fda.rng_sequence(seed=1234, n=5)`) returns the same five numbers, and\nso does `new Random(1234).NextDouble()` in .NET. Every Monte Carlo compute in hecfda draws from\nthis generator with fixed per-curve seeds, so full simulation results carry the same guarantee.\n\n## A first distribution\n\n\n::: {.cell}\n\n```{.r .cell-code}\ndist_cdf(\"Normal\", c(0, 1, 1), 0) # 0.5\n```\n\n::: {.cell-output .cell-output-stdout}\n\n```\n[1] 0.5\n```\n\n\n:::\n\n```{.r .cell-code}\ndist_quantile(\"LogPearsonIII\", c(3.3, 0.254, 0.0925, 99), 1 - 0.01) # the \"100-year\" quantile\n```\n\n::: {.cell-output .cell-output-stdout}\n\n```\n[1] 8095.733\n```\n\n\n:::\n:::\n\n\n## A first EAD\n\nThe smallest useful compute: a uniform flow frequency, a linear flow-stage transform, one\nstage-damage curve, one deterministic pass. This reproduces the HEC-FDA deterministic oracle of\n150000 (the mean of the 600000-damage plateau over the frequency curve).\n\n\n::: {.cell}\n\n```{.r .cell-code}\nres = ead_simulation(\n  stage_damage = list(list(\n    x = c(0, 15, 30), dist = \"Uniform\",\n    params = list(c(0, 0, 10), c(0, 600000, 10), c(0, 600000, 10)),\n    damage_category = \"residential\", asset_category = \"Structure\"\n  )),\n  flow_frequency = list(dist = \"Uniform\", params = c(0, 100000, 1000)),\n  flow_stage = list(x = c(0, 100000), dist = \"Uniform\",\n                    params = list(c(0, 0, 10), c(0, 30, 10))),\n  min_iterations = 1L, max_iterations = 1L, deterministic = TRUE\n)\nres$total_ead\n```\n\n::: {.cell-output .cell-output-stdout}\n\n```\n[1] 150000\n```\n\n\n:::\n:::\n\n",
+    "supporting": [],
+    "filters": [
+      "rmarkdown/pagebreak.lua"
+    ],
+    "includes": {},
+    "engineDependencies": {},
+    "preserve": {},
+    "postProcess": true
+  }
+}
