@@ -658,7 +658,7 @@ static hecfda::model::compute::ImpactAreaScenarioSimulation r_spec_to_simulation
     }
     Scenario scenario(std::move(sims));
     ConvergenceCriteria cc(min_iterations, max_iterations);
-    auto* results = new ScenarioResults(scenario.compute(cc, compute_is_deterministic));
+    auto results = std::make_unique<ScenarioResults>(scenario.compute(cc, compute_is_deterministic));
 
     using hecfda::model::metrics::ConsequenceType;
     cpp11::writable::integers impact_area_ids;
@@ -683,6 +683,6 @@ static hecfda::model::compute::ImpactAreaScenarioSimulation r_spec_to_simulation
         "asset_category"_nm = asset_categories,
         "mean_ead"_nm = mean_ead,
         "total_ead"_nm = total,
-        "handle"_nm = cpp11::external_pointer<ScenarioResults>(results)
+        "handle"_nm = cpp11::external_pointer<ScenarioResults>(results.release())
     });
 }

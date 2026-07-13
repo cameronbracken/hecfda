@@ -646,8 +646,8 @@ static py::dict scenario_compute(py::list specs, int min_iterations, int max_ite
     }
     Scenario scenario(std::move(sims));
     ConvergenceCriteria cc(min_iterations, max_iterations);
-    auto* handle = new ScenarioResultsHandle{
-        std::make_unique<mm::ScenarioResults>(scenario.compute(cc, compute_is_deterministic))};
+    std::unique_ptr<ScenarioResultsHandle> handle(new ScenarioResultsHandle{
+        std::make_unique<mm::ScenarioResults>(scenario.compute(cc, compute_is_deterministic))});
 
     using hecfda::model::metrics::ConsequenceType;
     py::list rows;
@@ -666,7 +666,7 @@ static py::dict scenario_compute(py::list specs, int min_iterations, int max_ite
     py::dict out;
     out["summary"] = rows;
     out["total_ead"] = handle->results->sample_mean_expected_annual_consequences();
-    out["handle"] = py::cast(handle, py::return_value_policy::take_ownership);
+    out["handle"] = py::cast(handle.release(), py::return_value_policy::take_ownership);
     return out;
 }
 
