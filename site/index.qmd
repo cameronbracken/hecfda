@@ -1,0 +1,95 @@
+---
+title: "hecfda"
+toc: false
+---
+
+hecfda is an (unofficial) C++17 port of the numerical core of
+[HEC-FDA](https://github.com/HydrologicEngineeringCenter/HEC-FDA), the flood damage-reduction
+analysis tool from the USACE
+[Hydrologic Engineering Center](https://github.com/HydrologicEngineeringCenter) (HEC). One shared
+C++ core is bound into an R package (`hecfdar`) and a Python package (`hecfdapy`), so a
+stage-frequency curve, a structure inventory, and a seeded Monte Carlo simulation all produce
+identical results in either language, matching the upstream C#.
+
+The full pipeline is ported: stage-damage curves from a structure inventory, the seeded Monte
+Carlo expected annual damage (EAD) simulation, scenarios across impact areas, equivalent annual
+damage (EqAD) annualization, and with/without-project benefits.
+
+See the [porting status page](status.qmd) for what is implemented and what is deliberately out of
+scope (GIS, terrain, persistence, and UI layers are not part of this port).
+
+## Quick start
+
+Both packages run the same seeded Monte Carlo engine, so the deterministic HEC-FDA oracle value
+150000 comes back identically in R and Python.
+
+::: {.panel-tabset}
+
+## Python
+
+```python
+import hecfdapy as fda
+
+res = fda.ead_simulation(
+    stage_damage=[{
+        "x": [0, 15, 30], "dist": "Uniform",
+        "params": [[0, 0, 10], [0, 600000, 10], [0, 600000, 10]],
+        "damage_category": "residential", "asset_category": "Structure",
+    }],
+    flow_frequency={"dist": "Uniform", "params": [0, 100000, 1000]},
+    flow_stage={
+        "x": [0, 100000], "dist": "Uniform",
+        "params": [[0, 0, 10], [0, 30, 10]],
+    },
+    min_iterations=1, max_iterations=1, deterministic=True,
+)
+res["total_ead"]  # 150000
+```
+
+## R
+
+```r
+library(hecfdar)
+
+res = ead_simulation(
+  stage_damage = list(list(
+    x = c(0, 15, 30), dist = "Uniform",
+    params = list(c(0, 0, 10), c(0, 600000, 10), c(0, 600000, 10)),
+    damage_category = "residential", asset_category = "Structure"
+  )),
+  flow_frequency = list(dist = "Uniform", params = c(0, 100000, 1000)),
+  flow_stage = list(
+    x = c(0, 100000), dist = "Uniform",
+    params = list(c(0, 0, 10), c(0, 30, 10))
+  ),
+  min_iterations = 1L, max_iterations = 1L, deterministic = TRUE
+)
+res$total_ead  # 150000
+```
+
+:::
+
+## Install
+
+Both packages are pre-release and install directly from GitHub. They compile the shared core
+from source, so a C++17 compiler is required (Xcode command-line tools on macOS, gcc/clang on
+Linux, Rtools on Windows for R).
+
+```bash
+pip install "git+https://github.com/cameronbracken/hecfda.git#subdirectory=hecfdapy"
+```
+
+```r
+# install.packages("pak")
+pak::pak("cameronbracken/hecfda/hecfdar")
+```
+
+Releases on PyPI and CRAN are planned; these instructions will switch to plain `pip install` /
+`install.packages()` when they land.
+
+## Learn more
+
+- [Worked examples](examples/index.qmd), each shown in both Python and R and checked against the
+  upstream C# outputs.
+- [Python API reference](reference/index.qmd)
+- [R API reference](r/index.html)

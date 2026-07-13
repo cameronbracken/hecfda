@@ -1,0 +1,107 @@
+---
+title: "Distributions (R)"
+---
+
+```{r}
+#| include: false
+library(hecfdar)
+```
+
+hecfda's C++ core ports all 13 distribution families from `HEC.FDA.Statistics`. Every family is
+addressed the same way: a name string and a numeric parameter vector, in the order the core
+factory expects (the same order the `fixtures/distributions/*.json` oracle files use). One
+generic set of functions covers all of them: `dist_pdf()`, `dist_cdf()`, `dist_quantile()`, and
+`dist_sample()`.
+
+Nine families are reachable this way, through the generic factory dispatch:
+
+| Family | Name string | Parameter order | Notes |
+|---|---|---|---|
+| Normal | `"Normal"` | `mean, sd, sample_size` | |
+| Uniform | `"Uniform"` | `min, max, sample_size` | |
+| Triangular | `"Triangular"` | `min, most_likely, max, sample_size` | |
+| Deterministic | `"Deterministic"` | `value` | a point mass |
+| LogNormal | `"LogNormal"` | `mean, sd, sample_size` | moments of the natural-log-scale data |
+| TruncatedNormal | `"TruncatedNormal"` | `mean, sd, min, max, sample_size` | |
+| TruncatedLogNormal | `"TruncatedLogNormal"` | `mean, sd, min, max, sample_size` | moments of the natural-log-scale data |
+| LogPearsonIII | `"LogPearsonIII"` | `mean, sd, skew, sample_size` | moments of the log10-scale data; the flood-frequency workhorse |
+| TruncatedLogPearson3 | `"TruncatedLogPearson3"` | `mean, sd, skew, min, max, sample_size` | moments of the log10-scale data |
+
+Four of the 13 families are not on this list, and calling `dist_pdf()` with any of their names
+raises an error rather than constructing one. `Gamma`, `ShiftedGamma`, and `PearsonIII` are
+internal helper classes in the C++ core, not members of the `IDistribution` factory, so they have
+no name string at all. `Empirical` is a full `IDistribution` member, but is not constructible by
+name through the factory: it is built from data (a histogram or a set of quantiles), not from a
+short parameter vector, so it has its own construction path rather than a `dist_pdf()`-style
+entry point. See the [porting status page](../../status.qmd) for where each of these lives.
+
+## Density, CDF, and quantile
+
+Two families illustrate the range hecfda covers: `Normal`, a light-tailed, symmetric distribution,
+and `LogPearsonIII`, the heavy-tailed flood-frequency distribution HEC-FDA uses for annual peak
+flows. Both plots below evaluate `dist_pdf()`, `dist_cdf()`, and `dist_quantile()` over a grid and
+draw the three curves in the same earth-tone palette used throughout these examples.
+
+```{r}
+#| fig-cap: "Normal(mean = 0, sd = 1)"
+x = seq(-4, 4, length.out = 200)
+p = seq(0.001, 0.999, length.out = 200)
+params = c(0, 1, 1)
+
+par(mfrow = c(1, 3))
+plot(x, dist_pdf("Normal", params, x), type = "l", col = "#6b705c", lwd = 2,
+     xlab = "x", ylab = "density", main = "pdf")
+plot(x, dist_cdf("Normal", params, x), type = "l", col = "#a5a58d", lwd = 2,
+     xlab = "x", ylab = "probability", main = "cdf")
+plot(p, dist_quantile("Normal", params, p), type = "l", col = "#cb997e", lwd = 2,
+     xlab = "probability", ylab = "x", main = "quantile")
+```
+
+```{r}
+#| fig-cap: "LogPearsonIII(mean = 3.3, sd = 0.254, skew = 0.0925, sample_size = 99)"
+x = seq(100, 12000, length.out = 200)
+p = seq(0.01, 0.99, length.out = 200)
+params = c(3.3, 0.254, 0.0925, 99)
+
+par(mfrow = c(1, 3))
+plot(x, dist_pdf("LogPearsonIII", params, x), type = "l", col = "#6b705c", lwd = 2,
+     xlab = "x", ylab = "density", main = "pdf")
+plot(x, dist_cdf("LogPearsonIII", params, x), type = "l", col = "#a5a58d", lwd = 2,
+     xlab = "x", ylab = "probability", main = "cdf")
+plot(p, dist_quantile("LogPearsonIII", params, p), type = "l", col = "#cb997e", lwd = 2,
+     xlab = "probability", ylab = "x", main = "quantile")
+```
+
+## Seeded sampling
+
+`dist_sample()` draws `n` values by applying the seeded generator's uniform stream through
+`inverse_cdf()`, the same path every Monte Carlo compute in hecfda uses. A histogram of 1000
+seeded `Normal` draws should track the analytic density closely:
+
+```{r}
+#| fig-cap: "1000 seeded draws from Normal(0, 1) against the analytic pdf"
+draws = dist_sample("Normal", c(0, 1, 1), n = 1000L, seed = 12345L)
+hist(draws, breaks = 30, freq = FALSE, col = "#a5a58d", border = "white",
+     xlab = "x", main = "")
+x = seq(-4, 4, length.out = 200)
+lines(x, dist_pdf("Normal", c(0, 1, 1), x), col = "#588157", lwd = 2)
+```
+
+`fda.dist_sample("Normal", [0, 1, 1], n=1000, seed=12345)` in Python draws the identical 1000
+values, in the identical order, because both languages call the same seeded C++ generator.
+
+## Faithful bugs
+
+::: {.callout-warning}
+This port reproduces upstream HEC-FDA behavior exactly, including a few known quirks in the C#
+source. Two examples that affect distributions:
+
+- `Empirical`'s pdf returns 0 for any `x` that is not an exact grid point in its data, rather than
+  interpolating between points.
+- `LogNormal` mixes natural-log (`ln`) and `log10` semantics inconsistently between its methods,
+  matching the same inconsistency in the C# source rather than normalizing it.
+
+These are not bugs in the port; they are the upstream behavior, transcribed on purpose so results
+match HEC-FDA exactly. The [porting status page](../../status.qmd) describes what is ported and
+what was left out.
+:::

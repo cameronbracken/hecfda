@@ -1,0 +1,78 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "hecfda"
+  site-url: https://cameronbracken.github.io/hecfda/
+  repo-url: https://github.com/cameronbracken/hecfda
+  navbar:
+    left:
+      - text: Examples
+        href: examples/index.qmd
+      - text: Porting Status
+        href: status.qmd
+      - text: Python Reference
+        href: reference/index.qmd
+      - text: R Reference
+        href: r/index.html
+    right:
+      - icon: github
+        href: https://github.com/cameronbracken/hecfda
+  sidebar:
+    - title: Examples
+      style: docked
+      collapse-level: 1
+      contents:
+        - examples/index.qmd
+        - auto: "examples/*/*.ipynb"
+        - auto: "examples/*/*.qmd"
+  page-navigation: true
+  page-footer:
+    center: >-
+      hecfda is an independent open-source port of the numerical core of USACE-HEC
+      [HEC-FDA](https://github.com/HydrologicEngineeringCenter/HEC-FDA). 0BSD licensed.
+
+format:
+  html:
+    theme:
+      light: [flatly, styles/light.scss]
+      dark: [darkly, styles/dark.scss]
+    toc: true
+    code-copy: true
+    fig-width: 7
+    fig-height: 4.5
+
+execute:
+  freeze: auto
+  warning: false
+
+quartodoc:
+  package: hecfdapy
+  dir: reference
+  title: Python API reference
+  sections:
+    - title: Workflow
+      desc: >-
+        The HEC-FDA pipeline: stage-damage curves from a structure inventory, the seeded
+        Monte Carlo EAD simulation, scenarios across impact areas, EqAD annualization, and
+        with/without-project benefits.
+      contents:
+        - stage_damage
+        - ead_simulation
+        - scenario_results
+        - alternative_ead
+        - alternative_comparison
+        - eqad
+    - title: Distributions
+      desc: >-
+        Density, CDF, quantile, and seeded sampling for the 13 ported distribution families.
+      contents:
+        - dist_pdf
+        - dist_cdf
+        - dist_quantile
+        - dist_sample
+    - title: Reproducibility
+      desc: The .NET-compatible seeded generator shared by R, Python, and the upstream C#.
+      contents:
+        - rng_sequence

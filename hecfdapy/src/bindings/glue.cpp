@@ -24,12 +24,27 @@
 #include "hecfda/model/compute/impact_area_scenario_simulation.hpp"
 #include "hecfda/model/scenarios/scenario.hpp"
 #include "hecfda/model/alternatives/alternative.hpp"
+#include "hecfda/model/metrics/scenario_results.hpp"
+#include "hecfda/model/metrics/alternative_results.hpp"
+#include "hecfda/model/alternative_comparison_report/alternative_comparison_report.hpp"
 namespace py = pybind11;
 namespace nd = hecfda::statistics::distributions;
 namespace pd = hecfda::model::paired_data;
 namespace ms = hecfda::model::structures;
 namespace mm = hecfda::model::metrics;
 namespace sd = hecfda::model::stage_damage;
+
+// Opaque handles (0.1.0, Task 3): the move-only metrics results types
+// (ScenarioResults/AlternativeResults) can't cross the pybind11 boundary by value, so each handle
+// owns one via unique_ptr and is registered as a class with no methods -- pure single-use tokens
+// passed from scenario_compute() into Task 4's alternative_ead(). Reused (not re-declared) by
+// Task 4.
+struct ScenarioResultsHandle {
+    std::unique_ptr<mm::ScenarioResults> results;
+};
+struct AlternativeResultsHandle {
+    std::unique_ptr<mm::AlternativeResults> results;
+};
 
 static std::vector<double> rng_sequence(int seed, int n) {
     hecfda::model::compute::RandomProvider rp(seed);
@@ -500,8 +515,353 @@ static double scenario(std::vector<int> impact_area_ids, const std::string& flow
     return results.sample_mean_expected_annual_consequences(query_impact_area_id, damage_category, asset_category);
 }
 
+// ---- Public-API marshaling (0.1.0) ----
+// Spec shapes (documented in hecfdapy/src/hecfdapy/workflow.py): dist spec = {"dist", "params"};
+// curve spec = {"x", "dist", "params"[, "damage_category", "asset_category"]} with "params" a
+// list of numeric vectors, one per point. These mirror the fixture `construct` schema (see
+// core/tests/test_fixtures.cpp's build_simulation, the authoritative reference) so the API tests
+// can drive the public functions straight from fixtures/compute/*.json.
+static std::unique_ptr<nd::IDistribution> py_spec_to_dist(py::dict spec) {
+    std::string type = spec["dist"].cast<std::string>();
+    std::vector<double> params = spec["params"].cast<std::vector<double>>();
+    return nd::IDistributionFactory::create(nd::distribution_type_from_name(type), params);
+}
+
+static pd::UncertainPairedData py_spec_to_curve(py::dict spec) {
+    std::vector<double> xs = spec["x"].cast<std::vector<double>>();
+    std::vector<std::string> types = spec["dist"].cast<std::vector<std::string>>();
+    py::list params = spec["params"].cast<py::list>();
+    std::vector<std::unique_ptr<nd::IDistribution>> ys;
+    for (std::size_t i = 0; i < types.size(); ++i) {
+        std::vector<double> p = params[i].cast<std::vector<double>>();
+        ys.push_back(nd::IDistributionFactory::create(nd::distribution_type_from_name(types[i]), p));
+    }
+    if (spec.contains("damage_category")) {
+        pd::CurveMetaData md(spec["damage_category"].cast<std::string>(),
+                              spec["asset_category"].cast<std::string>());
+        return pd::UncertainPairedData(std::move(xs), std::move(ys), std::move(md));
+    }
+    return pd::UncertainPairedData(std::move(xs), std::move(ys));
+}
+
+// Builds one ImpactAreaScenarioSimulation from a full simulation spec. Mirrors
+// core/tests/test_fixtures.cpp's build_simulation field-for-field (that function is the
+// authoritative reference for the construct schema); additional thresholds use the caller's
+// convergence criteria.
+static hecfda::model::compute::ImpactAreaScenarioSimulation py_spec_to_simulation(
+    py::dict spec, int min_iterations, int max_iterations) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::metrics::Threshold;
+    using hecfda::model::metrics::ThresholdEnum;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    int impact_area_id = spec["impact_area_id"].cast<int>();
+    auto builder = ImpactAreaScenarioSimulation::builder(impact_area_id);
+
+    if (spec.contains("flow_frequency")) {
+        auto ff = py_spec_to_dist(spec["flow_frequency"].cast<py::dict>());
+        auto* cont = dynamic_cast<nd::ContinuousDistribution*>(ff.get());
+        if (cont == nullptr) {
+            throw std::runtime_error("ead_simulation: flow_frequency must be a continuous distribution");
+        }
+        ff.release();
+        builder.with_flow_frequency(std::unique_ptr<nd::ContinuousDistribution>(cont));
+        builder.with_flow_stage(py_spec_to_curve(spec["flow_stage"].cast<py::dict>()));
+    }
+    if (spec.contains("frequency_stage")) {
+        py::dict fs = spec["frequency_stage"].cast<py::dict>();
+        std::vector<double> probs = fs["probabilities"].cast<std::vector<double>>();
+        std::vector<double> stages = fs["stages"].cast<std::vector<double>>();
+        pd::CurveMetaData md(fs["damage_category"].cast<std::string>(),
+                              fs["asset_category"].cast<std::string>());
+        builder.with_frequency_stage(pd::GraphicalUncertainPairedData(
+            probs, stages, static_cast<int>(fs["erl"].cast<double>()), md,
+            /*using_stages_not_flows=*/true));
+    }
+    py::list sd_list = spec["stage_damage"].cast<py::list>();
+    std::vector<pd::UncertainPairedData> stage_damage;
+    for (auto item : sd_list) {
+        stage_damage.push_back(py_spec_to_curve(item.cast<py::dict>()));
+    }
+    builder.with_stage_damages(std::move(stage_damage));
+    if (spec.contains("levee")) {
+        py::dict levee = spec["levee"].cast<py::dict>();
+        builder.with_levee(py_spec_to_curve(levee), levee["top_of_levee_elevation"].cast<double>());
+    }
+    if (spec.contains("threshold")) {
+        py::dict th = spec["threshold"].cast<py::dict>();
+        ConvergenceCriteria cc(min_iterations, max_iterations);
+        builder.with_additional_threshold(Threshold(th["id"].cast<int>(), cc,
+                                                     ThresholdEnum::DefaultExteriorStage,
+                                                     th["value"].cast<double>()));
+    }
+    return builder.build();
+}
+
+// Public-API EAD compute (0.1.0): build one simulation from `spec`, run the seeded Monte Carlo
+// (or the deterministic path), and report mean EAD per stage-damage category pair, the
+// all-category total, and the default-threshold (id 0) mean AEP.
+static py::dict ead_simulation(py::dict spec, int min_iterations, int max_iterations,
+                                bool compute_is_deterministic) {
+    using hecfda::statistics::ConvergenceCriteria;
+    auto simulation = py_spec_to_simulation(spec, min_iterations, max_iterations);
+    ConvergenceCriteria cc(min_iterations, max_iterations);
+    auto results = simulation.compute(cc, compute_is_deterministic);
+
+    int impact_area_id = spec["impact_area_id"].cast<int>();
+    py::list sd_list = spec["stage_damage"].cast<py::list>();
+    py::list rows;
+    for (auto item : sd_list) {
+        py::dict curve = item.cast<py::dict>();
+        std::string dc = curve["damage_category"].cast<std::string>();
+        std::string ac = curve["asset_category"].cast<std::string>();
+        py::dict row;
+        row["damage_category"] = dc;
+        row["asset_category"] = ac;
+        row["mean_ead"] = results.mean_expected_annual_consequences(impact_area_id, dc, ac);
+        rows.append(row);
+    }
+    py::dict out;
+    out["ead"] = rows;
+    out["total_ead"] = results.mean_expected_annual_consequences(impact_area_id);
+    out["mean_aep"] = results.mean_aep(0);
+    return out;
+}
+
+// Public-API scenario compute (0.1.0): N impact-area simulation specs -> one Scenario ->
+// ScenarioResults. The results object is move-only and is consumed later by annualization
+// (Task 4), so it is heap-allocated into a ScenarioResultsHandle and handed back as an opaque
+// object (single-use: annualization moves out of the pointee; see alternative_ead's docs).
+// Mirrors hecfdar/src/glue.cpp's hecfda_scenario_compute loop-for-loop.
+static py::dict scenario_compute(py::list specs, int min_iterations, int max_iterations,
+                                  bool compute_is_deterministic) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::metrics::ScenarioResults;
+    using hecfda::model::scenarios::Scenario;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    std::vector<ImpactAreaScenarioSimulation> sims;
+    for (auto item : specs) {
+        sims.push_back(py_spec_to_simulation(item.cast<py::dict>(), min_iterations, max_iterations));
+    }
+    Scenario scenario(std::move(sims));
+    ConvergenceCriteria cc(min_iterations, max_iterations);
+    std::unique_ptr<ScenarioResultsHandle> handle(new ScenarioResultsHandle{
+        std::make_unique<mm::ScenarioResults>(scenario.compute(cc, compute_is_deterministic))});
+
+    using hecfda::model::metrics::ConsequenceType;
+    py::list rows;
+    for (int id : handle->results->get_impact_area_ids(ConsequenceType::Damage)) {
+        for (const auto& dc : handle->results->get_damage_categories()) {
+            for (const auto& ac : handle->results->get_asset_categories()) {
+                py::dict row;
+                row["impact_area_id"] = id;
+                row["damage_category"] = dc;
+                row["asset_category"] = ac;
+                row["mean_ead"] = handle->results->sample_mean_expected_annual_consequences(id, dc, ac);
+                rows.append(row);
+            }
+        }
+    }
+    py::dict out;
+    out["summary"] = rows;
+    out["total_ead"] = handle->results->sample_mean_expected_annual_consequences();
+    out["handle"] = py::cast(handle.release(), py::return_value_policy::take_ownership);
+    return out;
+}
+
+// Public-API stage-damage (0.1.0): marshaled generalization of the fixture-literal
+// impact_area_stage_damage above (same core call chain; see that function's comment).
+// occupancy_types spec fields: name, damage_category, structure_curve, content_curve,
+// content_to_structure_value_ratio (dict with "central" -> deterministic ctor, or
+// dict with dist/std_or_min/central/max), optional first_floor_elevation / structure_value
+// (dict with dist/std_or_min/max). Mirrors hecfdar/src/glue.cpp's r_spec_to_occupancy_type +
+// hecfda_stage_damage.
+static ms::OccupancyType py_spec_to_occupancy_type(py::dict spec) {
+    auto builder = ms::OccupancyType::builder()
+                       .with_name(spec["name"].cast<std::string>())
+                       .with_damage_category(spec["damage_category"].cast<std::string>())
+                       .with_structure_depth_percent_damage(
+                           py_spec_to_curve(spec["structure_curve"].cast<py::dict>()))
+                       .with_content_depth_percent_damage(
+                           py_spec_to_curve(spec["content_curve"].cast<py::dict>()));
+    py::dict csvr = spec["content_to_structure_value_ratio"].cast<py::dict>();
+    if (!csvr.contains("dist")) {
+        builder.with_content_to_structure_value_ratio(
+            ms::ValueRatioWithUncertainty(csvr["central"].cast<double>()));
+    } else {
+        builder.with_content_to_structure_value_ratio(ms::ValueRatioWithUncertainty(
+            nd::distribution_type_from_name(csvr["dist"].cast<std::string>()),
+            csvr["std_or_min"].cast<double>(), csvr["central"].cast<double>(),
+            csvr["max"].cast<double>()));
+    }
+    if (spec.contains("first_floor_elevation")) {
+        py::dict ffe = spec["first_floor_elevation"].cast<py::dict>();
+        builder.with_first_floor_elevation_uncertainty(ms::FirstFloorElevationUncertainty(
+            nd::distribution_type_from_name(ffe["dist"].cast<std::string>()),
+            ffe["std_or_min"].cast<double>(), ffe["max"].cast<double>()));
+    }
+    if (spec.contains("structure_value")) {
+        py::dict sv = spec["structure_value"].cast<py::dict>();
+        builder.with_structure_value_uncertainty(ms::ValueUncertainty(
+            nd::distribution_type_from_name(sv["dist"].cast<std::string>()),
+            sv["std_or_min"].cast<double>(), sv["max"].cast<double>()));
+    }
+    return builder.build();
+}
+
+static py::list stage_damage(py::dict structures, py::list occupancy_types, py::dict hydraulics,
+                              py::dict stage_frequency, std::vector<double> stages,
+                              int impact_area_id, bool compute_is_deterministic) {
+    std::map<std::string, ms::OccupancyType> occ_types;
+    for (auto item : occupancy_types) {
+        auto occ = py_spec_to_occupancy_type(item.cast<py::dict>());
+        std::string name = occ.name();
+        occ_types.emplace(std::move(name), std::move(occ));
+    }
+    std::vector<std::string> fid = structures["fid"].cast<std::vector<std::string>>();
+    std::vector<double> ffe = structures["first_floor_elevation"].cast<std::vector<double>>();
+    std::vector<double> val_struct = structures["value_structure"].cast<std::vector<double>>();
+    std::vector<std::string> damcat = structures["damage_category"].cast<std::vector<std::string>>();
+    std::vector<std::string> occtype = structures["occupancy_type"].cast<std::vector<std::string>>();
+    std::vector<double> ground = structures["ground_elevation"].cast<std::vector<double>>();
+    std::size_t n = fid.size();
+    auto optional_col = [&](const char* key) {
+        if (structures.contains(key)) return structures[key].cast<std::vector<double>>();
+        return std::vector<double>(n, 0.0);
+    };
+    std::vector<double> val_cont = optional_col("value_content");
+    std::vector<double> val_vehic = optional_col("value_vehicle");
+    std::vector<double> val_other = optional_col("value_other");
+    std::vector<ms::Structure> structs;
+    for (std::size_t i = 0; i < n; ++i) {
+        structs.push_back(ms::Structure(fid[i], ffe[i], val_struct[i], damcat[i], occtype[i],
+                                         impact_area_id, val_cont[i], val_vehic[i], val_other[i],
+                                         "unassigned", ms::Structure::kDefaultMissingValue,
+                                         ground[i]));
+    }
+    ms::Inventory inventory(std::move(occ_types), std::move(structs));
+
+    std::vector<double> hyd_probs = hydraulics["probabilities"].cast<std::vector<double>>();
+    py::list wses_list = hydraulics["wses"].cast<py::list>();
+    std::vector<std::vector<float>> wses;
+    for (auto item : wses_list) {
+        std::vector<double> profile = item.cast<std::vector<double>>();
+        wses.push_back(std::vector<float>(profile.begin(), profile.end()));
+    }
+    sd::HydraulicProfiles hyd(hyd_probs, wses);
+
+    std::vector<double> freq_probs = stage_frequency["probabilities"].cast<std::vector<double>>();
+    std::vector<double> freq_stages = stage_frequency["stages"].cast<std::vector<double>>();
+    pd::CurveMetaData freq_md("probability", "stages", "graphical stage frequency");
+    pd::GraphicalUncertainPairedData frequency(freq_probs, freq_stages,
+                                                stage_frequency["erl"].cast<double>(), freq_md,
+                                                /*using_stages_not_flows=*/true);
+
+    sd::ImpactAreaStageDamage iasd(impact_area_id, std::move(inventory), std::move(hyd),
+                                    /*analysis_year=*/9999, /*analytical_flow_frequency=*/nullptr,
+                                    &frequency, /*discharge_stage=*/nullptr,
+                                    /*unregulated_regulated=*/nullptr, /*using_mock_data=*/true);
+    auto compute_result = iasd.compute(compute_is_deterministic);
+
+    py::list rows;
+    for (const auto& upd : compute_result.first) {
+        auto sampled = upd.sample_paired_data(1, true);
+        for (double s : stages) {
+            py::dict row;
+            row["damage_category"] = upd.metadata().damage_category();
+            row["asset_category"] = upd.metadata().asset_category();
+            row["stage"] = s;
+            row["damage"] = sampled.f(s);
+            rows.append(row);
+        }
+    }
+    return rows;
+}
+
+// Public-API annualization (0.1.0, Task 4): two computed ScenarioResultsHandle objects -> EqAD
+// AlternativeResults, returned as an opaque AlternativeResultsHandle. MOVES OUT of the handles'
+// `results` pointees (annualization_compute's documented ownership contract) -- the Python
+// wrapper documents the handles as single-use. `future.is_none()` is the single-scenario case:
+// the same pointer is passed for base and future, matching the C# null-coalesce
+// (`computedResultsBaseYear ??= computedResultsFutureYear`) aliasing branch. Mirrors
+// hecfdar/src/glue.cpp's hecfda_annualization.
+static py::dict annualization(py::object base, py::object future, double discount_rate,
+                               int period_of_analysis, int alternative_id, int base_year,
+                               int future_year) {
+    using hecfda::model::alternatives::Alternative;
+
+    auto& base_handle = base.cast<ScenarioResultsHandle&>();
+    mm::ScenarioResults* base_ptr = base_handle.results.get();
+    mm::ScenarioResults* future_ptr = base_ptr;
+    if (!future.is_none()) {
+        auto& future_handle = future.cast<ScenarioResultsHandle&>();
+        future_ptr = future_handle.results.get();
+    }
+    auto result = std::make_unique<mm::AlternativeResults>(Alternative::annualization_compute(
+        discount_rate, period_of_analysis, alternative_id, base_ptr, future_ptr, base_year,
+        future_year));
+    if (result->is_null()) {
+        throw std::runtime_error(
+            "alternative_ead: invalid analysis years (future_year must fall inside the period "
+            "of analysis starting at base_year)");
+    }
+    py::dict out;
+    out["mean_eqad"] = result->sample_mean_eqad();
+    out["base_year_ead"] = result->sample_mean_base_year_ead();
+    out["future_year_ead"] = result->sample_mean_future_year_ead();
+    std::unique_ptr<AlternativeResultsHandle> handle(new AlternativeResultsHandle{std::move(result)});
+    out["handle"] = py::cast(handle.release(), py::return_value_policy::take_ownership);
+    return out;
+}
+
+// Public-API with/without benefits (0.1.0, Task 4): consumes (moves) the without and with
+// AlternativeResultsHandle objects into compute_alternative_comparison_report, then reports the
+// wildcard reduced means per with-project alternative. Mirrors hecfdar/src/glue.cpp's
+// hecfda_alt_comparison.
+static py::dict alt_comparison(py::object without, py::list with_handles) {
+    using hecfda::model::alternative_comparison_report::AlternativeComparisonReport;
+
+    auto& without_handle = without.cast<AlternativeResultsHandle&>();
+    std::vector<mm::AlternativeResults> withs;
+    std::vector<int> with_ids;
+    for (auto item : with_handles) {
+        auto& w = item.cast<AlternativeResultsHandle&>();
+        with_ids.push_back(w.results->alternative_id());
+        withs.push_back(std::move(*w.results));
+    }
+    auto results = AlternativeComparisonReport::compute_alternative_comparison_report(
+        std::move(*without_handle.results), std::move(withs));
+
+    py::list rows;
+    for (int id : with_ids) {
+        py::dict row;
+        row["alternative_id"] = id;
+        row["eqad_reduced"] = results.sample_mean_eqad_reduced(id);
+        row["base_year_ead_reduced"] = results.sample_mean_base_year_ead_reduced(id);
+        row["future_year_ead_reduced"] = results.sample_mean_future_year_ead_reduced(id);
+        row["with_project_eqad"] = results.sample_mean_with_project_eqad(id);
+        rows.append(row);
+    }
+    py::dict out;
+    out["reduced"] = rows;
+    out["without_base_year_ead"] = results.sample_mean_without_project_base_year_ead();
+    out["without_future_year_ead"] = results.sample_mean_without_project_future_year_ead();
+    return out;
+}
+
+// Public-API seeded sampling (0.1.0): see hecfdar/src/glue.cpp's hecfda_dist_sample.
+static std::vector<double> dist_sample(const std::string& type, const std::vector<double>& params,
+                                        int n, int seed) {
+    auto dist = nd::IDistributionFactory::create(nd::distribution_type_from_name(type), params);
+    hecfda::model::compute::RandomProvider rp(seed);
+    std::vector<double> out(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) out[static_cast<std::size_t>(i)] = dist->inverse_cdf(rp.next_random());
+    return out;
+}
+
 PYBIND11_MODULE(_core, mod) {
-    mod.def("rng_sequence", &rng_sequence);
+    mod.def("rng_sequence", &rng_sequence, py::arg("seed"), py::arg("n"));
     mod.def("dist_eval", &dist_eval);
     mod.def("paired_f", &paired_f);
     mod.def("upd_sample_integrate", &upd_sample_integrate);
@@ -539,4 +899,20 @@ PYBIND11_MODULE(_core, mod) {
              py::arg("stage_damage_params"), py::arg("damage_category"), py::arg("asset_category"),
              py::arg("threshold_id"), py::arg("threshold_value"), py::arg("min_iterations"),
              py::arg("max_iterations"), py::arg("compute_is_deterministic"), py::arg("query_impact_area_id"));
+    mod.def("dist_sample", &dist_sample, py::arg("dist"), py::arg("params"), py::arg("n"),
+             py::arg("seed"));
+    mod.def("ead_simulation", &ead_simulation, py::arg("spec"), py::arg("min_iterations"),
+             py::arg("max_iterations"), py::arg("compute_is_deterministic"));
+    mod.def("stage_damage", &stage_damage, py::arg("structures"), py::arg("occupancy_types"),
+             py::arg("hydraulics"), py::arg("stage_frequency"), py::arg("stages"),
+             py::arg("impact_area_id"), py::arg("compute_is_deterministic"));
+
+    py::class_<ScenarioResultsHandle>(mod, "ScenarioResultsHandle");
+    py::class_<AlternativeResultsHandle>(mod, "AlternativeResultsHandle");
+    mod.def("scenario_compute", &scenario_compute, py::arg("specs"), py::arg("min_iterations"),
+             py::arg("max_iterations"), py::arg("compute_is_deterministic"));
+    mod.def("annualization", &annualization, py::arg("base"), py::arg("future"),
+             py::arg("discount_rate"), py::arg("period_of_analysis"), py::arg("alternative_id"),
+             py::arg("base_year"), py::arg("future_year"));
+    mod.def("alt_comparison", &alt_comparison, py::arg("without"), py::arg("with_handles"));
 }

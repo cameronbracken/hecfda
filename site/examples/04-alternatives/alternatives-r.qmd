@@ -1,0 +1,187 @@
+---
+title: "Alternatives and benefits (R)"
+---
+
+```{r}
+#| include: false
+library(hecfdar)
+```
+
+## The question
+
+Is a flood-risk project worth building? HEC-FDA answers with **equivalent annual damage (EqAD)
+reduced**: compute EqAD without the project, compute it again with the project, and subtract.
+This example builds both sides from the ground up -- a scenario, then an alternative, then the
+benefits comparison -- chaining `scenario_results()`, `alternative_ead()`, and
+`alternative_comparison()` exactly the way a real HEC-FDA study does.
+
+## The annualization math alone
+
+Before chaining the whole pipeline, look at the annualization step by itself. `eqad()` takes an
+EAD at a base year and an EAD at a future year and folds them into one equivalent annual number:
+
+```{r}
+eqad(35000, 2023, 50000, 2072, 50, 0.07)
+```
+
+That reproduces the upstream `ComputeEEAD_Test` oracle, `38835.31`. Three steps produce it:
+
+1. **Interpolate** -- linearly interpolate EAD between the base year and the most likely future
+   year, one value per year of the analysis period. If the future year is reached before the
+   period ends, every later year holds flat at the future value.
+2. **Discount** -- convert each year's EAD to present value at the given discount rate.
+3. **Annualize (PVIFA)** -- divide the summed present value by the present-value-interest-factor
+   of an annuity over the period, turning a lump sum back into one equivalent annual payment.
+
+Here the base year is 2023, the future year is 2072, and the period of analysis is exactly 50
+years -- so the future year lands on the last year of the period and every year gets interpolated,
+with no flat tail:
+
+```{r}
+base_value = 35000; base_year = 2023
+future_value = 50000; future_year = 2072
+period = 50; rate = 0.07
+
+years = base_year + 0:(period - 1)
+interpolated = base_value + (future_value - base_value) * (0:(period - 1)) / (future_year - base_year)
+discounted = interpolated / (1 + rate)^(1:period)
+```
+
+```{r}
+#| fig-cap: "EAD interpolated year by year (2023-2072) and discounted to present value"
+plot(years, interpolated, type = "l", col = "#6b705c", lwd = 2,
+     ylim = range(c(interpolated, discounted)), xlab = "year", ylab = "EAD ($)")
+lines(years, discounted, col = "#cb997e", lwd = 2)
+legend("topleft", legend = c("interpolated EAD", "discounted to present value"),
+       col = c("#6b705c", "#cb997e"), lwd = 2, bty = "n")
+```
+
+Summing the discounted column and dividing by the annuity factor reproduces the same `38835.31`
+`eqad()` returned above:
+
+```{r}
+pvifa = (1 - 1 / (1 + rate)^period) / rate
+sum(discounted) / pvifa
+```
+
+## Without-project alternative
+
+Now the full pipeline. A HEC-FDA alternative needs a base-year and a future-year scenario, each
+computed from an impact-area simulation the same way the EAD-simulation example did. This
+construct is the upstream `AlternativeResults_Test` case: a Uniform(0, 100000) flow frequency, a
+linear flow-stage curve from (0, 0) to (100000, 30), and a 3-point stage-damage curve. The
+future-year damages are exactly double the base-year damages -- the project has done nothing yet,
+so this is the without-project condition.
+
+```{r}
+without_base_sim = list(
+  impact_area_id = 1,
+  flow_frequency = list(dist = "Uniform", params = c(0, 100000, 1000)),
+  flow_stage = list(
+    x = c(0, 100000), dist = "Uniform",
+    params = list(c(0, 0, 10), c(0, 30, 10))
+  ),
+  stage_damage = list(list(
+    x = c(0, 15, 30), dist = "Uniform",
+    params = list(c(0, 0, 10), c(0, 600000, 1), c(0, 600000, 1)),
+    damage_category = "residential", asset_category = "structure"
+  ))
+)
+without_future_sim = without_base_sim
+without_future_sim$stage_damage[[1]]$params =
+  list(c(0, 0, 10), c(0, 1200000, 10), c(0, 1200000, 10))
+```
+
+Run each year through `scenario_results()`, then annualize both into one alternative with
+`alternative_ead()`:
+
+```{r}
+without_base = scenario_results(
+  list(without_base_sim), min_iterations = 1L, max_iterations = 1L, deterministic = TRUE
+)
+without_future = scenario_results(
+  list(without_future_sim), min_iterations = 1L, max_iterations = 1L, deterministic = TRUE
+)
+
+without = alternative_ead(
+  without_base, without_future,
+  base_year = 2023, future_year = 2072, period_of_analysis = 50, discount_rate = 0.0275,
+  alternative_id = 1L
+)
+without$mean_eqad
+without$base_year_ead
+without$future_year_ead
+```
+
+Mean EqAD comes out to `208213.80`, the `AlternativeResults_Test` oracle for this exact
+construct (period 50, base year 2023, future year 2072, discount rate 2.75%), with a base-year EAD
+near 150000 and a future-year EAD near 300000 -- twice as much damage once the future-year curve
+takes over.
+
+## With-project alternative
+
+A project reduces damage. Here that project is a levee: 0% failure probability below stage 7.4999,
+100% failure probability at 7.5 and above, sitting at a `top_of_levee_elevation` of 7.5. Everything
+else -- the flow frequency, the flow-stage curve, the stage-damage curve, the base/future years,
+discount rate, and period -- stays exactly the same as the without-project case:
+
+```{r}
+levee_spec = list(
+  x = c(0, 7.4999, 7.5), dist = "Deterministic", params = list(0, 0, 1),
+  damage_category = "residential", asset_category = "structure",
+  top_of_levee_elevation = 7.5
+)
+
+with_base_sim = c(without_base_sim, list(levee = levee_spec))
+with_future_sim = c(without_future_sim, list(levee = levee_spec))
+
+with_base = scenario_results(
+  list(with_base_sim), min_iterations = 1L, max_iterations = 1L, deterministic = TRUE
+)
+with_future = scenario_results(
+  list(with_future_sim), min_iterations = 1L, max_iterations = 1L, deterministic = TRUE
+)
+
+with_project = alternative_ead(
+  with_base, with_future,
+  base_year = 2023, future_year = 2072, period_of_analysis = 50, discount_rate = 0.0275,
+  alternative_id = 2L
+)
+with_project$mean_eqad
+```
+
+Mean EqAD drops to `161365.70` -- lower than the without-project `208213.80`, because the levee
+holds back damage below stage 7.5 in both the base and future year.
+
+## Benefits
+
+The benefit of the project is the damage the levee prevents. `alternative_comparison()` subtracts
+the with-project alternative's damage distributions from the without-project alternative's and
+reports the reduction:
+
+```{r}
+benefits = alternative_comparison(without, with_project)
+benefits$reduced
+```
+
+The base-year EAD is reduced by `33750` and the future-year EAD by `67500` -- these are the
+`AlternativeComparisonReportShould`-style oracle values for this construct, and they are exactly
+what a levee holding back stages below 7.5 should prevent: a fixed share of both the base and
+future damage, scaled by how much of each curve sits under the levee's protection.
+
+## Single-use handles and validation
+
+`scenario_results()` and `alternative_ead()` both return a `handle` alongside their summary values.
+Each handle is **single-use**: `alternative_ead()` takes ownership of the scenario handles it is
+given, and `alternative_comparison()` takes ownership of the alternative handles it is given. A
+handle already consumed cannot be reused -- recompute the scenario or alternative if you need it
+again. That is why this example computes `without_base`/`without_future` and
+`with_base`/`with_future` as four separate scenario calls rather than trying to share one.
+
+None of the numbers above are made up. `38835.31`, `208213.80`, `161365.70`, `33750`, and `67500`
+are the same literals the dotnet oracle gate (`make oracles`) checks against the real
+`HEC.FDA.Model.Alternative`/`AlternativeComparisonReport`, and this example chains
+`Scenario.Compute -> Alternative.AnnualizationCompute ->
+AlternativeComparisonReport.ComputeAlternativeComparisonReport` exactly the way the upstream
+`AlternativeComparisonReportShould`-style tests do -- the full stage-frequency -> stage-damage ->
+EAD -> EqAD -> benefits pipeline, validated end to end against the real HEC-FDA.

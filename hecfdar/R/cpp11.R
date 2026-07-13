@@ -47,3 +47,27 @@ hecfda_alternative_compute_eqad <- function(base_value, base_year, future_value,
 hecfda_scenario <- function(impact_area_ids, flow_freq_type, flow_freq_params, flow_stage_xs, flow_stage_types, flow_stage_params, stage_damage_xs, stage_damage_types, stage_damage_params, damage_category, asset_category, threshold_id, threshold_value, min_iterations, max_iterations, compute_is_deterministic, query_impact_area_id) {
   .Call(`_hecfdar_hecfda_scenario`, impact_area_ids, flow_freq_type, flow_freq_params, flow_stage_xs, flow_stage_types, flow_stage_params, stage_damage_xs, stage_damage_types, stage_damage_params, damage_category, asset_category, threshold_id, threshold_value, min_iterations, max_iterations, compute_is_deterministic, query_impact_area_id)
 }
+
+hecfda_dist_sample <- function(type, params, n, seed) {
+  .Call(`_hecfdar_hecfda_dist_sample`, type, params, n, seed)
+}
+
+hecfda_ead_simulation <- function(spec, min_iterations, max_iterations, compute_is_deterministic) {
+  .Call(`_hecfdar_hecfda_ead_simulation`, spec, min_iterations, max_iterations, compute_is_deterministic)
+}
+
+hecfda_scenario_compute <- function(specs, min_iterations, max_iterations, compute_is_deterministic) {
+  .Call(`_hecfdar_hecfda_scenario_compute`, specs, min_iterations, max_iterations, compute_is_deterministic)
+}
+
+hecfda_annualization <- function(base_handle, future_handle, discount_rate, period_of_analysis, alternative_id, base_year, future_year) {
+  .Call(`_hecfdar_hecfda_annualization`, base_handle, future_handle, discount_rate, period_of_analysis, alternative_id, base_year, future_year)
+}
+
+hecfda_stage_damage <- function(structures, occupancy_types, hydraulics, stage_frequency, stages, impact_area_id, compute_is_deterministic) {
+  .Call(`_hecfdar_hecfda_stage_damage`, structures, occupancy_types, hydraulics, stage_frequency, stages, impact_area_id, compute_is_deterministic)
+}
+
+hecfda_alt_comparison <- function(without_handle, with_handles) {
+  .Call(`_hecfdar_hecfda_alt_comparison`, without_handle, with_handles)
+}

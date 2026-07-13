@@ -1,33 +1,46 @@
 # hecfda
 
-R (`hecfdar`) and Python (`hecfdapy`) packages for flood-damage-reduction compute. Both wrap a
-shared **C++17 core library** ported from the USACE Hydrologic Engineering Center's
-[HEC-FDA](https://github.com/HydrologicEngineeringCenter/HEC-FDA) C# libraries
-`HEC.FDA.Statistics` and the pure-numeric parts of `HEC.FDA.Model`. Both packages are designed to
-return identical results with the same random seed.
+hecfda is an (unofficial) C++ port of the numerical core of USACE-HEC
+[HEC-FDA](https://github.com/HydrologicEngineeringCenter/HEC-FDA), the Hydrologic Engineering
+Center's flood damage and risk assessment tool. One shared C++17 core is bound into an R package
+(`hecfdar`) and a Python package (`hecfdapy`), so the same seed produces the same numbers in R,
+Python, and the upstream C#.
 
-## Development status
-
-Early development. Phase 0 (toolchain + a vertical slice: seeded RNG -> distribution ->
-paired-data integration) is complete and proven identical across C++, R, Python, and the real
-HEC-FDA C#. The bulk port -- distributions, structures, stage-damage, the Monte Carlo EAD
-simulation, scenarios and alternatives -- has not started.
-
-Neither package is on CRAN or PyPI yet.
+This project is planned to merge into [corehydro](https://github.com/cameronbracken/corehydro),
+a related porting effort for USACE stochastic-hydrology libraries; for now it lives here as its
+own repository.
 
 ## What's ported
 
-Scope is the **numerical core only**: `HEC.FDA.Statistics` (distributions, special functions,
-sample statistics) and the pure-numeric parts of `HEC.FDA.Model` (paired-data curve algebra,
-structure inventory, stage-damage, the Monte Carlo EAD simulation, metrics, scenarios,
-alternatives). RAS-Mapper terrain/inundation reading, GIS, SQLite/DBF persistence, `LifeLoss`
-(LifeSim), and all WPF/MVVM boilerplate are deliberately not ported -- users supply
-already-extracted inputs (stage-frequency curves, hydraulic stage profiles, structure inventory
-tables) as plain arrays or data frames.
+The full numerical pipeline: distributions, paired-data curves, structure inventories,
+stage-damage compute, the seeded Monte Carlo expected annual damage (EAD) simulation, scenarios
+across impact areas, alternatives, equivalent annual damage (EqAD) annualization, and
+with/without-project benefits. See the [porting status page](https://cameronbracken.github.io/hecfda/status.html)
+for the area-by-area detail.
+
+Deliberately not ported: GIS and terrain reading, RAS-grid hydraulics ingest, SQLite/DBF
+persistence, life-loss modeling, and the WPF/MVVM application layer. Users supply
+already-extracted inputs, stage-frequency curves, hydraulic stage profiles, structure inventory
+tables, as plain arrays or data frames; hecfda has no file I/O of its own.
+
+## Documentation
+
+- [Documentation site](https://cameronbracken.github.io/hecfda/) with worked examples in both
+  languages, covering distributions, stage-damage, EAD simulation, and the alternatives capstone
+- [Python API reference](https://cameronbracken.github.io/hecfda/reference/)
+- [R API reference](https://cameronbracken.github.io/hecfda/r/)
+- [Porting status](https://cameronbracken.github.io/hecfda/status.html)
+
+## Development status
+
+Version 0.1.0. All HEC-FDA numerical-core features are ported and validated against the real C#:
+the dev-only oracle gate reproduces 820 assertions with 0 failures. Neither package is on CRAN or
+PyPI yet.
 
 ## Install
 
-Compiling from source requires a C++17 compiler (clang++/gcc/MSVC).
+Compiling from source requires a C++17 compiler (Xcode command-line tools on macOS, gcc/clang on
+Linux, Rtools on Windows for R).
 
 R:
 
@@ -36,78 +49,81 @@ R:
 pak::pak("cameronbracken/hecfda/hecfdar")
 ```
 
-Or from a local checkout:
-
-```r
-Rscript -e 'cpp11::cpp_register("hecfdar")'
-R CMD INSTALL hecfdar
-```
-
 Python (3.10+):
 
 ```bash
 pip install "git+https://github.com/cameronbracken/hecfda.git#subdirectory=hecfdapy"
 ```
 
-Or from a local checkout:
-
-```bash
-pip install ./hecfdapy
-```
-
 ## Quick start
 
-The Phase 0 slice: seed a random provider, sample a paired-data curve with normally distributed
-uncertainty at each point, integrate it. Both languages return the same number for the same seed.
-
-R:
-
-```r
-library(hecfdar)
-
-# random draws from the ported .NET-compatible seeded generator
-hecfda_rng_sequence(seed = 1234L, n = 5L)
-
-# evaluate a Normal(mean=0, sd=1) distribution
-hecfda_normal_eval(mean = 0, sd = 1, method = "cdf", x = 0)   # 0.5
-
-# sample-and-integrate an uncertain paired-data curve, seeded
-xs <- c(1, 2, 3, 4, 5)
-means <- c(2, 4, 6, 8, 10)
-sds <- rep(0.5, 5)
-hecfda_upd_sample_integrate(xs, means, sds, seed = 1234L)   # 24.425549382855987
-```
+Both packages run the same seeded Monte Carlo engine, so the deterministic HEC-FDA oracle value
+150000 comes back identically in R and Python.
 
 Python:
 
 ```python
 import hecfdapy as fda
 
-fda.rng_sequence(seed=1234, n=5)
+res = fda.ead_simulation(
+    stage_damage=[{
+        "x": [0, 15, 30], "dist": "Uniform",
+        "params": [[0, 0, 10], [0, 600000, 10], [0, 600000, 10]],
+        "damage_category": "residential", "asset_category": "Structure",
+    }],
+    flow_frequency={"dist": "Uniform", "params": [0, 100000, 1000]},
+    flow_stage={
+        "x": [0, 100000], "dist": "Uniform",
+        "params": [[0, 0, 10], [0, 30, 10]],
+    },
+    min_iterations=1, max_iterations=1, deterministic=True,
+)
+res["total_ead"]  # 150000
+```
 
-fda.normal_eval(mean=0, sd=1, method="cdf", x=0)   # 0.5
+R:
 
-xs = [1, 2, 3, 4, 5]
-means = [2, 4, 6, 8, 10]
-sds = [0.5] * 5
-fda.upd_sample_integrate(xs, means, sds, seed=1234)   # 24.425549382855987
+```r
+library(hecfdar)
+
+res = ead_simulation(
+  stage_damage = list(list(
+    x = c(0, 15, 30), dist = "Uniform",
+    params = list(c(0, 0, 10), c(0, 600000, 10), c(0, 600000, 10)),
+    damage_category = "residential", asset_category = "Structure"
+  )),
+  flow_frequency = list(dist = "Uniform", params = c(0, 100000, 1000)),
+  flow_stage = list(
+    x = c(0, 100000), dist = "Uniform",
+    params = list(c(0, 0, 10), c(0, 30, 10))
+  ),
+  min_iterations = 1L, max_iterations = 1L, deterministic = TRUE
+)
+res$total_ead  # 150000
+```
+
+The two packages also agree on a plain random draw:
+
+```r
+rng_sequence(seed = 1234L, n = 5L)   # R
+```
+```python
+fda.rng_sequence(seed=1234, n=5)  # Python -- same numbers
 ```
 
 ## Reproducibility
 
 Both packages port .NET's seeded `System.Random` algorithm exactly (the legacy Knuth subtractive
-generator), so the same seed gives identical output across R, Python, and the real HEC-FDA C#:
+generator), and the Monte Carlo EAD simulation reuses seven fixed per-curve seed constants carried
+over from the C# source. Together these give bit-for-bit reproducibility across languages and
+against the original: at exactly 100 iterations, the seeded EAD benchmark returns
+`121194.5159789352` in C++, R, Python, and the real HEC-FDA C#.
 
-```r
-hecfda_upd_sample_integrate(xs, means, sds, seed = 1234L)   # R
-```
-```python
-fda.upd_sample_integrate(xs, means, sds, seed=1234)  # Python -- same number
-```
-
-A dev-only oracle gate (`tools/verify_oracles.py`) checks this against the real upstream C# using
-a pinned copy of the HEC-FDA source; it currently reproduces all 18 Phase 0 fixture assertions
-with 0 failures.
+The dev-only oracle gate (`tools/verify_oracles.py`) replays every fixture against the real
+`HEC.FDA.Statistics`/`HEC.FDA.Model` source and currently reproduces all 820 assertions with 0
+failures. It needs a local `dotnet` install and the pinned upstream submodule, so it does not run
+in CI; the fixture-based test suites that do run in CI (`make test-core`, `make test-r`,
+`make test-py`) check the same values without needing dotnet.
 
 ## Layout
 
@@ -117,22 +133,23 @@ with 0 failures.
 | `fixtures/` | language-neutral oracle fixtures (JSON) validating both packages |
 | `hecfdar/` | R package (cpp11) |
 | `hecfdapy/` | Python package (scikit-build-core + pybind11) |
+| `site/` | Quarto documentation site (worked examples, API reference, porting status) |
 | `tools/` | build and validation scripts, incl. the dotnet oracle gate |
 | `upstream/HEC-FDA/` | pinned dev-only git submodule of the upstream C#, used for provenance and the oracle gate only |
 
 `hecfdar` and `hecfdapy` share the same code from `core/` and `fixtures/` using symlinks, resolved
 at build time. See `.claude/CLAUDE.md` and `.claude/PLAN.md` for the port architecture and
-development workflow.
+development history.
 
-## Build from source
+## Build from source / development
 
 ```bash
 # C++ core
-cmake -S core -B core/build && cmake --build core/build && ctest --test-dir core/build
+cmake -S core -B core/build && cmake --build core/build && ctest --test-dir core/build --output-on-failure
 
-# R package
-Rscript -e 'cpp11::cpp_register("hecfdar")'   # only after editing hecfdar/src/*.cpp
-R CMD INSTALL hecfdar
+# R package (regenerate registration only after editing hecfdar/src/*.cpp)
+Rscript -e 'cpp11::cpp_register("hecfdar")'
+R CMD INSTALL --preclean hecfdar
 Rscript -e 'testthat::test_local("hecfdar")'
 
 # Python package
@@ -140,10 +157,32 @@ pip install ./hecfdapy
 pytest hecfdapy/tests
 ```
 
-Or via the Makefile: `make test-core`, `make test-r`, `make test-py`.
+Or via the Makefile: `make test-core`, `make test-r`, `make test-py`, `make docs`. A
+[pixi](https://pixi.sh) environment wraps the same targets with a portable toolchain
+(`pixi run test-core`, `pixi run test-r`, `pixi run test-py`, `pixi run docs`).
+
+## Why?
+
+USACE-HEC builds and maintains flood-damage and risk-assessment tools used across the profession,
+but HEC-FDA itself is a Windows desktop application built on a C# and MVVM stack, not something a
+researcher can call from a script. Porting the numerical core to a small, dependency-free C++17
+library, and binding it into R and Python, makes the same computations available inside ordinary
+data-analysis workflows: a notebook, an R script, a batch job on a cluster. Seeded reproducibility
+across languages and against the original C# means results can be checked, shared, and rerun by
+someone using a different toolchain and still get the same numbers.
+
+## AI use and credit
+
+This port was built with the assistance of Anthropic's Claude, across planning and implementation,
+with a human reviewing the plan and every ported file. Every numerical result is checked against
+the real HEC-FDA C# libraries through the oracle gate described above; nothing here is taken on
+faith from the porting process.
+
+All credit for the design and implementation of the original tool goes to the
+[USACE Hydrologic Engineering Center](https://github.com/HydrologicEngineeringCenter) and the
+contributors to [HEC-FDA](https://github.com/HydrologicEngineeringCenter/HEC-FDA).
 
 ## License
 
-The C++ core and `hecfdar` are released under the 0BSD license (see `hecfdar/LICENSE`), compatible
-with upstream HEC-FDA's MIT license. `hecfdapy` will carry the same license once packaged for
-release.
+The C++ core and both packages are released under the
+[Zero-Clause BSD (0BSD) license](LICENSE), compatible with upstream HEC-FDA's MIT license.
