@@ -472,6 +472,23 @@ duplicating it with bespoke R/Python glue for every target. This is the last suc
 
 ## Status
 
+**0.1.0 RELEASED (2026-07-13, tag `v0.1.0`).** After the port completed, a release pass
+(spec: `docs/superpowers/specs/2026-07-12-hecfda-0.1.0-release-design.md`, plan:
+`docs/superpowers/plans/2026-07-12-hecfda-0.1.0-release.md`, modeled on corehydro 0.1.0) added a
+public workflow API in both packages (`stage_damage`, `ead_simulation`, `scenario_results`,
+`alternative_ead`/`eqad`, `alternative_comparison`, plus `dist_pdf`/`dist_cdf`/`dist_quantile`/
+`dist_sample` and `rng_sequence`; 11 R exports via roxygen2, numpydoc-documented Python
+equivalents), a Quarto docs site at https://cameronbracken.github.io/hecfda/ (quartodoc + pkgdown
+at `/r/`, porting status page, five worked example pairs, deployed by
+`.github/workflows/docs.yml`), a pixi dev environment, and README/CHANGELOG/licenses at 0.1.0.
+The API tests read oracle values from the fixtures (never hardcoded) and reproduce the headline
+numbers through the public API in both languages, including the seeded `121194.5159789352`
+benchmark. Release exit gate: core ctest 4/4, R testthat 199, pytest 28, oracle gate 820/0, CI
+green on 3 platforms, site live. R chaining handles are class-tagged external pointers
+(`hecfda_scenario_handle`/`hecfda_alternative_handle`, single-use: annualization/comparison move
+out of the pointees). Post-release follow-up backlog (input validation, guard tests, docs.yml
+trigger paths) lives in the release plan's ledger notes.
+
 **ALL 6 PHASES COMPLETE -- the port is done.** The numerical core of HEC-FDA is now fully ported
 to C++17 and bound into R and Python, validated against the real HEC-FDA C# across every layer:
 RNG -> distributions -> paired-data curve algebra -> structures/inventory -> stage-damage ->
