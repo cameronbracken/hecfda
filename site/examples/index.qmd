@@ -13,7 +13,7 @@ against the real HEC-FDA C#, and states that value alongside the result it compu
   distribution families.
 - **02 -- Stage-damage curves**: build a structure inventory and compute a stage-damage curve,
   checked against the tractable Residential/Commercial oracle.
-- **03 -- EAD simulation**: run the seeded Monte Carlo expected annual damage simulation across
-  impact areas and reproduce the exact-100-iteration benchmark.
+- **03 -- EAD simulation**: run the seeded Monte Carlo expected annual damage simulation for one
+  impact area and reproduce the exact-100-iteration benchmark.
 - **04 -- Alternatives capstone**: chain a scenario through EqAD annualization and
   with/without-project benefits, reproducing the full AlternativeComparisonReport pipeline.

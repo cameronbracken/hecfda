@@ -28,6 +28,9 @@ as_sim_spec = function(sim) {
   if (is.null(sim$flow_frequency) && is.null(sim$frequency_stage)) {
     stop("each simulation needs flow_frequency + flow_stage or frequency_stage")
   }
+  if (!is.null(sim$flow_frequency) && !is.null(sim$frequency_stage)) {
+    stop("supply flow_frequency + flow_stage or frequency_stage, not both")
+  }
   list(
     impact_area_id = as.integer(sim$impact_area_id %||% 1L),
     flow_frequency = if (!is.null(sim$flow_frequency)) {

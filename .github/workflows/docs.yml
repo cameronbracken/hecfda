@@ -9,6 +9,8 @@ on:
       - "hecfdar/**"
       - "hecfdapy/**"
       - "core/**"
+      - "fixtures/**"
+      - "tools/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
