@@ -30,8 +30,8 @@ Nine families are reachable this way, through the generic factory dispatch:
 Four of the 13 families are not on this list, and calling `dist_pdf()` with any of their names
 raises an error rather than constructing one. `Gamma`, `ShiftedGamma`, and `PearsonIII` are
 internal helper classes in the C++ core, not members of the `IDistribution` factory, so they have
-no name string at all. `Empirical` is a full `IDistribution` member, but the generic factory has
-no case for it either: it is built from data (a histogram or a set of quantiles), not from a
+no name string at all. `Empirical` is a full `IDistribution` member, but is not constructible by
+name through the factory: it is built from data (a histogram or a set of quantiles), not from a
 short parameter vector, so it has its own construction path rather than a `dist_pdf()`-style
 entry point. See the [porting status page](../../status.qmd) for where each of these lives.
 
@@ -102,5 +102,6 @@ source. Two examples that affect distributions:
   matching the same inconsistency in the C# source rather than normalizing it.
 
 These are not bugs in the port; they are the upstream behavior, transcribed on purpose so results
-match HEC-FDA exactly. See the [porting status page](../../status.qmd) for the full list.
+match HEC-FDA exactly. The [porting status page](../../status.qmd) describes what is ported and
+what was left out.
 :::
