@@ -13,3 +13,4 @@ from ._core import (
     scenario,
 )
 from .distributions import dist_pdf, dist_cdf, dist_quantile, dist_sample
+from .workflow import ead_simulation

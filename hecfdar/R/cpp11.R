@@ -51,3 +51,7 @@ hecfda_scenario <- function(impact_area_ids, flow_freq_type, flow_freq_params, f
 hecfda_dist_sample <- function(type, params, n, seed) {
   .Call(`_hecfdar_hecfda_dist_sample`, type, params, n, seed)
 }
+
+hecfda_ead_simulation <- function(spec, min_iterations, max_iterations, compute_is_deterministic) {
+  .Call(`_hecfdar_hecfda_ead_simulation`, spec, min_iterations, max_iterations, compute_is_deterministic)
+}

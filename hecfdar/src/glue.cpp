@@ -23,6 +23,9 @@
 #include "hecfda_core/include/hecfda/model/compute/impact_area_scenario_simulation.hpp"
 #include "hecfda_core/include/hecfda/model/scenarios/scenario.hpp"
 #include "hecfda_core/include/hecfda/model/alternatives/alternative.hpp"
+#include "hecfda_core/include/hecfda/model/metrics/scenario_results.hpp"
+#include "hecfda_core/include/hecfda/model/metrics/alternative_results.hpp"
+#include "hecfda_core/include/hecfda/model/alternative_comparison_report/alternative_comparison_report.hpp"
 namespace nd = hecfda::statistics::distributions;
 namespace pd = hecfda::model::paired_data;
 namespace ms = hecfda::model::structures;
@@ -513,4 +516,126 @@ static hecfda::model::compute::ImpactAreaScenarioSimulation r_build_impact_area_
     cpp11::writable::doubles out(n);
     for (int i = 0; i < n; ++i) out[i] = dist->inverse_cdf(rp.next_random());
     return out;
+}
+
+// ---- Public-API marshaling (0.1.0) ----
+// Spec shapes (documented in R/simulation.R): dist spec = list(dist, params); curve spec =
+// list(x, dist, params[, damage_category, asset_category]) with params a list of numeric vectors,
+// one per point. These mirror the fixture `construct` schema so the API tests can drive the
+// public functions straight from fixtures/compute/*.json.
+static std::unique_ptr<nd::IDistribution> r_spec_to_dist(cpp11::list spec) {
+    std::string type = cpp11::as_cpp<std::string>(spec["dist"]);
+    cpp11::doubles params(spec["params"]);
+    return nd::IDistributionFactory::create(nd::distribution_type_from_name(type),
+                                             std::vector<double>(params.begin(), params.end()));
+}
+
+static pd::UncertainPairedData r_spec_to_curve(cpp11::list spec) {
+    cpp11::doubles xs(spec["x"]);
+    cpp11::strings types(spec["dist"]);
+    cpp11::list params(spec["params"]);
+    std::vector<std::unique_ptr<nd::IDistribution>> ys;
+    for (R_xlen_t i = 0; i < types.size(); ++i) {
+        cpp11::doubles p(params[i]);
+        ys.push_back(nd::IDistributionFactory::create(
+            nd::distribution_type_from_name(std::string(types[i])),
+            std::vector<double>(p.begin(), p.end())));
+    }
+    std::vector<double> x(xs.begin(), xs.end());
+    if (spec["damage_category"] != R_NilValue) {
+        pd::CurveMetaData md(cpp11::as_cpp<std::string>(spec["damage_category"]),
+                              cpp11::as_cpp<std::string>(spec["asset_category"]));
+        return pd::UncertainPairedData(std::move(x), std::move(ys), std::move(md));
+    }
+    return pd::UncertainPairedData(std::move(x), std::move(ys));
+}
+
+// Builds one ImpactAreaScenarioSimulation from a full simulation spec. Mirrors
+// core/tests/test_fixtures.cpp's build_simulation field-for-field (that function is the
+// authoritative reference for the construct schema); additional thresholds use the caller's
+// convergence criteria.
+static hecfda::model::compute::ImpactAreaScenarioSimulation r_spec_to_simulation(
+    cpp11::list spec, int min_iterations, int max_iterations) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::metrics::Threshold;
+    using hecfda::model::metrics::ThresholdEnum;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    int impact_area_id = cpp11::as_cpp<int>(spec["impact_area_id"]);
+    auto builder = ImpactAreaScenarioSimulation::builder(impact_area_id);
+
+    if (spec["flow_frequency"] != R_NilValue) {
+        auto ff = r_spec_to_dist(cpp11::list(spec["flow_frequency"]));
+        auto* cont = dynamic_cast<nd::ContinuousDistribution*>(ff.get());
+        if (cont == nullptr) {
+            throw std::runtime_error("ead_simulation: flow_frequency must be a continuous distribution");
+        }
+        ff.release();
+        builder.with_flow_frequency(std::unique_ptr<nd::ContinuousDistribution>(cont));
+        builder.with_flow_stage(r_spec_to_curve(cpp11::list(spec["flow_stage"])));
+    }
+    if (spec["frequency_stage"] != R_NilValue) {
+        cpp11::list fs(spec["frequency_stage"]);
+        cpp11::doubles probs(fs["probabilities"]);
+        cpp11::doubles stages(fs["stages"]);
+        pd::CurveMetaData md(cpp11::as_cpp<std::string>(fs["damage_category"]),
+                              cpp11::as_cpp<std::string>(fs["asset_category"]));
+        builder.with_frequency_stage(pd::GraphicalUncertainPairedData(
+            std::vector<double>(probs.begin(), probs.end()),
+            std::vector<double>(stages.begin(), stages.end()),
+            cpp11::as_cpp<double>(fs["erl"]), md, /*using_stages_not_flows=*/true));
+    }
+    cpp11::list sd_list(spec["stage_damage"]);
+    std::vector<pd::UncertainPairedData> stage_damage;
+    for (R_xlen_t i = 0; i < sd_list.size(); ++i) {
+        stage_damage.push_back(r_spec_to_curve(cpp11::list(sd_list[i])));
+    }
+    builder.with_stage_damages(std::move(stage_damage));
+    if (spec["levee"] != R_NilValue) {
+        cpp11::list levee(spec["levee"]);
+        builder.with_levee(r_spec_to_curve(levee),
+                            cpp11::as_cpp<double>(levee["top_of_levee_elevation"]));
+    }
+    if (spec["threshold"] != R_NilValue) {
+        cpp11::list th(spec["threshold"]);
+        ConvergenceCriteria cc(min_iterations, max_iterations);
+        builder.with_additional_threshold(Threshold(cpp11::as_cpp<int>(th["id"]), cc,
+                                                     ThresholdEnum::DefaultExteriorStage,
+                                                     cpp11::as_cpp<double>(th["value"])));
+    }
+    return builder.build();
+}
+
+// Public-API EAD compute (0.1.0): build one simulation from `spec`, run the seeded Monte Carlo
+// (or the deterministic path), and report mean EAD per stage-damage category pair, the
+// all-category total, and the default-threshold (id 0) mean AEP.
+[[cpp11::register]] cpp11::list hecfda_ead_simulation(cpp11::list spec, int min_iterations,
+                                                        int max_iterations,
+                                                        bool compute_is_deterministic) {
+    using hecfda::statistics::ConvergenceCriteria;
+    auto simulation = r_spec_to_simulation(spec, min_iterations, max_iterations);
+    ConvergenceCriteria cc(min_iterations, max_iterations);
+    auto results = simulation.compute(cc, compute_is_deterministic);
+
+    int impact_area_id = cpp11::as_cpp<int>(spec["impact_area_id"]);
+    cpp11::list sd_list(spec["stage_damage"]);
+    cpp11::writable::strings damage_categories;
+    cpp11::writable::strings asset_categories;
+    cpp11::writable::doubles mean_ead;
+    for (R_xlen_t i = 0; i < sd_list.size(); ++i) {
+        cpp11::list curve(sd_list[i]);
+        std::string dc = cpp11::as_cpp<std::string>(curve["damage_category"]);
+        std::string ac = cpp11::as_cpp<std::string>(curve["asset_category"]);
+        damage_categories.push_back(dc);
+        asset_categories.push_back(ac);
+        mean_ead.push_back(results.mean_expected_annual_consequences(impact_area_id, dc, ac));
+    }
+    using namespace cpp11::literals;
+    return cpp11::writable::list({
+        "damage_category"_nm = damage_categories,
+        "asset_category"_nm = asset_categories,
+        "mean_ead"_nm = mean_ead,
+        "total_ead"_nm = results.mean_expected_annual_consequences(impact_area_id),
+        "mean_aep"_nm = results.mean_aep(/*threshold_id=*/0)
+    });
 }

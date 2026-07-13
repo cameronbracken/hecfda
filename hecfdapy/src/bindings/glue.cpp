@@ -24,6 +24,9 @@
 #include "hecfda/model/compute/impact_area_scenario_simulation.hpp"
 #include "hecfda/model/scenarios/scenario.hpp"
 #include "hecfda/model/alternatives/alternative.hpp"
+#include "hecfda/model/metrics/scenario_results.hpp"
+#include "hecfda/model/metrics/alternative_results.hpp"
+#include "hecfda/model/alternative_comparison_report/alternative_comparison_report.hpp"
 namespace py = pybind11;
 namespace nd = hecfda::statistics::distributions;
 namespace pd = hecfda::model::paired_data;
@@ -500,6 +503,119 @@ static double scenario(std::vector<int> impact_area_ids, const std::string& flow
     return results.sample_mean_expected_annual_consequences(query_impact_area_id, damage_category, asset_category);
 }
 
+// ---- Public-API marshaling (0.1.0) ----
+// Spec shapes (documented in hecfdapy/src/hecfdapy/workflow.py): dist spec = {"dist", "params"};
+// curve spec = {"x", "dist", "params"[, "damage_category", "asset_category"]} with "params" a
+// list of numeric vectors, one per point. These mirror the fixture `construct` schema (see
+// core/tests/test_fixtures.cpp's build_simulation, the authoritative reference) so the API tests
+// can drive the public functions straight from fixtures/compute/*.json.
+static std::unique_ptr<nd::IDistribution> py_spec_to_dist(py::dict spec) {
+    std::string type = spec["dist"].cast<std::string>();
+    std::vector<double> params = spec["params"].cast<std::vector<double>>();
+    return nd::IDistributionFactory::create(nd::distribution_type_from_name(type), params);
+}
+
+static pd::UncertainPairedData py_spec_to_curve(py::dict spec) {
+    std::vector<double> xs = spec["x"].cast<std::vector<double>>();
+    std::vector<std::string> types = spec["dist"].cast<std::vector<std::string>>();
+    py::list params = spec["params"].cast<py::list>();
+    std::vector<std::unique_ptr<nd::IDistribution>> ys;
+    for (std::size_t i = 0; i < types.size(); ++i) {
+        std::vector<double> p = params[i].cast<std::vector<double>>();
+        ys.push_back(nd::IDistributionFactory::create(nd::distribution_type_from_name(types[i]), p));
+    }
+    if (spec.contains("damage_category")) {
+        pd::CurveMetaData md(spec["damage_category"].cast<std::string>(),
+                              spec["asset_category"].cast<std::string>());
+        return pd::UncertainPairedData(std::move(xs), std::move(ys), std::move(md));
+    }
+    return pd::UncertainPairedData(std::move(xs), std::move(ys));
+}
+
+// Builds one ImpactAreaScenarioSimulation from a full simulation spec. Mirrors
+// core/tests/test_fixtures.cpp's build_simulation field-for-field (that function is the
+// authoritative reference for the construct schema); additional thresholds use the caller's
+// convergence criteria.
+static hecfda::model::compute::ImpactAreaScenarioSimulation py_spec_to_simulation(
+    py::dict spec, int min_iterations, int max_iterations) {
+    using hecfda::model::compute::ImpactAreaScenarioSimulation;
+    using hecfda::model::metrics::Threshold;
+    using hecfda::model::metrics::ThresholdEnum;
+    using hecfda::statistics::ConvergenceCriteria;
+
+    int impact_area_id = spec["impact_area_id"].cast<int>();
+    auto builder = ImpactAreaScenarioSimulation::builder(impact_area_id);
+
+    if (spec.contains("flow_frequency")) {
+        auto ff = py_spec_to_dist(spec["flow_frequency"].cast<py::dict>());
+        auto* cont = dynamic_cast<nd::ContinuousDistribution*>(ff.get());
+        if (cont == nullptr) {
+            throw std::runtime_error("ead_simulation: flow_frequency must be a continuous distribution");
+        }
+        ff.release();
+        builder.with_flow_frequency(std::unique_ptr<nd::ContinuousDistribution>(cont));
+        builder.with_flow_stage(py_spec_to_curve(spec["flow_stage"].cast<py::dict>()));
+    }
+    if (spec.contains("frequency_stage")) {
+        py::dict fs = spec["frequency_stage"].cast<py::dict>();
+        std::vector<double> probs = fs["probabilities"].cast<std::vector<double>>();
+        std::vector<double> stages = fs["stages"].cast<std::vector<double>>();
+        pd::CurveMetaData md(fs["damage_category"].cast<std::string>(),
+                              fs["asset_category"].cast<std::string>());
+        builder.with_frequency_stage(pd::GraphicalUncertainPairedData(
+            probs, stages, static_cast<int>(fs["erl"].cast<double>()), md,
+            /*using_stages_not_flows=*/true));
+    }
+    py::list sd_list = spec["stage_damage"].cast<py::list>();
+    std::vector<pd::UncertainPairedData> stage_damage;
+    for (auto item : sd_list) {
+        stage_damage.push_back(py_spec_to_curve(item.cast<py::dict>()));
+    }
+    builder.with_stage_damages(std::move(stage_damage));
+    if (spec.contains("levee")) {
+        py::dict levee = spec["levee"].cast<py::dict>();
+        builder.with_levee(py_spec_to_curve(levee), levee["top_of_levee_elevation"].cast<double>());
+    }
+    if (spec.contains("threshold")) {
+        py::dict th = spec["threshold"].cast<py::dict>();
+        ConvergenceCriteria cc(min_iterations, max_iterations);
+        builder.with_additional_threshold(Threshold(th["id"].cast<int>(), cc,
+                                                     ThresholdEnum::DefaultExteriorStage,
+                                                     th["value"].cast<double>()));
+    }
+    return builder.build();
+}
+
+// Public-API EAD compute (0.1.0): build one simulation from `spec`, run the seeded Monte Carlo
+// (or the deterministic path), and report mean EAD per stage-damage category pair, the
+// all-category total, and the default-threshold (id 0) mean AEP.
+static py::dict ead_simulation(py::dict spec, int min_iterations, int max_iterations,
+                                bool compute_is_deterministic) {
+    using hecfda::statistics::ConvergenceCriteria;
+    auto simulation = py_spec_to_simulation(spec, min_iterations, max_iterations);
+    ConvergenceCriteria cc(min_iterations, max_iterations);
+    auto results = simulation.compute(cc, compute_is_deterministic);
+
+    int impact_area_id = spec["impact_area_id"].cast<int>();
+    py::list sd_list = spec["stage_damage"].cast<py::list>();
+    py::list rows;
+    for (auto item : sd_list) {
+        py::dict curve = item.cast<py::dict>();
+        std::string dc = curve["damage_category"].cast<std::string>();
+        std::string ac = curve["asset_category"].cast<std::string>();
+        py::dict row;
+        row["damage_category"] = dc;
+        row["asset_category"] = ac;
+        row["mean_ead"] = results.mean_expected_annual_consequences(impact_area_id, dc, ac);
+        rows.append(row);
+    }
+    py::dict out;
+    out["ead"] = rows;
+    out["total_ead"] = results.mean_expected_annual_consequences(impact_area_id);
+    out["mean_aep"] = results.mean_aep(0);
+    return out;
+}
+
 // Public-API seeded sampling (0.1.0): see hecfdar/src/glue.cpp's hecfda_dist_sample.
 static std::vector<double> dist_sample(const std::string& type, const std::vector<double>& params,
                                         int n, int seed) {
@@ -551,4 +667,6 @@ PYBIND11_MODULE(_core, mod) {
              py::arg("max_iterations"), py::arg("compute_is_deterministic"), py::arg("query_impact_area_id"));
     mod.def("dist_sample", &dist_sample, py::arg("dist"), py::arg("params"), py::arg("n"),
              py::arg("seed"));
+    mod.def("ead_simulation", &ead_simulation, py::arg("spec"), py::arg("min_iterations"),
+             py::arg("max_iterations"), py::arg("compute_is_deterministic"));
 }

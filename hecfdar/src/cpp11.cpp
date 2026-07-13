@@ -96,6 +96,13 @@ extern "C" SEXP _hecfdar_hecfda_dist_sample(SEXP type, SEXP params, SEXP n, SEXP
     return cpp11::as_sexp(hecfda_dist_sample(cpp11::as_cpp<cpp11::decay_t<std::string>>(type), cpp11::as_cpp<cpp11::decay_t<cpp11::doubles>>(params), cpp11::as_cpp<cpp11::decay_t<int>>(n), cpp11::as_cpp<cpp11::decay_t<int>>(seed)));
   END_CPP11
 }
+// glue.cpp
+cpp11::list hecfda_ead_simulation(cpp11::list spec, int min_iterations, int max_iterations, bool compute_is_deterministic);
+extern "C" SEXP _hecfdar_hecfda_ead_simulation(SEXP spec, SEXP min_iterations, SEXP max_iterations, SEXP compute_is_deterministic) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(hecfda_ead_simulation(cpp11::as_cpp<cpp11::decay_t<cpp11::list>>(spec), cpp11::as_cpp<cpp11::decay_t<int>>(min_iterations), cpp11::as_cpp<cpp11::decay_t<int>>(max_iterations), cpp11::as_cpp<cpp11::decay_t<bool>>(compute_is_deterministic)));
+  END_CPP11
+}
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
@@ -103,6 +110,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_hecfdar_hecfda_consequence_result",              (DL_FUNC) &_hecfdar_hecfda_consequence_result,               5},
     {"_hecfdar_hecfda_dist_eval",                       (DL_FUNC) &_hecfdar_hecfda_dist_eval,                        4},
     {"_hecfdar_hecfda_dist_sample",                     (DL_FUNC) &_hecfdar_hecfda_dist_sample,                      4},
+    {"_hecfdar_hecfda_ead_simulation",                  (DL_FUNC) &_hecfdar_hecfda_ead_simulation,                   4},
     {"_hecfdar_hecfda_impact_area_scenario_simulation", (DL_FUNC) &_hecfdar_hecfda_impact_area_scenario_simulation, 16},
     {"_hecfdar_hecfda_impact_area_stage_damage",        (DL_FUNC) &_hecfdar_hecfda_impact_area_stage_damage,         7},
     {"_hecfdar_hecfda_paired_f",                        (DL_FUNC) &_hecfdar_hecfda_paired_f,                         4},
