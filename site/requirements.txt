@@ -1,0 +1,9 @@
+# Python dependencies for building the documentation site (site/).
+# hecfdapy itself is installed separately from the repo (pip install ./hecfdapy).
+quartodoc>=0.11
+griffe<2  # quartodoc 0.11 is incompatible with griffe 2.x parser options
+jupyter
+nbclient
+nbformat
+matplotlib>=3.7
+pandas>=2.0

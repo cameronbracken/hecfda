@@ -1,0 +1,19 @@
+---
+title: "Examples"
+toc: false
+---
+
+Every example exists in both a Python version (`hecfdapy`, a Jupyter notebook you can download
+and run) and an R version (`hecfdar`, a Quarto document). Each one reproduces a value validated
+against the real HEC-FDA C#, and states that value alongside the result it computes.
+
+- **00 -- Getting started**: install both packages and reproduce the deterministic 150000 EAD
+  oracle from the quick start above.
+- **01 -- Distributions**: density, CDF, quantile, and seeded sampling across the 13 ported
+  distribution families.
+- **02 -- Stage-damage curves**: build a structure inventory and compute a stage-damage curve,
+  checked against the tractable Residential/Commercial oracle.
+- **03 -- EAD simulation**: run the seeded Monte Carlo expected annual damage simulation across
+  impact areas and reproduce the exact-100-iteration benchmark.
+- **04 -- Alternatives capstone**: chain a scenario through EqAD annualization and
+  with/without-project benefits, reproducing the full AlternativeComparisonReport pipeline.

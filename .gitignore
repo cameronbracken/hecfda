@@ -25,6 +25,12 @@ _skbuild/
 tools/oracle_emitter/bin/
 tools/oracle_emitter/obj/
 
+# Docs site build output (site/_freeze/ is committed once examples exist, see Tasks 9-12)
+site/_site/
+site/.quarto/
+site/reference/
+site/objects.json
+
 # OS / IDE
 .DS_Store
 .vscode/
