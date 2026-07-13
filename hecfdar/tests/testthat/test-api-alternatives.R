@@ -57,3 +57,32 @@ test_that("alternative_comparison reproduces the with/without benefits oracle", 
   expect_fx(cmp$without_base_year_ead, by_method("sample_mean_without_project_base_year_ead"))
   # eqad_reduced_exceeded_with_probability_q (a quantile accessor) is not exposed in 0.1.0.
 })
+
+test_that("alternative_comparison rejects a scenario_results() handle passed where an alternative is expected", {
+  # Regression guard: handles used to be untagged externalptr, so passing a scenario_results()
+  # object (or its $handle) where an alternative_ead() result was expected reinterpreted the
+  # pointer in C++ and aborted the R session instead of raising a catchable error.
+  fx = fx_read("scenarios", "scenario.json")
+  case = fx$cases[[1]]
+  sims = lapply(case$construct$impact_areas, fx_sim_args)
+  scenario = scenario_results(sims, min_iterations = 1L, max_iterations = 1L, deterministic = TRUE)
+
+  expect_error(alternative_comparison(scenario, scenario), "expected an alternative_ead\\(\\) result")
+  expect_error(alternative_comparison(scenario$handle, scenario$handle),
+               "expected an alternative_ead\\(\\) result")
+})
+
+test_that("alternative_comparison rejects the without-project handle also appearing in with", {
+  fx = fx_read("alternatives", "end_to_end.json")
+  case = Filter(\(c) c$name == "compute_eqad_futyr2072", fx$cases)[[1]]
+  mk_scenario = \(construct) scenario_results(list(fx_sim_args(construct)),
+                                              min_iterations = 1L, max_iterations = 1L,
+                                              deterministic = TRUE)
+  without = alternative_ead(
+    mk_scenario(case$without_base_construct), mk_scenario(case$without_future_construct),
+    base_year = case$base_year, future_year = case$future_year,
+    period_of_analysis = case$period_of_analysis, discount_rate = case$discount_rate,
+    alternative_id = case$without_alternative_id
+  )
+  expect_error(alternative_comparison(without, without), "cannot also appear in `with`")
+})

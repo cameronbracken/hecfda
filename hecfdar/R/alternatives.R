@@ -22,9 +22,9 @@ eqad = function(base_value, base_year, future_value, future_year, period_of_anal
 }
 
 as_scenario_handle = function(x) {
-  if (inherits(x, "externalptr")) return(x)
-  if (is.list(x) && inherits(x$handle, "externalptr")) return(x$handle)
-  stop("expected a scenario_results() result or its $handle")
+  if (inherits(x, "hecfda_scenario_handle")) return(x)
+  if (is.list(x) && inherits(x$handle, "hecfda_scenario_handle")) return(x$handle)
+  stop("expected a scenario_results() result (or its $handle); got ", class(x)[1])
 }
 
 #' Annualize a base/future scenario pair into an alternative
@@ -40,8 +40,8 @@ as_scenario_handle = function(x) {
 #' @param period_of_analysis length of the analysis period in years.
 #' @param discount_rate annual discount rate.
 #' @param alternative_id integer label carried into [alternative_comparison()].
-#' @return A list: `mean_eqad`, `base_year_ead`, `future_year_ead`, and `handle` (consumed by
-#'   [alternative_comparison()]; single-use).
+#' @return A list: `mean_eqad`, `base_year_ead`, `future_year_ead`, and `handle` (a classed
+#'   external pointer, consumed by [alternative_comparison()]; single-use).
 #' @export
 alternative_ead = function(base, future = NULL, base_year, future_year, period_of_analysis,
                            discount_rate, alternative_id = 1L) {
@@ -51,13 +51,14 @@ alternative_ead = function(base, future = NULL, base_year, future_year, period_o
     as.double(discount_rate), as.integer(period_of_analysis), as.integer(alternative_id),
     as.integer(base_year), as.integer(future_year)
   )
+  class(raw$handle) = c("hecfda_alternative_handle", "externalptr")
   raw
 }
 
 as_alternative_handle = function(x) {
-  if (inherits(x, "externalptr")) return(x)
-  if (is.list(x) && inherits(x$handle, "externalptr")) return(x$handle)
-  stop("expected an alternative_ead() result or its $handle")
+  if (inherits(x, "hecfda_alternative_handle")) return(x)
+  if (is.list(x) && inherits(x$handle, "hecfda_alternative_handle")) return(x$handle)
+  stop("expected an alternative_ead() result (or its $handle); got ", class(x)[1])
 }
 
 #' With/without-project damage-reduction benefits
@@ -69,17 +70,22 @@ as_alternative_handle = function(x) {
 #'
 #' @param without an [alternative_ead()] result (or its `$handle`): the without-project
 #'   condition.
-#' @param with one [alternative_ead()] result or a list of them: the with-project alternatives.
+#' @param with one [alternative_ead()] result (or its `$handle`), or a list of them: the
+#'   with-project alternatives.
 #' @return A list: `reduced` (data frame: alternative_id, eqad_reduced, base_year_ead_reduced,
 #'   future_year_ead_reduced, with_project_eqad), `without_base_year_ead`,
 #'   `without_future_year_ead`.
 #' @export
 alternative_comparison = function(without, with) {
-  if (is.list(with) && !is.null(with$handle)) with = list(with)
-  raw = hecfda_alt_comparison(
-    as_alternative_handle(without),
-    lapply(with, as_alternative_handle)
-  )
+  if (inherits(with, "hecfda_alternative_handle") || (is.list(with) && !is.null(with$handle))) {
+    with = list(with)
+  }
+  without_handle = as_alternative_handle(without)
+  with_handles = lapply(with, as_alternative_handle)
+  if (any(vapply(with_handles, identical, logical(1), y = without_handle))) {
+    stop("the without-project alternative cannot also appear in `with` (handles are single-use)")
+  }
+  raw = hecfda_alt_comparison(without_handle, with_handles)
   list(
     reduced = data.frame(
       alternative_id = raw$alternative_id,

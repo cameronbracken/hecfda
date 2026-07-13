@@ -24,8 +24,8 @@ optional \code{threshold} and \code{levee}.}
 }
 \value{
 A list: \code{summary} (data frame: impact_area_id, damage_category, asset_category,
-mean_ead), \code{total_ead} (all impact areas and categories), and \code{handle} (an external pointer
-to the scenario results, consumed by \code{\link[=alternative_ead]{alternative_ead()}}). The handle is SINGLE-USE:
+mean_ead), \code{total_ead} (all impact areas and categories), and \code{handle} (a classed external
+pointer to the scenario results, consumed by \code{\link[=alternative_ead]{alternative_ead()}}). The handle is SINGLE-USE:
 annualization takes ownership of the underlying results.
 }
 \description{

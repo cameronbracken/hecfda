@@ -10,7 +10,8 @@ alternative_comparison(without, with)
 \item{without}{an \code{\link[=alternative_ead]{alternative_ead()}} result (or its \verb{$handle}): the without-project
 condition.}
 
-\item{with}{one \code{\link[=alternative_ead]{alternative_ead()}} result or a list of them: the with-project alternatives.}
+\item{with}{one \code{\link[=alternative_ead]{alternative_ead()}} result (or its \verb{$handle}), or a list of them: the
+with-project alternatives.}
 }
 \value{
 A list: \code{reduced} (data frame: alternative_id, eqad_reduced, base_year_ead_reduced,

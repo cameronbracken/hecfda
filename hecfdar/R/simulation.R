@@ -34,7 +34,16 @@ as_sim_spec = function(sim) {
       list(dist = sim$flow_frequency$dist, params = as.double(sim$flow_frequency$params))
     },
     flow_stage = if (!is.null(sim$flow_stage)) normalize_curve(sim$flow_stage),
-    frequency_stage = sim$frequency_stage,
+    frequency_stage = if (!is.null(sim$frequency_stage)) {
+      fs = sim$frequency_stage
+      list(
+        probabilities = as.double(fs$probabilities),
+        stages = as.double(fs$stages),
+        erl = as.double(fs$erl),
+        damage_category = fs$damage_category,
+        asset_category = fs$asset_category
+      )
+    },
     stage_damage = lapply(sim$stage_damage, normalize_curve),
     threshold = sim$threshold,
     levee = if (!is.null(sim$levee)) {

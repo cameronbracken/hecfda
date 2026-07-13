@@ -15,7 +15,7 @@ Status as of v0.1.0.
 
 | Area | C++ core | Packages | Notes |
 |------|----------|----------|-------|
-| Distributions (13 families) | Ported | Public | `dist_pdf`/`dist_cdf`/`dist_quantile`/`dist_sample`; Normal, Uniform, Triangular, Deterministic, LogNormal, TruncatedNormal, TruncatedLogNormal, PearsonIII, LogPearson3, TruncatedLogPearson3, Gamma, ShiftedGamma, Empirical |
+| Distributions (13 families) | Ported | Public (9 of 13 name-addressable) | `dist_pdf`/`dist_cdf`/`dist_quantile`/`dist_sample` reach Normal, Uniform, Triangular, Deterministic, LogNormal, TruncatedNormal, TruncatedLogNormal, LogPearsonIII, TruncatedLogPearson3 by name. `Gamma`, `ShiftedGamma`, and `PearsonIII` are internal helper classes, not factory members, so they have no name string; `Empirical` is a full distribution but is built from data, not constructed by name |
 | Special functions (gamma/beta closure) | Ported | Internal | `reg_incomplete_gamma`, `log_gamma`, beta family |
 | Sample statistics | Ported | Internal | including the upstream unsorted-median bug, reproduced faithfully |
 | Validation subsystem | Ported | Internal | `ErrorLevel` + property rules |

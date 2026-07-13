@@ -27,8 +27,8 @@ reuses the base scenario for both years (the single-scenario case).}
 \item{alternative_id}{integer label carried into \code{\link[=alternative_comparison]{alternative_comparison()}}.}
 }
 \value{
-A list: \code{mean_eqad}, \code{base_year_ead}, \code{future_year_ead}, and \code{handle} (consumed by
-\code{\link[=alternative_comparison]{alternative_comparison()}}; single-use).
+A list: \code{mean_eqad}, \code{base_year_ead}, \code{future_year_ead}, and \code{handle} (a classed
+external pointer, consumed by \code{\link[=alternative_comparison]{alternative_comparison()}}; single-use).
 }
 \description{
 Builds equivalent annual damage (EqAD) results from a base-year and a future-year scenario

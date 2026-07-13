@@ -10,8 +10,8 @@
 #'   optional `threshold` and `levee`.
 #' @inheritParams ead_simulation
 #' @return A list: `summary` (data frame: impact_area_id, damage_category, asset_category,
-#'   mean_ead), `total_ead` (all impact areas and categories), and `handle` (an external pointer
-#'   to the scenario results, consumed by [alternative_ead()]). The handle is SINGLE-USE:
+#'   mean_ead), `total_ead` (all impact areas and categories), and `handle` (a classed external
+#'   pointer to the scenario results, consumed by [alternative_ead()]). The handle is SINGLE-USE:
 #'   annualization takes ownership of the underlying results.
 #' @export
 scenario_results = function(simulations, min_iterations = 100L, max_iterations = 100000L,
@@ -19,6 +19,7 @@ scenario_results = function(simulations, min_iterations = 100L, max_iterations =
   specs = lapply(simulations, as_sim_spec)
   raw = hecfda_scenario_compute(specs, as.integer(min_iterations), as.integer(max_iterations),
                                 isTRUE(deterministic))
+  class(raw$handle) = c("hecfda_scenario_handle", "externalptr")
   list(
     summary = data.frame(
       impact_area_id = raw$impact_area_id,
