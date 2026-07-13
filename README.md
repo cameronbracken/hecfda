@@ -66,17 +66,24 @@ Python:
 import hecfdapy as fda
 
 res = fda.ead_simulation(
-    stage_damage=[{
-        "x": [0, 15, 30], "dist": "Uniform",
-        "params": [[0, 0, 10], [0, 600000, 10], [0, 600000, 10]],
-        "damage_category": "residential", "asset_category": "Structure",
-    }],
+    stage_damage=[
+        {
+            "x": [0, 15, 30],
+            "dist": "Uniform",
+            "params": [[0, 0, 10], [0, 600000, 10], [0, 600000, 10]],
+            "damage_category": "residential",
+            "asset_category": "Structure",
+        }
+    ],
     flow_frequency={"dist": "Uniform", "params": [0, 100000, 1000]},
     flow_stage={
-        "x": [0, 100000], "dist": "Uniform",
+        "x": [0, 100000],
+        "dist": "Uniform",
         "params": [[0, 0, 10], [0, 30, 10]],
     },
-    min_iterations=1, max_iterations=1, deterministic=True,
+    min_iterations=1,
+    max_iterations=1,
+    deterministic=True,
 )
 res["total_ead"]  # 150000
 ```
@@ -173,10 +180,9 @@ someone using a different toolchain and still get the same numbers.
 
 ## AI use and credit
 
-This port was built with the assistance of Anthropic's Claude, across planning and implementation,
-with a human reviewing the plan and every ported file. Every numerical result is checked against
-the real HEC-FDA C# libraries through the oracle gate described above; nothing here is taken on
-faith from the porting process.
+Anthropic's Claude was used to facilitate the porting process, Fable and Opus 4.8 for planning, 
+Sonnet 5 and Haiku 4.5 for implementation. Every numerical result is checked against
+the HEC-FDA C# libraries.
 
 All credit for the design and implementation of the original tool goes to the
 [USACE Hydrologic Engineering Center](https://github.com/HydrologicEngineeringCenter) and the
