@@ -13,8 +13,8 @@ R interface to a C++17 port of the HEC-FDA flood damage analysis compute engine.
 \seealso{
 Useful links:
 \itemize{
+  \item \url{https://cameronbracken.github.io/hecfda/r/}
   \item \url{https://github.com/cameronbracken/hecfda}
-  \item \url{https://cameronbracken.github.io/hecfda/}
   \item Report bugs at \url{https://github.com/cameronbracken/hecfda/issues}
 }
 
