@@ -1,0 +1,49 @@
+---
+title: "Porting status"
+toc: true
+---
+
+What is currently implemented, by upstream source library, for both the shared C++ core (the
+faithful port itself) and the R/Python packages (`hecfdar` / `hecfdapy`). "Internal" means the
+core carries a validated port that the packages use under the hood but that has no public
+wrapper of its own yet. Every "Ported" row is validated by oracle fixtures replayed against the
+real HEC-FDA C# libraries.
+
+Status as of v0.1.0.
+
+## HEC.FDA.Statistics
+
+| Area | C++ core | Packages | Notes |
+|------|----------|----------|-------|
+| Distributions (13 families) | Ported | Public | `dist_pdf`/`dist_cdf`/`dist_quantile`/`dist_sample`; Normal, Uniform, Triangular, Deterministic, LogNormal, TruncatedNormal, TruncatedLogNormal, PearsonIII, LogPearson3, TruncatedLogPearson3, Gamma, ShiftedGamma, Empirical |
+| Special functions (gamma/beta closure) | Ported | Internal | `reg_incomplete_gamma`, `log_gamma`, beta family |
+| Sample statistics | Ported | Internal | including the upstream unsorted-median bug, reproduced faithfully |
+| Validation subsystem | Ported | Internal | `ErrorLevel` + property rules |
+| Convergence criteria | Ported | Internal | drives the Monte Carlo iteration bounds |
+| Dynamic histograms | Ported | Internal | consequence binning + empirical conversion |
+| .NET `System.Random` | Ported (bit-exact) | Public | `rng_sequence`; the foundation of cross-language reproducibility |
+
+: {tbl-colwidths="[30,14,14,42]"}
+
+## HEC.FDA.Model (numerical core)
+
+| Area | C++ core | Packages | Notes |
+|------|----------|----------|-------|
+| Paired-data curve algebra | Ported | Internal | compose/multiply/integrate, the faithful .NET `Array.BinarySearch`, graphical uncertainty |
+| Structures and occupancy types | Ported | Internal (via `stage_damage`) | value/ratio/first-floor-elevation uncertainty samplers, inventory |
+| Stage-damage compute | Ported | Public | `stage_damage()`; deterministic path oracle-validated (`TractableStageDamageTests`) |
+| EAD Monte Carlo simulation | Ported | Public | `ead_simulation()`; seeded per-curve constants reproduce the C# bit-for-bit (121194.5159789352 at 100 iterations) |
+| Performance metrics (AEP, assurance, levee fragility) | Ported | Partial | `ead_simulation()` returns `mean_aep` (default-threshold AEP); assurance and levee metrics stay internal |
+| Scenarios (impact-area fan-out) | Ported | Public | `scenario_results()` |
+| Alternatives (EqAD annualization) | Ported | Public | `alternative_ead()`, `eqad()` |
+| Comparison report (with/without benefits) | Ported | Public | `alternative_comparison()` |
+
+: {tbl-colwidths="[30,14,14,42]"}
+
+## Not ported (severed by design)
+
+HEC-FDA surfaces outside the numerical core were severed from day one, not deferred:
+RAS-Mapper terrain and inundation reading, GIS/`Spatial`, RAS-grid hydraulics ingest,
+SQLite/DBF persistence, XML serialization, `LifeLoss` (LifeSim), and the WPF/MVVM application
+layer. Users supply already-extracted inputs (stage-frequency curves, per-frequency hydraulic
+stage profiles, structure inventory tables) as plain arrays and data frames.
