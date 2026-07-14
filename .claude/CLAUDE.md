@@ -492,6 +492,10 @@ duplicating it with bespoke R/Python glue for every target. This is the last suc
 
 ## Status
 
+**0.1.1 RELEASED (2026-07-14, tag `v0.1.1`):** MIT relicense (from 0BSD, matching upstream),
+rv-managed R dev library, install-only targets (`make install-r`/`install-py`), both-frequency-
+paths rejection in `ead_simulation`, docs follow-ups. See CHANGELOG.md.
+
 **0.1.0 RELEASED (2026-07-13, tag `v0.1.0`).** After the port completed, a release pass
 (spec: `docs/superpowers/specs/2026-07-12-hecfda-0.1.0-release-design.md`, plan:
 `docs/superpowers/plans/2026-07-12-hecfda-0.1.0-release.md`, modeled on corehydro 0.1.0) added a
