@@ -1,8 +1,11 @@
 # Pixi development environment. Provides the portable toolchain (Python + docs stack,
 # cmake, make, quarto, pandoc); tasks shell out to the Makefile targets. R is deliberately
-# NOT managed here: the R tasks use the system R (with its existing cpp11/roxygen2/pkgdown
-# library), which still sees pixi's pandoc/quarto on PATH inside `pixi run`. The dotnet
-# oracle gate likewise uses the system dotnet.
+# NOT managed here: install it with rig (see README), and its dev packages come from the
+# rv-managed library (rproject.toml + rv.lock): every R-touching task depends on `rv-sync`,
+# so the rv library is restored before the task runs. rv itself is a system install (not on
+# conda-forge); where it is absent the sync degrades to a warning and the default R library
+# paths apply. System R still sees pixi's pandoc/quarto on PATH inside `pixi run`. The
+# dotnet oracle gate likewise uses the system dotnet.
 [workspace]
 authors = ["Cam Bracken <cameron.bracken@pm.me>"]
 channels = ["conda-forge"]
@@ -29,17 +32,24 @@ quarto = ">=1.5"
 pandoc = "*"
 
 [tasks]
+# Restore the rv-managed R library (no-op warning where rv is not installed)
+rv-sync = "rv sync || echo 'rv not installed; using the default R library paths'"
 # Test suites (see Makefile for the underlying commands)
 test-core = "make test-core"
-test-r = "make test-r"
+test-r = { cmd = "make test-r", depends-on = ["rv-sync"] }
 test-py = "make test-py"
-# Package builds
-build-r = "make build-r"
+# Package builds (tarball/wheel)
+build-r = { cmd = "make build-r", depends-on = ["rv-sync"] }
 build-py = "make build-py"
+# Build and install the packages without running tests (for package users; install-r targets
+# the default R library, not the rv-managed one -- see the Makefile comment)
+install-r = "make install-r"
+install-py = "make install-py"
+install = { cmd = "make install-py", depends-on = ["install-r"] }
 # Dereference the vendored-core symlinks (CI/release only; rewrites the working tree)
 materialize = "make materialize"
 # Dev-only oracle reproduction gate (needs system dotnet + the upstream submodule)
 oracles = "make oracles"
 # Documentation site: build into site/_site, then serve it
-docs = "make docs"
+docs = { cmd = "make docs", depends-on = ["rv-sync"] }
 docs-serve = "make docs-serve"

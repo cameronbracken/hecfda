@@ -6,10 +6,6 @@ Center's flood damage and risk assessment tool. One shared C++17 core is bound i
 (`hecfdar`) and a Python package (`hecfdapy`), so the same seed produces the same numbers in R,
 Python, and the upstream C#.
 
-This project is planned to merge into [corehydro](https://github.com/cameronbracken/corehydro),
-a related porting effort for USACE stochastic-hydrology libraries; for now it lives here as its
-own repository.
-
 ## What's ported
 
 The full numerical pipeline: distributions, paired-data curves, structure inventories,
@@ -150,7 +146,33 @@ development history.
 
 ## Build from source / development
 
+Feel free to use your own tools but a [pixi](https://pixi.prefix.dev/latest/) 
+environment is included which can conveniently install the system dependencies required 
+to build everything from source:
 ```bash
+# build and then run tests, these call build targets in the Makefile
+pixi run test-core
+pixi run test-r
+pixi run test-py
+```
+
+If you just want to build and install the packages to use them (no tests):
+
+```bash
+pixi run install-r     # or: make install-r (needs cpp11 in your R library)
+pixi run install-py    # or: make install-py
+pixi run install       # both
+```
+
+`install-r` installs into your default R library; `install-py` installs into pixi's python
+(use `make install-py PYTHON=...` to target another one).
+
+Or you can try running the build directly:
+```bash
+# (optional) install system deps and run a special shell with the proper paths
+pixi install
+pixi shell
+
 # C++ core
 cmake -S core -B core/build && cmake --build core/build && ctest --test-dir core/build --output-on-failure
 
@@ -164,9 +186,19 @@ pip install ./hecfdapy
 pytest hecfdapy/tests
 ```
 
-Or via the Makefile: `make test-core`, `make test-r`, `make test-py`, `make docs`. A
-[pixi](https://pixi.sh) environment wraps the same targets with a portable toolchain
-(`pixi run test-core`, `pixi run test-r`, `pixi run test-py`, `pixi run docs`).
+Python comes with the pixi environment but R itself is not managed by pixi; 
+[rig](https://github.com/r-lib/rig) is recommended for installing and pinning R versions:
+
+    rig add 4.6
+
+R development packages (cpp11, testthat, roxygen2, pkgdown, and friends) are managed with
+[rv](https://github.com/a2-ai/rv): `rv sync` restores `rv.lock` into `rv/library/`, which
+`.Rprofile` activates for any R session started at the repo root. The R-touching pixi tasks
+(`test-r`, `build-r`, `install-r`, `docs`) run `rv sync` automatically first. `rproject.toml`
+pins `r_version = "4.6"` and is the package manifest; it and `rv.lock` are committed, while
+`rv/library/` is the machine-local install and stays out of git. Where rv is not installed
+(for example CI, which installs from `hecfdar/DESCRIPTION`), everything degrades to a
+warning and the default library paths apply.
 
 ## Why?
 
@@ -181,14 +213,16 @@ someone using a different toolchain and still get the same numbers.
 ## AI use and credit
 
 Anthropic's Claude was used to facilitate the porting process, Fable and Opus 4.8 for planning, 
-Sonnet 5 and Haiku 4.5 for implementation. Every numerical result is checked against
-the HEC-FDA C# libraries.
+Sonnet 5 and Haiku 4.5 for implementation. 
 
 All credit for the design and implementation of the original tool goes to the
 [USACE Hydrologic Engineering Center](https://github.com/HydrologicEngineeringCenter) and the
 contributors to [HEC-FDA](https://github.com/HydrologicEngineeringCenter/HEC-FDA).
 
+# Other porting projects
+- [corehydro](https://github.com/cameronbracken/corehydro) is a C++ port of USACE-RMC libraries. 
+
 ## License
 
 The C++ core and both packages are released under the
-[Zero-Clause BSD (0BSD) license](LICENSE), compatible with upstream HEC-FDA's MIT license.
+[MIT](LICENSE) as is HEC-FDA.

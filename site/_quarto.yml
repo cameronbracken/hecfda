@@ -31,7 +31,7 @@ website:
   page-footer:
     center: >-
       hecfda is an independent open-source port of the numerical core of USACE-HEC
-      [HEC-FDA](https://github.com/HydrologicEngineeringCenter/HEC-FDA). 0BSD licensed.
+      [HEC-FDA](https://github.com/HydrologicEngineeringCenter/HEC-FDA). MIT licensed.
 
 format:
   html:

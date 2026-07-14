@@ -8,7 +8,7 @@ QUARTODOC ?= quartodoc
 # the session default when rv is not installed (e.g. CI, where r-lib/actions manages packages).
 RV_LIB = $(shell Rscript -e 'cat(.libPaths()[1])' 2>/dev/null)
 
-.PHONY: test-core test-r test-py materialize oracles build-r build-py docs docs-serve
+.PHONY: test-core test-r test-py materialize oracles build-r build-py install-r install-py install docs docs-serve
 
 test-core:
 	cmake -S core -B core/build && cmake --build core/build && ctest --test-dir core/build --output-on-failure
@@ -35,6 +35,18 @@ build-r:
 
 build-py:
 	$(PYTHON) -m build hecfdapy
+
+# Build and install the packages without running any tests -- for users of the packages rather
+# than developers. install-r deliberately does NOT target the rv library (rv strictly manages
+# it and `rv sync` would remove hecfdar again); it installs into the default R library, which
+# needs cpp11 available there. install-py goes into whatever python $(PYTHON) points at.
+install-r:
+	R CMD INSTALL --preclean hecfdar
+
+install-py:
+	$(PYTHON) -m pip install ./hecfdapy
+
+install: install-r install-py
 
 docs:
 	cd site && $(QUARTODOC) build
