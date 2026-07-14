@@ -151,6 +151,16 @@ the oracle gate (not in CI). After any core change that alters a class layout, r
 (`R CMD INSTALL --preclean hecfdar`) -- stale `hecfdar/src/*.o` from a prior ABI can otherwise
 return garbage or abort R.
 
+**R versions and dev packages:** R itself is installed with `rig` (`rig add 4.6`; `rproject.toml`
+pins `r_version = "4.6"`), never via pixi or conda. R development packages (cpp11, decor,
+testthat, pkgload, jsonlite, roxygen2, pkgdown) are managed with `rv`: `rv sync` restores
+`rv.lock` into the gitignored `rv/library/`, and `.Rprofile` activates that library (exclusively
+-- user/site libs are hidden) for any R session started at the repo root. The Makefile's `test-r`
+passes the rv library to `R CMD INSTALL` via `R_LIBS` because `R CMD` tools do not read
+`.Rprofile`. New dev-time R dependencies go in `rproject.toml` (then `rv sync`), not
+`install.packages()`. CI does not use rv (r-lib/actions installs from `hecfdar/DESCRIPTION`;
+`activate.R` degrades to a warning there).
+
 ## RNG parity (non-negotiable)
 
 `hecfda::sampling::DotNetRandom(seed)` must reproduce .NET's seeded `Random(seed).NextDouble()`

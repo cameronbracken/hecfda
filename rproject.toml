@@ -1,0 +1,22 @@
+# R development dependencies for hecfdar (build, test, document). Managed by rv
+# (https://github.com/a2-ai/rv): `rv sync` restores rv.lock into rv/library/, which
+# .Rprofile activates for any R session started at the repo root. R itself is not
+# managed here -- use rig (see README). CI does not use rv (r-lib/actions installs
+# from hecfdar/DESCRIPTION); activate.R degrades to a warning where rv is absent.
+[project]
+name = "hecfda"
+r_version = "4.6"
+
+repositories = [
+    { alias = "CRAN", url = "https://packagemanager.posit.co/cran/latest"}
+]
+
+dependencies = [
+    { name = "cpp11", repository = "CRAN" },
+    { name = "decor", repository = "CRAN" },
+    { name = "testthat", repository = "CRAN" },
+    { name = "pkgload", repository = "CRAN" },
+    { name = "jsonlite", repository = "CRAN" },
+    { name = "roxygen2", repository = "CRAN" },
+    { name = "pkgdown", repository = "CRAN" },
+]
