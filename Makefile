@@ -3,6 +3,10 @@ PYTHON ?= python3
 # docstrings). Override on the command line, e.g. `make docs QUARTODOC=~/venv/hecfdapy/bin/quartodoc`,
 # if the quartodoc on PATH is not the one tied to $(PYTHON).
 QUARTODOC ?= quartodoc
+# The rv-managed R library (rv/library/...). Rscript resolves it through .Rprofile; R CMD
+# INSTALL does not read .Rprofile, so test-r passes it explicitly via R_LIBS. Falls back to
+# the session default when rv is not installed (e.g. CI, where r-lib/actions manages packages).
+RV_LIB = $(shell Rscript -e 'cat(.libPaths()[1])' 2>/dev/null)
 
 .PHONY: test-core test-r test-py materialize oracles build-r build-py docs docs-serve
 
@@ -11,7 +15,7 @@ test-core:
 
 test-r:
 	Rscript -e 'cpp11::cpp_register("hecfdar")'
-	R CMD INSTALL --preclean hecfdar
+	R_LIBS="$(RV_LIB)" R CMD INSTALL --preclean hecfdar
 	Rscript -e 'testthat::test_local("hecfdar")'
 
 test-py:
