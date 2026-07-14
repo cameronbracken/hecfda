@@ -29,7 +29,7 @@ tables, as plain arrays or data frames; hecfda has no file I/O of its own.
 
 ## Development status
 
-Version 0.1.0. All HEC-FDA numerical-core features are ported and validated against the real C#:
+Version 0.1.1. All HEC-FDA numerical-core features are ported and validated against the real C#:
 the dev-only oracle gate reproduces 820 assertions with 0 failures. Neither package is on CRAN or
 PyPI yet.
 
