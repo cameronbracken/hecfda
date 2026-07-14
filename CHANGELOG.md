@@ -7,6 +7,29 @@ All notable changes to hecfda (the shared C++ core, the `hecfdar` R package, and
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-14
+
+### Changed
+
+- **Relicensed from 0BSD to MIT**, matching upstream HEC-FDA. `hecfdar` uses the CRAN
+  `MIT + file LICENSE` form; the root and `hecfdapy` LICENSE files carry the full MIT text.
+- `ead_simulation()` now rejects supplying both frequency input paths (`flow_frequency` +
+  `flow_stage` and `frequency_stage`) with a clear error in both packages; the behavior was
+  previously undefined.
+
+### Added
+
+- **rv-managed R development library**: `rproject.toml` + `rv.lock` pin the dev packages,
+  `.Rprofile` activates `rv/library/`, and the R-touching pixi tasks (`test-r`, `build-r`,
+  `docs`) run `rv sync` first. R itself is installed with rig (see the README).
+- **Install-only targets** for package users: `make install-r` / `install-py` / `install`
+  and the matching pixi tasks build and install without running tests.
+
+### Fixed
+
+- Examples index described example 03 as spanning impact areas (that is example 04).
+- The docs deploy workflow now also triggers on `fixtures/**` and `tools/**` changes.
+
 ## [0.1.0] - 2026-07-13
 
 First tagged release. Everything below is new.
@@ -34,5 +57,6 @@ First tagged release. Everything below is new.
   and full API references (quartodoc for Python, pkgdown for R).
 - **Pixi development environment** with tasks mapping to the Makefile targets.
 
-[Unreleased]: https://github.com/cameronbracken/hecfda/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/cameronbracken/hecfda/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/cameronbracken/hecfda/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/cameronbracken/hecfda/releases/tag/v0.1.0
