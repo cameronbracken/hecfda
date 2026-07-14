@@ -420,8 +420,8 @@ by any fixture, a faithful upstream quirk, or a cosmetic nit.
   upstream churn must be tracked across many ported files).
 - cibuildwheel / `R CMD check --as-cran` wiring (deferred until the package surface is broad
   enough to be worth packaging for real).
-- Confirm 0BSD license compatibility holds as more of HEC-FDA (MIT-licensed) is ported; no
-  incompatibility found so far.
+- ~~Confirm 0BSD license compatibility~~ Resolved 2026-07-14: the project relicensed to MIT,
+  matching upstream HEC-FDA exactly; no compatibility question remains.
 - Phase 6's `AlternativeComparisonReportResults` unreachable trailing throw, the
   `AddAlternativeResults` apparent upstream bug, and `Empirical::stack_empirical_distributions`'s
   unguarded empty-vector access are recorded in full in CLAUDE.md's "Faithful upstream bugs" list;

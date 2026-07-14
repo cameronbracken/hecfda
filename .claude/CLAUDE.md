@@ -143,6 +143,10 @@ make test-r
 make test-py PYTHON=~/venv/hecfdapy/bin/python   # PYTHON defaults to python3
 make materialize
 make oracles
+make install-r install-py   # build + install only, no tests (for package users)
+# pixi tasks mirror the Makefile targets; the rv-library ones (test-r, build-r,
+# docs) depend on `rv-sync`, which restores the rv library first. install-r targets
+# the DEFAULT R library instead (rv sync would sweep hecfdar out of the rv library).
 ```
 
 Toolchain present: clang++/gcc, cmake, R with cpp11/testthat/jsonlite installed, Python 3 with a
@@ -158,8 +162,14 @@ testthat, pkgload, jsonlite, roxygen2, pkgdown) are managed with `rv`: `rv sync`
 -- user/site libs are hidden) for any R session started at the repo root. The Makefile's `test-r`
 passes the rv library to `R CMD INSTALL` via `R_LIBS` because `R CMD` tools do not read
 `.Rprofile`. New dev-time R dependencies go in `rproject.toml` (then `rv sync`), not
-`install.packages()`. CI does not use rv (r-lib/actions installs from `hecfdar/DESCRIPTION`;
-`activate.R` degrades to a warning there).
+`install.packages()`. The rv-library pixi tasks depend on the `rv-sync` pixi task, so
+`pixi run test-r`/`build-r`/`docs` restore the rv library automatically (`install-r` instead
+targets the default R library -- rv sync would sweep an unmanaged hecfdar out of rv/library).
+CI does
+not use rv (r-lib/actions installs from `hecfdar/DESCRIPTION`; `activate.R` and the pixi
+`rv-sync` task both degrade to a warning where rv is absent). License note: the project
+relicensed from 0BSD to MIT (matching upstream HEC-FDA) on 2026-07-14 -- `hecfdar` uses the
+CRAN `MIT + file LICENSE` form with the two-line template file.
 
 ## RNG parity (non-negotiable)
 
